@@ -144,6 +144,24 @@
   1. `POST mooc1/upload-ans/upload/uploadNew?t&enc2&userId`（multipart 文件，`source=1`）
   2. `POST mooc2-ans/coursedata/adddata`（`jsonData=[{courseId, rootId, dataName, …}]`, courseid, cpi, microTopicId）
 
+### 课程管理（mooc2-ans/tcm）
+- 6 个子模块：班级管理、教师团队管理、成绩权重、课程管理、操作日志、课程评审。班级管理页 `tcm/clazz-manage` 依赖外层 `tcm/course-manage` 提供 jQuery，单独打开时调用其函数会报 `$ is not defined`。
+- 班级：
+  - 新建：手动新建或从其他课程导入。手动新建是 `GET tcm/create-clazz?courseid&newClazzName&cpi`。
+  - 其他：已结课、重命名、分配、设置、删除。删除是 `GET tcm/delete-clazz?courseid&clazzid&cpi`，删除后无法恢复。
+  - 已实测：新建「[MCP测试]班级」后删除，班级列表恢复原样。
+- 班级设置：读取用 `GET tcm/getclazzsetting?courseid&clazzid&cpi`（返回 HTML）。
+  - 加入与退出：允许学生加入、加入须教师同意、仅限本单位学生、允许学生退课。
+  - 开放报名：开放班级报名（可选 6 种 CC 协议，本校或全网开放，报名时间）。
+  - 班级属性：所属学期、班级人数上限（默认 1000，可申请提高）。
+  - 结课：手动结课，或按时间自动结课（需设开课时间段），结课前 N 天提醒。结课后学生无法再完成任务点、作业、测验，学习和互动数据停止统计。
+  - 其他：忽略视频拖拽和窗口切换、对学生隐藏班级，可选择把设置同时应用到其他班级。
+- 学生：
+  - 添加：手动添加、从学生库添加（`addStudFromStuLib`）、从课程班级添加、批量导入（`importClazzStu`，有下载模板）。
+  - 管理：移除（`removeStudent`，可在操作日志里恢复）、调班、学生加入申请（`codeAddClazzApplyList`）、分组管理（`toClazzGroupManage`）、导出学生名单（`exportClassStudent`）、更改学生信息（`updateStudentDataPop`）、访问日志。
+  - 部分操作需要绑定手机或通过滑块验证（「请完成安全验证」），只能本人操作。
+  - 学生的增删改会影响真实成员，本轮没有执行。
+
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
 ## 2. 还没探查的范围
