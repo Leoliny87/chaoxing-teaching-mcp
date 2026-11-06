@@ -129,6 +129,21 @@
   - 须知与提醒：`examNotes`、`pcExamNotes`、`examInform`、`scheduledInformTime`、`examNotice`、`endNoticeTime`、`endNoticeTimeMinute`。
   - 作答：`keepLastAnswer`、`allowAnswerBack`。
 
+### 资源中心·智能题库（mooc2-ans/qbank）
+- 入口：`qbank/questionlist?courseid&clazzid&cpi&ut=t&enc&t&v=6`。enc、t 和课程外壳的相同；**缺少 `v=6` 会提示「没有此页面访问权限」**。
+- 操作：创建题目（手动 `createQuestion()` 或从教学资源库导入 `showZyk()`）、批量导入、新建文件夹、导出（全部或选中，格式有 Ti、Word、Excel、PDF）、题型管理、标签管理（`createLabel`）、安全设置、锁定（`lockQuestion`）、删除（`deleteByIds` → `batchUpdateStatus`）、按题型/课程/正确率筛选、回收站。作业和考试里建的题也会进题库。
+- 新建：`qbank/create-question?courseid&cpi&dirId&pageNum&qbanksystem&microTopicId`，UEditor 实例 key 为 content、answerAnalysis、answerA–D。保存是 `POST qbank/add_question?courseid&questionBankId&microTopicId&saveAsNew&useAi&autoScore`，表单字段：`qType`、`courseQuestionTypeId`（单选是 0，判断是 3）、`content`、`A`/`B`/`C`/`D`、`defAnswer`（单选正确项）、`answerForTF`（判断题）、`answerAnalysis`、`difficulty`、`topicId`、`labelIdArr`、`dirId`、`uploadEnc`（页面变量）、`continueOperate`。
+
+### 资源中心·资料库（mooc2-ans/coursedata）
+- 操作：
+  - 添加资料：本地上传、云盘、添加网址、在线图书、笔记、教学资源库、跨课导入；
+  - 管理：新建文件夹（`addNewFolder`）、上传文件夹、排序、回收站、删除、复制链接、复制到云盘；
+  - 权限：设置是否允许下载（`setDownload` 或批量 `batchSetDownload`）、按班级设置文件夹权限（`aievaluatecheck` / `submitFolderPermissionCheck`）；
+  - 统计与 AI：导出阅读记录（`exportCourseDataReader`）、AI 摘要/脑图/词云。
+- 本地上传：先点「添加资料 → 本地上传」打开弹窗（每次最多 50 个文件，单个 ≤1GB，文件名不能含特殊字符），再用 `bsk upload <「选择本地文件」的 ref> --file <路径>`。plupload 的 input 一直隐藏，直接对它上传会报 not visible。
+  1. `POST mooc1/upload-ans/upload/uploadNew?t&enc2&userId`（multipart 文件，`source=1`）
+  2. `POST mooc2-ans/coursedata/adddata`（`jsonData=[{courseId, rootId, dataName, …}]`, courseid, cpi, microTopicId）
+
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
 ## 2. 还没探查的范围
