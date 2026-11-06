@@ -48,6 +48,8 @@
 | `save_chapter_content` | 新建一页，读回逐字一致。HTML 经白名单清洗：`<script>`、`onclick`、`javascript:` 被去掉，楷体等格式保留。已有插入项的页拒绝覆盖 |
 | `insert_chapter_link` | 插入后读回能找到对应任务点。2026-11-07 起可插入到已有任意插入项的页（见下） |
 | `insert_chapter_note` / `insert_chapter_discussion` / `insert_chapter_reading` / `insert_chapter_quiz` | 2026-11-07：往已有 12 个插入项（文件、速课、视频、扩展阅读、文档、测验、音频、投票、附件、讨论、链接、图片）的页里依次插入链接、注释、讨论（任务点、最少 10 字）、扩展阅读、章节测验（引用作业库作业），读回 12 → 16 项，原有项一个不少；学生视角预览页 15 个模块全部正常加载 |
+| `upload_material` | 2026-11-07：改为可执行。预演记录文件 SHA-256 并绑定到 plan；确认时把文件复制成私有快照，哈希必须与预演一致；页面里再算一次暂存字节的哈希，一致才上传。上传 55 B 文本，资料列表核对到新条目 |
+| `insert_chapter_file` | 2026-11-07：文档（PDF，自动取页数）、音频、视频、图片（正文内）、附件各插入一次，读回 1 → 6 项；学生视角预览里 PDF 阅读器、音频、视频播放器、附件、图片（64×64 已加载）全部正常 |
 | `create_answer_card_assignment` | 2026-11-07：建 5 题答题卡作业（单选、多选、填空 2 空、判断、简答），答案逐题 `save-answer`，作业库核对 5 题 |
 | `add_question_to_bank` | 2026-11-07：24 种题型都建成功，返回题目 ID（现在是 32 位十六进制，早先是数字）。同一文件夹里已有相同题目时，服务端拒绝并说明，工具如实返回「没有新建」 |
 | `list_bank_questions` | 2026-11-07：只读，`POST qbank/search`，按关键词、分页列出题型、题干摘要、难度、使用量、文件夹、创建时间、题目 ID。**不返回答案和解析** |
@@ -206,7 +208,10 @@
   - 管理：新建文件夹（`addNewFolder`）、上传文件夹、排序、回收站、删除、复制链接、复制到云盘；
   - 权限：设置是否允许下载（`setDownload` 或批量 `batchSetDownload`）、按班级设置文件夹权限（`aievaluatecheck` / `submitFolderPermissionCheck`）；
   - 统计与 AI：导出阅读记录（`exportCourseDataReader`）、AI 摘要/脑图/词云。
-- 本地上传：先点「添加资料 → 本地上传」打开弹窗（每次最多 50 个文件，单个 ≤1GB，文件名不能含特殊字符），再用 `bsk upload <「选择本地文件」的 ref> --file <路径>`。plupload 的 input 一直隐藏，直接对它上传会报 not visible。
+- **2026-11-07 改为接口上传（`upload_material`）**：不点弹窗。在页面里注入一个可见的 `<input type=file>`，`bsk upload --selector` 把文件放进去，再用页面自己的 fetch 发：
+  1. `POST {ServerHost.uploadDomain}/upload/uploadNew?t&enc2&userId`（这三个参数写在资料页内联脚本里），multipart 字段 `source=1`、`file`，返回 `{url(objectId), fileType, fileSize, fileRealType, original, state:"SUCCESS"}`；
+  2. `POST coursedata/adddata`，`jsonData=[{courseId, rootId(#dataId, 根目录 0), dataName, source:"1", dataSize, dataType, objectId, courseName, isOpen:"0", dataRealType}]`、courseid、cpi、microTopicId，返回 `{key:[dataId], status:true}`。
+- 本地上传（界面方式，留作参考）：先点「添加资料 → 本地上传」打开弹窗（每次最多 50 个文件，单个 ≤1GB，文件名不能含特殊字符），再用 `bsk upload <「选择本地文件」的 ref> --file <路径>`。plupload 的 input 一直隐藏，直接对它上传会报 not visible。
   1. `POST mooc1/upload-ans/upload/uploadNew?t&enc2&userId`（multipart 文件，`source=1`）
   2. `POST mooc2-ans/coursedata/adddata`（`jsonData=[{courseId, rootId, dataName, …}]`, courseid, cpi, microTopicId）
 
@@ -286,6 +291,7 @@
     | 讨论（插入主题讨论） | attachments，话题随 `savecard` 由服务端创建，没有单独请求 | `{"module":"insertbbs","title","detail","images":[],"endtime","replywordnum","replytimes","allowViewReply":1,"isJob","_jobid","mid"}`。弹窗字段：标题、正文、任务点开关、设置（截止时间、最少字数、回复次数、是否可看他人回复）。任务点开关的 input 被隐藏，要点它可见的外层元素 |
 
   - **上传类插入（2026-11-06 实测，全部插入并保存成功）**：都是先 `POST mooc1/ananas/generate-sign`，再 `POST pan-yz.chaoxing.com/upload/v2/uploadfile`（存到云盘「课程/<课程名>/章节」）。上传控件的 input 被裁成 1px，上面盖着一个 `LABEL`，要对这个 label 执行 `bsk upload`。
+    - **2026-11-07 接口版（`insert_chapter_file`）**：不打开章节编辑器（编辑器离开页面会弹 beforeunload，卡住下一次导航），在 mooc1 静态页上完成：`GET /mooc-ans/edit/get-course-info?courseId&clazzId`（和编辑器的 `window.info` 一样，含 uploadParam.uploadEnc/uploadTimeStamp、userInfo.uid、courseInfo.courseName）→ `GET /ananas/getTk`（`data.tk`，可能是空串，照传空串；传字面量 "undefined" 会报参数校验错误）→ `POST /ananas/generate-sign`（`params`=下一步表单字段 m 的 JSON：`_token, d:"/Upload-Files/", puid, hqsd:1, destPathArr:["课程",课程名,"章节"], name, type, lastModifiedDate, size`；`enc`、`t`）返回 appid、timestamp、nonce、signature、_from、lastModifiedDate → `POST pan-yz/upload/v2/uploadfile`（m + file + 签名字段），返回 `data.objectId/size/suffix`。文档再查 `GET /ananas/status/<objectid>` 取 `pagenum`。然后按下表拼插入项，和其他插入项一样追加到卡片。
     | 插入项 | 支持格式 | attachments 项 |
     |---|---|---|
     | 图片 | gif jpeg png jpg svg bmp tif（来源：本地、云盘、课程资料、图片地址） | 正文里是行内 `<img src="https://p.cldisk.com/star4/<objectid>/origin.png" objectid=… size=…>`；attachments 里是 `{"module":"insertimage","objectid","mid","_jobid"}` |

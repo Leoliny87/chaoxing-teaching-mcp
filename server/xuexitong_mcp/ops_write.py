@@ -316,7 +316,7 @@ class WriteOps(XxtBase):
                 **({} if ok else {"write_outcome": "unknown", "error": "保存后读回不一致；请用 read_chapter_content 核查，不要重复提交。"})}
 
     def insert_chapter_module(self, course: str, chapter_id: str, card_id: str, module: str, data: dict,
-                              inline_html: str = "") -> dict:
+                              inline_html: str = "", inline_attachment: dict | None = None) -> dict:
         """Append one module placeholder (or inline markup) to a card, keeping every existing insert and its task point."""
         c = self.course(course)
         cur = self._read_card(c, chapter_id, card_id)
@@ -325,7 +325,10 @@ class WriteOps(XxtBase):
         desc = cur.get("description") or ""
         atts = card_attachments(desc)
         n = len(re.findall(r"<iframe\s[^>]*\smodule=", desc))
-        if inline_html:
+        if inline_html and inline_attachment:          # inline element that is also an attachment (image)
+            new_desc, marker = desc + inline_html, inline_attachment["mid"]
+            atts.append(inline_attachment)
+        elif inline_html:
             new_desc, marker = desc + inline_html, None
         else:
             data = {**data, "mid": data.get("mid") or _mid()}

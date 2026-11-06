@@ -146,7 +146,7 @@ def _consume_plan(tool_name: str, args: dict, plan_id: str) -> dict:
 _PLAN_PARAM = inspect.Parameter("plan_id", inspect.Parameter.KEYWORD_ONLY, default="",
                                 annotation=Annotated[str, Field(description="预演返回的 plan_id；confirm=true 时必填")])
 
-_PREVIEW_ONLY_TOOLS = frozenset({"upload_material", "delete_chapter", "export_grades", "remind_assignment",
+_PREVIEW_ONLY_TOOLS = frozenset({"delete_chapter", "export_grades", "remind_assignment",
                                  "delete_assignment", "delete_exam", "delete_exam_paper", "delete_material",
                                  "delete_discussion"})
 
@@ -871,16 +871,42 @@ def list_materials(course: Course_) -> list:
     return client().materials(course)
 
 
-@tool(W, "上传本机文件到课程资料。当前仅支持预演，不会执行上传。")
-def upload_material(course: Course_, file_path: Annotated[str, Field(description="本机文件的绝对路径")], confirm: Confirm = False) -> dict:
+FileSha_ = Annotated[str, Field(description="由预演绑定，调用时保持默认空值")]
+
+
+@tool(W, "上传本机文件到课程资料库（学生可见，单个 ≤1GB，只允许 upload_allow_dirs 下的文件）。预演记录文件哈希；确认时内容必须与预演一致，"
+         "上传的是私有快照副本，页面再校验一次哈希，然后在资料列表核对。")
+def upload_material(course: Course_, file_path: Annotated[str, Field(description="本机文件的绝对路径")], confirm: Confirm = False,
+                    file_sha256: FileSha_ = "") -> dict:
     c = _check_write(course)
+    p = _check_upload_path(file_path)
     if not confirm:
-        p = _check_upload_path(file_path)
-        fingerprint = _upload_preview_digest(p)
-        draft = _dry(c, "上传课程资料（学生可见）", bind={"file_path": str(p)}, file=str(p), **fingerprint)
-        draft.update(preview_only=True, next="当前仅供预演，不会执行上传，也不会生成可执行的 plan_id；哈希不是不可变快照。")
-        return draft
-    raise XxtError("资料上传暂不执行：预演后文件内容可能变化，当前未绑定不可变文件快照。请在学习通中人工核对并操作。")
+        if file_sha256:
+            raise XxtError("预演时 file_sha256 必须留空。")
+        fp = _upload_preview_digest(p)
+        return _dry(c, "上传课程资料（学生可见）", bind={"file_path": str(p), "file_sha256": fp["sha256"]}, file=p.name, **fp)
+    return client().upload_material_v3(course, str(p), file_sha256)
+
+
+@tool(W, "把本机文件插入章节某一页：kind=文档（doc/ppt/pdf/xls，带任务点）、音频、视频（带任务点）、图片（正文内）、附件（不带任务点）。"
+         "文件存到云盘「课程/<课程名>/章节」。预演记录文件哈希，确认时内容必须一致；插入后读回核对，保留该页已有插入项。")
+def insert_chapter_file(course: Course_, chapter: Chapter_, card_id: CardId_,
+                        file_path: Annotated[str, Field(description="本机文件的绝对路径（须在 upload_allow_dirs 下）")],
+                        kind: Annotated[str, Field(description="文档 / 音频 / 视频 / 图片 / 附件")],
+                        confirm: Confirm = False, file_sha256: FileSha_ = "") -> dict:
+    from .ops_upload import KINDS
+    c = _check_write(course)
+    p = _check_upload_path(file_path)
+    if kind not in KINDS:
+        raise XxtError(f"kind 只能是：{'、'.join(KINDS)}。")
+    if not confirm:
+        if file_sha256:
+            raise XxtError("预演时 file_sha256 必须留空。")
+        fp = _upload_preview_digest(p)
+        d = _chapter_dry(c, chapter, f"在章节中插入{kind}（学生可见）", card_id=card_id, file=p.name, kind=kind, **fp)
+        d["_bind"].update(file_path=str(p), file_sha256=fp["sha256"])
+        return d
+    return client().insert_chapter_file(course, chapter, card_id, str(p), kind, file_sha256)
 
 
 @tool(D, "删除课程资料：当前仅支持预演，删除后列表完整性未验证。")

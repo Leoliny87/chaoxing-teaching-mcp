@@ -673,6 +673,12 @@ class Bsk:
             extra += ["--file", f]
         return self._ref_action("upload", pattern, extra, retry_safe=False, timeout=self.cfg.t_upload + 10)
 
+    def upload_selector(self, selector: str, file: str):
+        """Set one local file on a visible <input type=file> found by CSS selector."""
+        def b(ctx, obs):
+            return ["upload", "--selector", selector, "--file", file, "--context", ctx]
+        return self._act(b, retry_safe=False, need_obs=False, timeout=self.cfg.t_upload + 10)
+
     def click_selector(self, selector: str, *, retry_safe: bool = False, settle: float | None = None):
         def b(ctx, obs):
             return ["click", "--selector", selector, "--context", ctx]
