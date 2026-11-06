@@ -148,7 +148,7 @@ _PLAN_PARAM = inspect.Parameter("plan_id", inspect.Parameter.KEYWORD_ONLY, defau
 
 _PREVIEW_ONLY_TOOLS = frozenset({"upload_material", "delete_chapter", "export_grades", "remind_assignment",
                                  "delete_assignment", "delete_exam", "delete_exam_paper", "delete_material",
-                                 "delete_discussion", "create_assignment", "create_exam", "publish_exam"})
+                                 "delete_discussion"})
 
 
 def _wrap(fn: Callable, kind: str = "read") -> Callable:
@@ -471,23 +471,18 @@ def list_assignment_library(course: Course_) -> dict:
     return client().assignment_library_first_page(course)
 
 
-@tool(W, "新建作业及可选发放：当前仅预演，编辑和班级选择尚未完成安全验证。")
-def create_assignment(course: Course_, title: Annotated[str, Field(description="作业标题")],
-                      questions: Annotated[list[str], Field(description="题目列表，每条一道简答题；留空则用标题作为唯一题目")] = [],  # noqa: B006
-                      end_time: EndTime = "", publish: Annotated[bool, Field(description="是否立即发放（false=只存作业库）")] = True,
-                      class_name: Class_ = "", confirm: Confirm = False) -> dict:
+TFQuestions = Annotated[list[dict], Field(description="题目列表，每项 {type:'判断', stem:题干, answer:'对'|'错', score:分值(默认5), analysis:解析}；当前只验证了判断题")]
+
+
+@tool(W, "新建作业并存入作业库（判断题，已验证）；先预演，确认后创建并在作业库核对题数。发放请再用 publish_assignment。")
+def create_assignment(course: Course_, title: Annotated[str, Field(description="作业标题")], questions: TFQuestions,
+                      confirm: Confirm = False) -> dict:
+    from .ops_create import tf_questions
     c = _check_write(course)
-    qs = _q(questions)
+    qs = tf_questions(questions)
     if not confirm:
-        from .xxt import norm_time
-        et = norm_time(end_time)
-        target = _preview_publish_class(c.id, class_name) if publish else None
-        bind = {"end_time": et}
-        if target:
-            bind["class_name"] = target["id"]
-        return _preview_only(_dry(c, "新建作业" + ("并发放" if publish else "（仅存作业库）"), bind=bind, title=title, questions=qs or [title], end_time=et, classes=[target] if target else []),
-                             "题目编辑使用直接点击；发放班级和发布结果尚未真实验证。")
-    raise XxtError("作业创建暂仅支持预演，编辑及发放安全性尚未验证。")
+        return _dry(c, "新建作业（存入作业库，不发放）", title=title, questions=qs)
+    return client().create_work_tf(course, title, questions)
 
 
 PublishSettings = Annotated[dict, Field(description="可选发放设置（0/1 或数字）：allowAnswer 允许看答案、allowScore 允许看分数、allowPaste 允许粘贴、"
@@ -564,30 +559,42 @@ def list_exams(course: Course_, include_papers: Annotated[bool, Field(descriptio
     return out
 
 
-@tool(W, "新建试卷：当前仅预演，创建空试卷及题型编辑尚未完成安全验证。")
-def create_exam(course: Course_, title: Annotated[str, Field(description="试卷标题")], questions: Annotated[list[ExamQuestion], Field(description="题目列表")], confirm: Confirm = False) -> dict:
+@tool(W, "新建试卷并存入试卷库（判断题，已验证）；先预演，确认后创建并核对。发布请再用 publish_exam。")
+def create_exam(course: Course_, title: Annotated[str, Field(description="试卷标题")], questions: TFQuestions, confirm: Confirm = False) -> dict:
+    from .ops_create import tf_questions
     c = _check_write(course)
-    qs = [q.model_dump() if hasattr(q, "model_dump") else dict(q) for q in questions]
-    if not qs:
-        raise XxtError("至少需要一道题")
+    qs = tf_questions(questions)
     if not confirm:
-        return _preview_only(_dry(c, "新建试卷（存入试卷库，不发布）", title=title, questions=qs),
-                             "进入编辑前即会创建空试卷，后续题型编辑使用直接点击。")
-    raise XxtError("试卷创建暂仅支持预演，编辑过程尚未验证。")
+        return _dry(c, "新建试卷（存入试卷库，不发布）", title=title, questions=qs)
+    return client().create_paper_tf(course, title, questions)
 
 
-@tool(W, "发布考试：当前仅预演，试卷内容及班级选择尚未可靠核验。")
+ExamSettings = Annotated[dict, Field(description="可选考试设置（0/1 或数字）：allowLookpaper 允许查看试卷、allowAnswer 看答案、allowScore 看分数、"
+                                                "allowViewRightwrong 看对错、randomSort 题目乱序、randomOptions 选项乱序、forbidMultiterminal 禁止多终端、"
+                                                "switchScreenControl 切屏控制、switchScreenNumberLimit 切屏次数、notAllowExit、expiredAutoSubmit 到时自动交卷、"
+                                                "retestNum 重考次数、passingStandard 及格分、showRank、allowPaste、allowCopy、multiHalfScore")]
+
+
+@tool(W, "把试卷库里的试卷发布为考试，发给一个明确班级（起止时间、时长、常用防作弊设置）；先预演，确认后发布并核实。")
 def publish_exam(course: Course_, paper: Annotated[str, Field(description="试卷标题或试卷ID")], end_time: EndTime = "",
-                 limit_minutes: Annotated[int, Field(description="答题时长（分钟）")] = 60, class_name: Class_ = "", confirm: Confirm = False) -> dict:
+                 limit_minutes: Annotated[int, Field(description="答题时长（分钟）")] = 60, class_name: Class_ = "", confirm: Confirm = False,
+                 start_time: Annotated[str, Field(description="开始时间，留空=立即")] = "",
+                 settings: ExamSettings = {}) -> dict:  # noqa: B006
     c = _check_write(course)
     if not confirm:
         from .xxt import _best, norm_time
         p = _best(client().papers(c.id), paper, id_keys=("paper_id",))
         et = norm_time(end_time)
+        st = norm_time(start_time, 0) if start_time else time.strftime("%Y-%m-%d %H:%M:%S")
         target = _preview_publish_class(c.id, class_name)
-        return _preview_only(_dry(c, "发布考试", bind={"paper": p["paper_id"], "end_time": et, "class_name": target["id"]}, paper=p["title"], paper_id=p["paper_id"], end_time=et, limit_minutes=limit_minutes, classes=[target]),
-                             "预演未读取完整试卷内容；班级选择使用直接点击，发放结果尚未真实验证。")
-    raise XxtError("考试发布暂仅支持预演，试卷内容和发放对象尚未可靠核实。")
+        bad = set(settings or {}) - client().EXAM_OPTIONS
+        if bad:
+            raise XxtError(f"不支持的考试设置：{sorted(bad)}")
+        return _dry(c, "发布考试（学生会收到；发布后不能再改题量和分值）",
+                    bind={"paper": p["paper_id"], "end_time": et, "start_time": st, "class_name": target["id"]},
+                    paper=p["title"], paper_id=p["paper_id"], start_time=st, end_time=et, limit_minutes=limit_minutes,
+                    classes=[target], settings=settings or "默认")
+    return client().publish_exam_v3(course, paper, [class_name], start_time, end_time, limit_minutes, settings)
 
 
 @tool(D, "删除考试及可选的试卷：当前仅支持预演，删除后列表完整性未验证。")

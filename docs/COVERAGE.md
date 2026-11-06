@@ -53,6 +53,11 @@
 | `create_class` | 新建班级并核实（测试班级已删除） |
 | `publish_assignment` | 作业库作业发放到指定班级，可带发放设置；作业列表核实到新发放记录 |
 | `reconcile_notices` | 按 UUID 补记结果未明的通知 |
+| `create_assignment` | 2026-11-07：建 2 道判断题，作业库核对题数一致。链路：`questionInit`（第一题 `workid` 留空，返回 `{questionid, relationid, workid}`）→ `toEditWorkQuestion`（返回 `success:true`）→ 后续每题都带同一个 `workid` 重复前两步 → `GET save-work` |
+| `create_exam` | 2026-11-07：建 1 道判断题，试卷库核对。链路：`createAnEmptyPaper`（返回 `{paperId}`）→ `update-exampaper-title` → `add-empty-paperquestion`（返回 `data:{paperQuestionId, paperLibraryRelationId}`）→ `editPaperTrueFalseV2`（`typeId` 填 paperLibraryRelationId，`questionId` 填 paperQuestionId） |
+| `publish_exam` | 2026-11-07：发给「测试」班，40 分钟，题目乱序，核实到新考试。`POST exam/test/publish`，设置项按白名单开放 |
+
+作业和考试目前只支持已验证的**判断题**，其他题型会明确拒绝。另外，分值显式填 0 时不会再被悄悄改成默认 5 分（测试发现的问题）。`on()` 打开静态基准页时跳过就绪检查（曾经遇到 frame not responding）。
 
 实测中发现并修好的问题：
 - 讨论区的 `urlToken` 在 `window.obj.urlToken` 里，而且**每次加载页面都会换**，必须在发帖的那个页面上取。
@@ -264,7 +269,12 @@
     - 资源库：提示「未检查到用户登录信息」。
     - 扩展阅读（组件「相关知识」）：按关键词搜索期刊、图书、报纸。
     - 文档导入：本地、云盘、课程资料。
-    - 本课资料、速课、扩展阅读已经在编辑器里选好，但最后一次保存没有成功，**服务端还没有这三项**，下次要重做并保存。
+    - 2026-11-07 补做并保存成功：
+      - 本课资料：`downloadfile`，objectid 来自课程资料库；
+      - 速课：`{"module":"insertmicroCourse","url","title","cover","jobid","_jobid","mid"}`，带任务点；
+      - 扩展阅读：`{"module":"ballchart","keyword","mid"}`；
+      - 章节测验：选「创建新测验」后，会在新标签页打开作业编辑器（`work/goToWorkEditor?chapterId&courseid&fromChapter&workid`），出题和保存走与作业相同的链路，`clazzid=0`。章节里登记的是 `{"module":"work","workid","title","worktype":"workA","jobid":"work-<workid>","mid"}`。页面自己弹出的标签页不归 Agent 会话所有，要用 `bsk tab create --url` 打开同一个地址再操作；
+      - 投票问卷：点「完成」时服务端就生成了一个投票活动，登记的是 `{"module":"insertvote","id"(活动ID),"title","description","_jobid","mid"}`。
   - 还没试的插入项：云盘、视频、图片、文档、音频、附件、本课资料、录音、图书、图书内页、动画、3D 资源、智雅资源库、全景资源、资源库、扩展阅读、章节测验、投票问卷、直播、速课、课程图谱、文档导入，以及 3 个 AI 功能。
   - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。**这些插入项还没有逐个实际添加过。**
 

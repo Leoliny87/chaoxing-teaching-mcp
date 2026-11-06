@@ -211,11 +211,13 @@ class XxtBase:
         # rejects an evaluate there (document_changed / observation_changed).
         # Always run from the host's static base page, whose document is stable.
         if self.b.url != BASE_PAGE[host]:
-            self.b.navigate(BASE_PAGE[host], settle=0.2)
+            # A static JS/CSS file has no UI to become ready; the observation
+            # readiness check only adds failure modes here (e.g. an unresponsive frame).
+            self.b.navigate(BASE_PAGE[host], settle=0.2, readiness=False)
         for _ in range(2):
             r = self.b.eval(js, retry_safe=retry_safe, timeout=timeout)
             if isinstance(r, dict) and "__wo" in r:
-                self.b.navigate(BASE_PAGE[host], settle=0.2)
+                self.b.navigate(BASE_PAGE[host], settle=0.2, readiness=False)
                 continue
             return r
         raise XxtError(f"无法切换到 {host}")
@@ -400,7 +402,8 @@ def make_client(cfg: Config):
     from .ops_notice import NoticeOps
     from .ops_v3 import V3Ops
     from .ops_write import WriteOps
+    from .ops_create import CreateOps
 
-    class Xxt(NoticeOps, WriteOps, V3Ops, ContentOps, CourseOps, ActivityOps):
+    class Xxt(NoticeOps, CreateOps, WriteOps, V3Ops, ContentOps, CourseOps, ActivityOps):
         pass
     return Xxt(cfg)
