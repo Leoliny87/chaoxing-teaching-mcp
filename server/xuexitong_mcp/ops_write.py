@@ -141,9 +141,16 @@ const __t=await __r.text(); let __j=null; try{__j=JSON.parse(__t)}catch(e){try{_
 return {http:__r.status, json:__j, text_len:__t.length, text_head:__j?null:__t.slice(0,80)};"""
 
 
-def _req_js(path: str, method: str = "GET", form: dict | None = None) -> str:
-    body = "undefined" if form is None else "new URLSearchParams(%s).toString()" % json.dumps(
-        {k: "" if v is None else str(v) for k, v in form.items()}, ensure_ascii=False)
+def _req_js(path: str, method: str = "GET", form: dict | list | None = None) -> str:
+    """form: a dict, or a list of (key, value) pairs when a key repeats (e.g. defAnswer for 多选)."""
+    if form is None:
+        body = "undefined"
+    elif isinstance(form, dict):
+        body = "new URLSearchParams(%s).toString()" % json.dumps(
+            {k: "" if v is None else str(v) for k, v in form.items()}, ensure_ascii=False)
+    else:
+        body = "new URLSearchParams(%s).toString()" % json.dumps(
+            [[str(k), "" if v is None else str(v)] for k, v in form], ensure_ascii=False)
     return _FETCH % (json.dumps(path), json.dumps(method), body)
 
 
@@ -161,11 +168,11 @@ def _ok(resp: Any) -> bool:
 
 class WriteOps(XxtBase):
     # ================================================================ requests
-    def _call(self, host: str, path: str, method: str = "GET", form: dict | None = None) -> dict:
+    def _call(self, host: str, path: str, method: str = "GET", form: dict | list | None = None) -> dict:
         r = self.on(host, _req_js(path, method, form), retry_safe=False)
         return r if isinstance(r, dict) else {"http": None}
 
-    def _call_here(self, path: str, method: str = "GET", form: dict | None = None) -> dict:
+    def _call_here(self, path: str, method: str = "GET", form: dict | list | None = None) -> dict:
         r = self.here(_req_js(path, method, form), retry_safe=False)
         return r if isinstance(r, dict) else {"http": None}
 
@@ -346,53 +353,6 @@ class WriteOps(XxtBase):
         ok = r.get("http") == 200 and len(new) == 1
         return {"ok": ok, "class": new[0] if len(new) == 1 else None,
                 **({} if ok else {"write_outcome": "unknown", "error": "新建后未能核实唯一的新班级；请用 open_course 查看。"})}
-
-    # ================================================================ question bank
-    def add_bank_question(self, course: str, qtype: str, stem: str, options: list[str], answer: str,
-                          analysis: str = "", difficulty: float = 0.8) -> dict:
-        c = self.course(course)
-        types = {"单选": 0, "判断": 3}
-        if qtype not in types:
-            raise XxtError("当前已验证的题型只有：单选、判断。")
-        if not stem.strip():
-            raise XxtError("题干不能为空。")
-        form: dict[str, Any] = {}
-        if qtype == "单选":
-            if not 2 <= len(options) <= 26 or any(not str(o).strip() for o in options):
-                raise XxtError("单选题需要 2–26 个非空选项。")
-            letters = [chr(65 + i) for i in range(len(options))]
-            if answer not in letters:
-                raise XxtError(f"单选答案必须是 {letters[0]}–{letters[-1]} 之一。")
-            form.update({k: f"<p>{_h.escape(str(v))}</p>" for k, v in zip(letters, options)})
-            form["defAnswer"] = answer
-            form["answerForTF"] = "true"
-        else:
-            if answer not in ("对", "错"):
-                raise XxtError("判断题答案必须是 对 或 错。")
-            form["answerForTF"] = "true" if answer == "对" else "false"
-        page = (f"https://mooc2-ans.chaoxing.com/mooc2-ans/qbank/create-question?courseid={_safe_id(c.id)}"
-                f"&cpi={_safe_id(c.cpi)}&dirId=0&pageNum=0&qbanksystem=0&microTopicId=0")
-        self.b.navigate(page, settle=1.0, readiness=False)
-        enc = self.here("const g=n=>(document.querySelector('#'+n+',[name='+n+']')||{}).value||null;"
-                        "return {enc:g('uploadEnc'),ts:g('uploadTimeStamp')};")
-        if not isinstance(enc, dict) or not enc.get("enc"):
-            raise XxtError("题库新建页缺少上传凭据；没有提交。")
-        form.update({"qbankScoreEdit": "false", "courseid": c.id, "microTopicId": "0", "questionBankId": "",
-                     "clazzid": "", "cpi": c.cpi, "qType": types[qtype], "courseQuestionTypeId": types[qtype],
-                     "originType": "0", "systemType": "", "wrapAnswer": "", "continueOperate": "false", "dirId": "0",
-                     "isEdit": "false", "curCourseId": c.id, "uploadtype": "question",
-                     "uploadTimeStamp": enc.get("ts") or "", "uploadEnc": enc["enc"], "initStatus": "",
-                     "updateSignal": "true", "content": f"<p>{_h.escape(stem)}</p>",
-                     "answerAnalysis": f"<p>{_h.escape(analysis)}</p>" if analysis else "",
-                     "difficulty": str(difficulty), "easy": "", "topicId": "", "schoolTopicIds": "", "labelIdArr": ""})
-        q = up.urlencode({"questionBankId": "", "courseid": c.id, "microTopicId": 0, "saveAsNew": "false",
-                          "promptId": -1, "useAi": 0, "autoScore": 0})
-        r = self._call_here(f"/mooc2-ans/qbank/add_question?{q}", "POST", form)
-        j = r.get("json") if isinstance(r.get("json"), dict) else {}
-        qid = str(j.get("qid") or "")
-        ok = _ok(r) and qid.isdigit()
-        return {"ok": ok, "type": qtype, "question_id": qid or None,
-                **({} if ok else {"write_outcome": "unknown", "error": "服务端未确认新建；请在题库中核查，不要重复提交。"})}
 
     # ================================================================ assignment publish (library -> classes)
     PUBLISH_DEFAULTS = {"answerAfterEnd": 0, "passingStandard": 0, "redoTimes": 0, "redoHighestScore": 0,

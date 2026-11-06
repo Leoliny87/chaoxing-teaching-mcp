@@ -62,6 +62,8 @@ def test_req_js_builds_form_body_as_strings():
     js = _req_js("/x", "POST", {"a": 1, "b": None, "c": "中文"})
     assert '"a": "1"' in js and '"b": ""' in js and "中文" in js and "new URLSearchParams" in js
     assert "undefined" in _req_js("/x")
+    pairs = _req_js("/x", "POST", [("defAnswer", "A"), ("defAnswer", "C"), ("b", None)])
+    assert '[["defAnswer", "A"], ["defAnswer", "C"], ["b", ""]]' in pairs
 
 
 @pytest.mark.parametrize("resp,ok", [

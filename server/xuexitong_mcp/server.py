@@ -471,18 +471,30 @@ def list_assignment_library(course: Course_) -> dict:
     return client().assignment_library_first_page(course)
 
 
-TFQuestions = Annotated[list[dict], Field(description="题目列表，每项 {type:'判断', stem:题干, answer:'对'|'错', score:分值(默认5), analysis:解析}；当前只验证了判断题")]
+QUESTION_DOC = ("每题一个对象：type 题型、stem 题干（纯文本）、score 分值（默认5）、analysis 解析。按题型另填："
+                "单选/多选 options+answer（'B' 或 'AC'）；判断 answer 对/错；填空/分录 answer 每空一项的列表；"
+                "简答/名词解释/论述/计算/其它/口语 answer 参考答案；连线 left+right+answer（每个左项对应的右项字母列表）；"
+                "排序 options+answer（如 'DBAC'）；共用选项 options+items（各小题题干）+answer（各小题字母）；"
+                "选词填空 stem 用 ##1## 标空+options（词）+answer（各空字母）；完型填空 stem 用 ##1## 标空+children（单选小题，可无题干）；"
+                "阅读理解/听力/选做 children（小题可为单选/多选/填空/判断/简答），选做另填 optional_num；"
+                "程序 language（如 Python3.12.12、C、Java）+answer（参考代码）+cases [{input,output}]+template（作答模板）+review 手动/自动；"
+                "测评 options+option_scores+select_num；口语测评 read_text+language（英语等）；钟表 mode 认读/拨针+clocks [{period 上午/下午,hour,minute}]；"
+                "写作 answer（范文）+min_words。")
+Questions = Annotated[list[dict], Field(description="题目列表。" + QUESTION_DOC)]
 
 
-@tool(W, "新建作业并存入作业库（判断题，已验证）；先预演，确认后创建并在作业库核对题数。发放请再用 publish_assignment。")
-def create_assignment(course: Course_, title: Annotated[str, Field(description="作业标题")], questions: TFQuestions,
+@tool(W, "新建作业并存入作业库（23 种题型均已实测；测评题需 grading=自定义）；先预演，确认后创建并在作业库核对题数。发放请再用 publish_assignment。")
+def create_assignment(course: Course_, title: Annotated[str, Field(description="作业标题")], questions: Questions,
+                      grading: Annotated[str, Field(description="评分机制：百分制（平均分配）或 自定义（按每题分值）")] = "百分制",
                       confirm: Confirm = False) -> dict:
-    from .ops_create import tf_questions
+    from .ops_create import check_grading
+    from .questions import normalize_list, summary
     c = _check_write(course)
-    qs = tf_questions(questions)
+    qs = normalize_list(questions, "work")
+    check_grading(qs, grading)
     if not confirm:
-        return _dry(c, "新建作业（存入作业库，不发放）", title=title, questions=qs)
-    return client().create_work_tf(course, title, questions)
+        return _dry(c, "新建作业（存入作业库，不发放）", title=title, grading=grading, questions=[summary(q) for q in qs])
+    return client().create_work(course, title, questions, grading)
 
 
 PublishSettings = Annotated[dict, Field(description="可选发放设置（0/1 或数字）：allowAnswer 允许看答案、allowScore 允许看分数、allowPaste 允许粘贴、"
@@ -559,14 +571,14 @@ def list_exams(course: Course_, include_papers: Annotated[bool, Field(descriptio
     return out
 
 
-@tool(W, "新建试卷并存入试卷库（判断题，已验证）；先预演，确认后创建并核对。发布请再用 publish_exam。")
-def create_exam(course: Course_, title: Annotated[str, Field(description="试卷标题")], questions: TFQuestions, confirm: Confirm = False) -> dict:
-    from .ops_create import tf_questions
+@tool(W, "新建试卷并存入试卷库（22 种题型均已实测，含选做题；无钟表题、口语测评题）；先预演，确认后创建并核对题数。发布请再用 publish_exam。")
+def create_exam(course: Course_, title: Annotated[str, Field(description="试卷标题")], questions: Questions, confirm: Confirm = False) -> dict:
+    from .questions import normalize_list, summary
     c = _check_write(course)
-    qs = tf_questions(questions)
+    qs = normalize_list(questions, "exam")
     if not confirm:
-        return _dry(c, "新建试卷（存入试卷库，不发布）", title=title, questions=qs)
-    return client().create_paper_tf(course, title, questions)
+        return _dry(c, "新建试卷（存入试卷库，不发布）", title=title, questions=[summary(q) for q in qs])
+    return client().create_paper(course, title, questions)
 
 
 ExamSettings = Annotated[dict, Field(description="可选考试设置（0/1 或数字）：allowLookpaper 允许查看试卷、allowAnswer 看答案、allowScore 看分数、"
@@ -740,17 +752,22 @@ def create_class(course: Course_, name: Annotated[str, Field(description="班级
     return client().create_class(course, name)
 
 
-@tool(W, "向课程题库新增一道题（已验证：单选、判断）；先预演，确认后提交。")
-def add_question_to_bank(course: Course_, qtype: Annotated[str, Field(description="单选 或 判断")],
-                         stem: Annotated[str, Field(description="题干（纯文本）")],
-                         answer: Annotated[str, Field(description="单选填 A/B/C…；判断填 对/错")],
-                         options: Annotated[list[str], Field(description="单选题选项（按 A、B、C… 顺序）")] = [],  # noqa: B006
-                         analysis: Annotated[str, Field(description="答案解析，可留空")] = "",
+@tool(R, "只读列出课程题库题目（题型、题干摘要、难度、使用量、文件夹、创建时间、题目ID），可按关键词筛选；不返回答案和解析。")
+def list_bank_questions(course: Course_, keyword: Annotated[str, Field(description="题干关键词，可留空")] = "",
+                        page: Annotated[int, Field(description="页码，从 1 开始")] = 1,
+                        page_size: Annotated[int, Field(description="每页条数，1–200")] = 50) -> dict:
+    return client().bank_questions(course, keyword, page, page_size)
+
+
+@tool(W, "向课程题库新增一道题（24 种题型均已实测）；先预演，确认后提交并返回题目ID。")
+def add_question_to_bank(course: Course_, question: Annotated[dict, Field(description="一道题。" + QUESTION_DOC)],
                          confirm: Confirm = False) -> dict:
+    from .questions import normalize_list, summary
     c = _check_write(course)
+    q = normalize_list([question], "bank")[0]
     if not confirm:
-        return _dry(c, "新增题库题目", qtype=qtype, stem=stem, options=list(options), answer=answer, analysis=analysis)
-    return client().add_bank_question(course, qtype, stem, list(options), answer, analysis)
+        return _dry(c, "新增题库题目", question=summary(q))
+    return client().add_bank_question(course, question)
 
 
 @tool(D, "删除章节（含其下内容，不可恢复）。当前仅支持预演，不会执行删除。")

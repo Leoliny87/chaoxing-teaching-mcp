@@ -47,17 +47,18 @@
 | `rename_chapter` | 改名后列表核对一致 |
 | `save_chapter_content` | 新建一页，读回逐字一致。HTML 经白名单清洗：`<script>`、`onclick`、`javascript:` 被去掉，楷体等格式保留。已有插入项的页拒绝覆盖 |
 | `insert_chapter_link` | 插入后读回能找到对应任务点；会保留同页已有链接的任务点 |
-| `add_question_to_bank` | 单选题、判断题都建成功，返回 `qid` |
+| `add_question_to_bank` | 2026-11-07：24 种题型都建成功，返回题目 ID（现在是 32 位十六进制，早先是数字）。同一文件夹里已有相同题目时，服务端拒绝并说明，工具如实返回「没有新建」 |
+| `list_bank_questions` | 2026-11-07：只读，`POST qbank/search`，按关键词、分页列出题型、题干摘要、难度、使用量、文件夹、创建时间、题目 ID。**不返回答案和解析** |
 | `create_discussion` | 发帖成功，按服务端返回的 `topicId` 核实，中文正常 |
 | `start_checkin` | 普通签到发起成功，30 分钟，新活动核实到；手势、位置、二维码签到仍只支持预演 |
 | `create_class` | 新建班级并核实（测试班级已删除） |
 | `publish_assignment` | 作业库作业发放到指定班级，可带发放设置；作业列表核实到新发放记录 |
 | `reconcile_notices` | 按 UUID 补记结果未明的通知 |
-| `create_assignment` | 2026-11-07：建 2 道判断题，作业库核对题数一致。链路：`questionInit`（第一题 `workid` 留空，返回 `{questionid, relationid, workid}`）→ `toEditWorkQuestion`（返回 `success:true`）→ 后续每题都带同一个 `workid` 重复前两步 → `GET save-work` |
-| `create_exam` | 2026-11-07：建 1 道判断题，试卷库核对。链路：`createAnEmptyPaper`（返回 `{paperId}`）→ `update-exampaper-title` → `add-empty-paperquestion`（返回 `data:{paperQuestionId, paperLibraryRelationId}`）→ `editPaperTrueFalseV2`（`typeId` 填 paperLibraryRelationId，`questionId` 填 paperQuestionId） |
+| `create_assignment` | 2026-11-07：一份作业建 23 种题型（自定义评分），作业库核对 23 题，逐题读回题干和答案一致。链路见下文「题型」 |
+| `create_exam` | 2026-11-07：一份试卷建 22 种题型（含选做题），试卷库核对 22 题、总分 120，逐题读回答案一致 |
 | `publish_exam` | 2026-11-07：发给「测试」班，40 分钟，题目乱序，核实到新考试。`POST exam/test/publish`，设置项按白名单开放 |
 
-作业和考试目前只支持已验证的**判断题**，其他题型会明确拒绝。另外，分值显式填 0 时不会再被悄悄改成默认 5 分（测试发现的问题）。`on()` 打开静态基准页时跳过就绪检查（曾经遇到 frame not responding）。
+三个出题工具共用 `questions.py`：输入纯文本，按题型校验后转成各编辑器的请求，HTML 一律转义。分值显式填 0 会被拒绝，不会被悄悄改成默认 5 分。同一题型的第二道题沿用该题型已有的分组（作业 `relationid`、试卷 `paperLibraryRelationId`），不会每题建一个新分组。`on()` 打开静态基准页时跳过就绪检查（曾经遇到 frame not responding）。
 
 实测中发现并修好的问题：
 - 讨论区的 `urlToken` 在 `window.obj.urlToken` 里，而且**每次加载页面都会换**，必须在发帖的那个页面上取。
@@ -113,10 +114,43 @@
   - 题目来源：从题库选题、从云盘选题、AI 出题、智能导入。
   - 每题可设：题干（UEditor 富文本）、答案、答案解析、难度、知识点、标签、分值。
 - 新建链路（全部是接口）：
-  1. `POST work/questionInit`（courseid, clazzid, cpi, workid=空, relationid=0, title, directoryid, grading, questionGroup, originType=3, courseQuestionTypeId）：建作业和第一题。
-  2. `POST work/toEditWorkQuestion`（workid, questionid, workLibraryRelationid, type, typeName, courseQuestionTypeId, content, 判断题答案 answerForTF, score, answerAnalysis, difficulty, topicId, labelIdArr…）：写题目。
+  1. `POST work/questionInit`（courseid, clazzid, cpi, workid, relationid, title, directoryid, grading, questionGroup, originType, courseQuestionTypeId）：第一题 `workid` 留空，返回 `{questionid, relationid, workid}`。`relationid` 填该题型已有的分组 ID，没有就填 0（会新建分组）。
+  2. 普通题型 `POST work/toEditWorkQuestion`（整张 `#workForm` 序列化，返回 `success:true`）；组合题（完型填空、阅读理解、听力）`POST work/saveInnerQuestion`（返回 `status:true`）。
   3. `GET work/save-work?workid&title&grading&directoryid&workStatus=0&questionGroup=0`：保存。
-  - 已确认 `courseQuestionTypeId=3` 表示判断题，其他题型的编号待逐一验证。
+  - 系统题型的 `courseQuestionTypeId` 等于题型编号。百分制作业不能加测评题（页面限制）。
+- 答题卡作业（作业类型选「答题卡作业」，编辑器 `goToWorkEditor?…&scantron=1`）：正文是一个富文本（`POST work/save/explain`），题目只有答题卡：
+  1. `GET work/add-question?type&count&score&optionCount&title&grading`：按题型批量加空题（1 选择、2 填空、3 判断、4 简答；15 组合题走 `add-complex`）。
+  2. 点选项设答案，每题即时 `POST work/save-answer`（`answer` 是 JSON，如 `[{"name":"B","content":"","isanswer":true}]`）。
+  3. `POST work/save-scantron`（questionids、title、answer{题目ID}）→ `GET work/update-scantron`：从草稿箱转入作业库。只调前一步，作业会留在草稿箱。
+  - 2026-11-07 实测：建 2 道选择题的答题卡作业，作业库显示「答题卡」标记。尚未做成工具。
+- 分组作业（作业库「新建作业 → 分组作业」）打开的是 `mobilelearn/page/renwuNew/renwuPublishSetting_new.html`，即教学活动里的分组任务，归到活动一类。
+
+### 题型（作业、试卷、题库共用，2026-11-07 逐个实测）
+三个编辑器存的答案 JSON 完全相同，只是接口和少数表单字段不同。下表的「作业字段」指 `toEditWorkQuestion` / `qbank/add_question` 里除公共字段外的部分；试卷每题先 `add-empty-paperquestion`（qtype=题型编号，courseQuestionTypeId=0，relationid=该题型的 paperLibraryRelationId 或新 uuid），再调下表的试卷接口。
+
+| 编号 | 题型 | 作业 / 题库字段 | 试卷接口 | 可用于 |
+|---|---|---|---|---|
+| 0 | 单选 | `defAnswer`=字母，选项 `A`…`Z` | `editPaperSingleChoiceV2`（A–Z 全发） | 作业 试卷 题库 |
+| 1 | 多选 | `defAnswer` 重复多次；试卷里是 `A,C` | `editPaperMultipleChoiceV2` | 全部 |
+| 2 / 9 | 填空 / 分录 | 每空 `1`、`2`…；作业 `wrapAnswer`=各空用 ★ 连接，题库和试卷是 `answer`=★ 连接；`isMutex` | `editPaperBlankFillingV2` | 全部 |
+| 3 | 判断 | `answerForTF` true/false；试卷是 `answer` | `editPaperTrueFalseV2` | 全部 |
+| 4 5 6 7 8 18 | 简答、名词解释、论述、计算、其它、口语 | `answer`=参考答案 HTML（可空），`wordMinNum`、`wordnum` | `editPaperAnswerV2`（另有 useAi、autoScore、promptId=-1） | 全部 |
+| 11 | 连线 | `answer`=`[[左项{name:1..}],[右项{name:"A"..}],[{name:1,content:"B"}..]]`，另发 `1`/`A` 字段 | `editPaperConnectionLine` | 全部 |
+| 13 | 排序 | `answer`=`[[选项],{"answer":"DBAC"}]` | `editPaperSortQues` | 全部 |
+| 14 | 完型填空 | 题干用 `##1##` 标空，保存时换成带下划线的 span；小题只能是单选，小题数必须等于空数；`answer`=小题数组（无 typeId、无小题题干） | `editReadComPrehensionClozeText` | 全部 |
+| 15 / 19 | 阅读理解 / 听力 | 小题可为单选、多选、填空、判断、简答；`answer`=`[{id:uuid,type,typeId:0,name,topicIds,targetData,data:{score,content,answer}}]`；判断、简答小题的 `data.answer` 是再序列化一层的字符串 | `editReadComPrehensionClozeText` | 全部 |
+| 25 | 选做 | 同阅读理解，另有 `optionalNum`；每个小题分值都等于整题分值 | `editReadComPrehensionClozeText` | 试卷 题库 |
+| 17 | 程序 | `answer`=`[{answerCode:<pre><code>…,languageName,languageIndex,exampleArr:[{stdin,stdout,memory,time}],procedureReviewMode:"1"手动/"0"自动,preparedCode:[{codeNum,codeName,code}]}]`；语言编号：C 1、C# 2、Java 3、VB.NET 4、Python2 5、Golang 6、PHP 8、Bash 11、Python3.6.9 16、C++ 17、JavaScript 19、R 20、HTML 21、Python3.12.12 22、Octave 26 | `editPaperProcedure` | 全部 |
+| 20 | 共用选项 | `answer`=`[{title:"(1)-(n) 题共用备选答案：",frontDescribe:题干},[选项],[小题题干{name:1..}],[{name:1,content:"B"}..]]` | `editBType` | 全部 |
+| 21 | 测评 | `answer`=`[{"selectNum":n},[{name,content,score}..]]`，`selectMaxNum` | `editEvaluation` | 作业（仅自定义评分） 试卷 题库 |
+| 22 | 口语测评 | `readText`，`answer`=`[{readText,language:en/cn/fr/jp/sp/kr/de/ru,slack:"2",autoMark:"1",hideReadText:""}]` | — | 作业 题库 |
+| 23 | 钟表 | 没有题干；`content`=模式说明文字，`clockType` 0 认读 / 1 拨针，`answer`=`[{type,data:[{period:上午/下午,hour,minute}]}]` | — | 作业 题库 |
+| 24 | 选词填空 | 题干 `##n##` 标空；选项是纯文本 `A`…；`answer`=`[[{name:"A",content:词}..],[{name:1,content:"A"}..]]` | `editFillinBlanks` | 全部 |
+| 26 | 写作 | `answer`=`[{answer:范文,grade:"cet4",wordMinNum,wordnum:"15000"}]`，`subject=0`、`publishSource=2` | `editPaperAnswerV2` | 全部 |
+
+- 读回方法：作业编辑器左侧点题目是只读视图（显示答案、连线对应、排序结果、程序语言和用例）；试卷编辑器用 `doQuestionLiClick(id,type,0,false)`；题库用 `POST qbank/search`，返回里 `questionBank.answer` / `janswer` 是存下来的答案 JSON（这个接口只在探查时用来核对，`list_bank_questions` 不返回答案）。
+- 题库同一文件夹里不允许完全相同的题目，作业、试卷里建的题也会进题库参与判重。钟表题没有题干，同一种模式、同样时刻的钟表题在题库里只能有一道。
+
 - 发布：`GET work/check/question` → 设置页 `work/library/setting?courseid&cpi&workLibraryId` → `POST work/library/publish`。
   - 发放对象：`publishObj=[{"classid":…,"publishType":0}]`，选班控件仍是 `#choosepublish` / `.class_check` / `#confirmchoose`。
   - 有效时段：`startTime`、`endTime`。
@@ -142,9 +176,9 @@
 - 编辑器：试卷标题 `#examPaperTitle`、试卷难度、新建分卷、批量操作、题号模式（连续或按题型）、是否按题型归类。题型同作业，多了选做题，没有钟表题和口语测评题。题目来源：从题库、从云盘、AI 出题、智能导入。
 - 编辑链路：
   1. `POST exam/update-exampaper-title`（paperid, title）
-  2. `POST exam/add-empty-paperquestion`（paperid, relationid=客户端 uuid, qtype, courseQuestionTypeId, groupId）
+  2. `POST exam/add-empty-paperquestion`（paperid, relationid, qtype, courseQuestionTypeId=0, groupId）：relationid 是该题型已有分组的 paperLibraryRelationId，没有就给一个客户端 uuid（新建分组）
   3. `GET exam/toHandAddPaperQuestion?…&qtype&questionid&edit=true`（打开题目编辑器）
-  4. 每种题型有自己的保存接口，判断题是 `POST exam/editPaperTrueFalseV2`（paperid, courseid, isOpen, score, content, answer, type=3, questionId, typeId, difficulty, easy, topicId, labelIdArr, schoolTopicIds, answerAnalysis）。页面上的校验：分值大于 0、题干非空、已选答案（`.check_answer`，要原生 click 选项 `a.num_option`）。
+  4. 每种题型有自己的保存接口（见上文「题型」表），判断题是 `POST exam/editPaperTrueFalseV2`（paperid, courseid, isOpen, score, content, answer, type=3, questionId, typeId, difficulty, easy, topicId, labelIdArr, schoolTopicIds, answerAnalysis）。页面上的校验：分值大于 0、题干非空、已选答案（`.check_answer`，要原生 click 选项 `a.num_option`）。
   5. 「完成」只做 `GET exam/check-question-answer` 和界面确认，不再提交；每题保存时试卷就已经存好了。
 - 发放：`exam/test/topublish?taskid=0&clazzid&courseid&ut&cpi&paperid&score` → 确认提示「发布后不可修改题量和分值」→ `POST exam/test/publish`。
   - 发放对象：`publishObj=[{"classid":…,"publishType":0}]`、`makeup`（补考）。
@@ -161,7 +195,8 @@
 ### 资源中心·智能题库（mooc2-ans/qbank）
 - 入口：`qbank/questionlist?courseid&clazzid&cpi&ut=t&enc&t&v=6`。enc、t 和课程外壳的相同；**缺少 `v=6` 会提示「没有此页面访问权限」**。
 - 操作：创建题目（手动 `createQuestion()` 或从教学资源库导入 `showZyk()`）、批量导入、新建文件夹、导出（全部或选中，格式有 Ti、Word、Excel、PDF）、题型管理、标签管理（`createLabel`）、安全设置、锁定（`lockQuestion`）、删除（`deleteByIds` → `batchUpdateStatus`）、按题型/课程/正确率筛选、回收站。作业和考试里建的题也会进题库。
-- 新建：`qbank/create-question?courseid&cpi&dirId&pageNum&qbanksystem&microTopicId`，UEditor 实例 key 为 content、answerAnalysis、answerA–D。保存是 `POST qbank/add_question?courseid&questionBankId&microTopicId&saveAsNew&useAi&autoScore`，表单字段：`qType`、`courseQuestionTypeId`（单选是 0，判断是 3）、`content`、`A`/`B`/`C`/`D`、`defAnswer`（单选正确项）、`answerForTF`（判断题）、`answerAnalysis`、`difficulty`、`topicId`、`labelIdArr`、`dirId`、`uploadEnc`（页面变量）、`continueOperate`。
+- 新建：`qbank/create-question?courseid&cpi&dirId&pageNum&qbanksystem&microTopicId`（不能带课程外壳的其他参数，否则提示无权限），24 种题型都在一个页面里切换。保存是 `POST qbank/add_question?courseid&questionBankId&microTopicId&saveAsNew&useAi&autoScore`，`#workForm` 序列化：公共字段 `qType`=`originType`=题型编号、`courseQuestionTypeId=0`、`systemType=1`、`content`、`answerAnalysis`、`difficulty`、`uploadEnc`（页面变量）、`continueOperate`（true 时留在新建页继续出题），题型字段见上文「题型」表；组合题另带 `typeField`、`score`，选做题带 `optionalNum`。
+- 列表：`POST qbank/search`（courseid, cpi, dirId, courseIds, sw 关键词, pageNum, pageSize, qTypes, difficulty, 排序和筛选项），返回 `total`、`pageInfo`、`questionBankRelationList[].questionBank`。
 
 ### 资源中心·资料库（mooc2-ans/coursedata）
 - 操作：
