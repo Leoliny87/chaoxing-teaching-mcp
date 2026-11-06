@@ -201,6 +201,13 @@
   - 学习任务（6 种）：章节测验、讨论、投票问卷、直播、速课、课程图谱
   - 更多：注释、文档导入
   - AI：AI 排版（通用模板 1/2、科技蓝，或自定义要求）、智能编写、AI 校正
+  - **插入项的存储格式（已用「链接」实测）**：
+    - 正文里插入的是一个占位块：`<div class="taskIframeWrap" data-iframeid="ID" contenteditable="false"><iframe class="taskIframe ans-module ans-<模块>-module" id="ID" module="<模块>" type="online" ywbf="1" data="<HTML 转义后的 JSON>" src="/ananas2/html/insert<模块>.html"></iframe></div>`。
+    - 同一个对象还要放进 `savecard` 的 `attachments` 数组。链接的那一项是 `{"module":"hyperlink","href","target","title","type":"text|card|preview","linkType":1,"textValue","mid","jobid","_jobid"}`，其中 `jobid` 是任务点编号。
+    - `getcard` 和 `getcardlist` 不返回 `attachments`。
+    - 已验证：用接口写入「原正文 + 1 个链接占位块 + 1 项 attachments」后，读回正确，只读预览里链接模块正常加载。
+  - 「链接」弹窗：链接类型（网页链接或章节目录）、标题、网址（必填）、提示文字、在新窗口打开、显示模式（文本、卡片、预览）。插入后带「任务点」开关（默认开，学生打开链接才算完成）。
+  - **注意**：用脚本修改弹窗里的表单（包括点 label 让单选框变化）会触发页面 `input` 事件，BrowserSkill 会把它算成人工操作，撤销 Agent 当前动作。弹窗表单要用 `bsk fill` / `bsk click` 按引用操作。另外，几次没完整执行的尝试叠加起来插入了 7 个重复链接，后来用接口清理掉了。
   - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。**这些插入项还没有逐个实际添加过。**
 
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
