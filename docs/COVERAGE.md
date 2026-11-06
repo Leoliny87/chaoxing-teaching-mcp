@@ -29,6 +29,34 @@
 
 2026-11-06 真实只读验证通过的工具：health_check、list_courses、open_course、list_chapters、list_materials、list_notices、list_assignments、list_assignment_library、list_exams、list_activities、list_students、get_grades、list_inbox。
 
+## 1.1 学生端入口（实测）
+
+- 「我学的课」列表：`POST mooc2-ans/visit/courselistdata`，表单参数 `courseType=1`（0 表示我教的课），返回 HTML；每门课是一个 `div.course.learnCourse`，隐藏字段含 courseId、clazzId、curPersonId。
+- 测试课「助手」同时出现在「我教的课」和「我学的课」。学生身份所在的班是「测试」班。
+- 学生课程入口：`mooc1/visit/stucoursemiddle?courseid&clazzid&cpi&ismooc2=1&v=2`，会跳到 `mooc2-ans/mycourse/stu`。
+- 学生端模块：AI助教（`mooc1/course-ans/ai/getStuAiWorkBench`）、任务（`mobilelearn/page/active/stuActiveList`）、章节（`mooc2-ans/mycourse/studentcourse`）、讨论（groupweb topicList）、作业（`mooc1/mooc2/work/list`）、考试（`mooc1/exam-ans/mooc2/exam/exam-list`）、资料（`mooc2-ans/coursedata/stu-datalist`）、错题集（`mooc2-ans/wrongque/page`）、学习记录（`stat2-ans/study-data/index`）、课程图谱（`stat2-ans/study-knowledge/index`）。
+- 学生端活动接口：`mobilelearn/v2/apis/active/student/activelist`、`v2/apis/active/getData`。
+
+## 1.2 已实际执行过的写流程（测试课「助手」，2026-11-06）
+
+### 教学任务（任务引擎 task.chaoxing.com）
+1. 新建：`GET /task/createTask?encryptedCourseId&encryptedType&businessCode&folderId`，参数来自 `task/index` 页面内联脚本里的常量。返回 `encryTaskId`、`backToken`、`decryptCourseId`，然后跳到 `/task/newTaskToList?encryptedCourseId&encryTaskId&token`。
+2. 基础信息：`POST /task/taskCommit`，JSON 字段包括 `taskId`（加密）、`name`（≤100 字）、`cover`、`startDate`、`endDate`、`introduce`/`introduceRichText`、`selectedModes`（默认 `["list"]`）、`labelList`、`courseId`、`schoolId`、`publishStatus` 等。切到「任务设计」标签时页面会自动提交一次。
+3. 添加任务点：「添加」菜单共 19 类，外加「自定义」：
+   - 学习内容：视频、音频、文档、章节、知识点、电子书、3D资源
+   - 教学活动：线下课堂、线上课堂、主题讨论、分组任务、AI课堂
+   - 练习评估：作业、测验、自测、AI实践
+   - 其他：问卷、审批、签到
+
+   已验证「作业」（type=4），从本课作业库选择，也可在弹窗里「新建」：
+   `POST /homework/getMoocData`（列出作业库）→ `POST /homework/checkAddition [{name,courseId,workLibraryId}]` → `POST /homework/cloneCourseHomework?moocCourseId&encryTaskId [{workLibraryId,score,questionNum,workType,...}]` → `POST /taskPoint/saveTaskPoints {taskPoints:[{type:4,externalDataId:workLibraryId,name,fkTaskId,fkGroupId,courseId,workType,shareType:0,...}]}`。
+4. 发布：`GET /peTaskPlan/taskPointCheckPublish` → `POST /taskReference/coursePublishAuthentication` → `POST /taskReference/couresPublishInitData`（返回各班 token）→ `POST /taskReference/taskPublish {encryTaskId, coursePublishParam:[{classId,className,publishtype:0,token}]}`。弹窗里可选班级，也可搜索具体学生。
+5. 任务设置：展示样式 16 种（列表、卡片、框架、图谱、藏宝图、3D小岛等）、封面模版、报名开关、证书开关、任务目标（≤200 字）、管理权限；任务设计里还有「达标标准」「组间闯关设置」和分组。
+6. 列表项字段：`taskId`（加密）、`name`、`publishStatus`、`taskPointsNumber`、`taskStudentsNumber`、`startDateStr`/`endDateStr`、`labelList`、`isCreator` 等。
+7. 接口目录（从页面脚本提取）：`createTask`、`createOrEditTask`、`deleteTaskInfo`、`taskDelete`、`swapTaskOrder`、`taskMoveToFolder`、`addNewFolder`、`reNameFolderConfirm`、`removeFolderConfirm`、`exportTask`、`getCourseImportTasks`/`confirmCourseImport`、`confirmCourseCopyTask`、`tasklabel/getTaskLabelDatas`/`saveOrDeleteTaskLabelData`、`commitPeTaskBaseInfo`、`taskStatistics/index`、`taskReference/getCourseIdClazz`。
+
+测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
+
 ## 2. 还没探查的范围
 
 - 每个模块的二级页面和全部写操作流程（新建、编辑、发布、删除、批阅、导入导出）。写流程**只在专门的测试课程里探查**，每次写之前确认。
