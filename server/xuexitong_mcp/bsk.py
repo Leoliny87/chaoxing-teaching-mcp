@@ -521,7 +521,8 @@ class Bsk:
         raise last  # type: ignore[misc]
 
     # ------------------------------------------------------------------ high level
-    def navigate(self, url: str, wait: str = "load", settle: float | None = None, *, allow_leave: bool = False) -> str:
+    def navigate(self, url: str, wait: str = "load", settle: float | None = None, *, allow_leave: bool = False,
+                 readiness: bool = True) -> str:
         """Navigate the agent tab.
 
         allow_leave=True may ONLY be passed by a write op that has already finished and verified its
@@ -546,7 +547,11 @@ class Bsk:
         self.url = d.get("final_url") or d.get("url") or url
         self.obs_text = ""
         time.sleep(self.cfg.settle if settle is None else settle)
-        self.wait_readiness()
+        # readiness=False: the caller only runs same-origin requests from this
+        # page's JS context (no observation-based clicks), and very large pages
+        # (e.g. the discussion editor) never yield a complete observation.
+        if readiness:
+            self.wait_readiness()
         return self.url
 
     _LEAVE_OK_HOSTS = (".chaoxing.com",)

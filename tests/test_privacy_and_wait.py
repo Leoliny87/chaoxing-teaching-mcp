@@ -270,3 +270,28 @@ def test_upload_preview_digest_runs_on_this_platform(tmp_path):
     p.write_bytes(b"synthetic")
     d = srv._upload_preview_digest(p)
     assert d["size"] == 9 and len(d["sha256"]) == 64
+
+
+@pytest.mark.parametrize("result", [[], [{"clazz_id": "", "name": "x"}]])
+def test_ctx_refuses_to_guess_a_class_on_empty_list(cfg, monkeypatch, result):
+    from xuexitong_mcp.xxt import Course, XxtError
+    c = _client(cfg)
+    course = Course(id="100", name="合成课程", cpi="9")
+    monkeypatch.setattr(c, "course", lambda q: course)
+    monkeypatch.setattr(c.b, "navigate", lambda url, **kw: "https://mooc1.chaoxing.com/c?clazzId=5&enc=E&t=1&cpi=9")
+    monkeypatch.setattr(c, "on", lambda *a, **k: result)
+    with pytest.raises(XxtError):
+        c.ctx("100", refresh=True)
+    assert course.enc == "" and course.ctx_time == 0.0
+
+
+def test_ctx_refuses_to_guess_a_class_on_page_script_error(cfg, monkeypatch):
+    from xuexitong_mcp.xxt import Course, XxtError
+    c = _client(cfg)
+    course = Course(id="100", name="合成课程", cpi="9")
+    monkeypatch.setattr(c, "course", lambda q: course)
+    monkeypatch.setattr(c.b, "navigate", lambda url, **kw: "https://mooc1.chaoxing.com/c?clazzId=5&enc=E&t=1&cpi=9")
+    monkeypatch.setattr(c, "on", lambda *a, **k: (_ for _ in ()).throw(JsError("x")))
+    with pytest.raises(XxtError):
+        c.ctx("100", refresh=True)
+    assert course.classes == []

@@ -319,7 +319,14 @@ class XxtBase:
                 const d=D(await F('/mooc2-ans/tcm/clazz-manage?courseid={c.id}&clazzid={c.clazz_id}&v=0&cpi={c.cpi}'));
                 return [...d.querySelectorAll('li.changeclazzlistli[data]')].map(l=>({{clazz_id:l.getAttribute('data'),name:T(l.querySelector('p'))||T(l)}}));
             """)
-            c.classes = cls or [{"clazz_id": c.clazz_id, "name": ""}]
+            # Observed: right after a class is deleted the list can come back empty
+            # once. Never guess a single default class: publish/sign-in targets are
+            # resolved from this list.
+            if not cls or any(not x.get("clazz_id") for x in cls):
+                c.enc = ""
+                c.ctx_time = 0.0
+                raise XxtError("班级列表读取为空或不完整；请稍后重试 open_course。")
+            c.classes = cls
         except BskError:
             # Any browser error (denied, timeout, control not ready): do not
             # fall back to a guessed single-class list -- publish targets are
@@ -329,7 +336,10 @@ class XxtBase:
             c.ctx_time = 0.0
             raise
         except JsError:
-            c.classes = [{"clazz_id": c.clazz_id, "name": ""}]
+            c.classes = []
+            c.enc = ""
+            c.ctx_time = 0.0
+            raise XxtError("班级列表页面脚本出错；没有使用猜测的班级。")
         c.ctx_time = time.time()
         return c
 
@@ -389,7 +399,8 @@ def make_client(cfg: Config):
     from .ops_course import CourseOps
     from .ops_notice import NoticeOps
     from .ops_v3 import V3Ops
+    from .ops_write import WriteOps
 
-    class Xxt(NoticeOps, V3Ops, ContentOps, CourseOps, ActivityOps):
+    class Xxt(NoticeOps, WriteOps, V3Ops, ContentOps, CourseOps, ActivityOps):
         pass
     return Xxt(cfg)

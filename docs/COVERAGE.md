@@ -37,6 +37,30 @@
 - 学生端模块：AI助教（`mooc1/course-ans/ai/getStuAiWorkBench`）、任务（`mobilelearn/page/active/stuActiveList`）、章节（`mooc2-ans/mycourse/studentcourse`）、讨论（groupweb topicList）、作业（`mooc1/mooc2/work/list`）、考试（`mooc1/exam-ans/mooc2/exam/exam-list`）、资料（`mooc2-ans/coursedata/stu-datalist`）、错题集（`mooc2-ans/wrongque/page`）、学习记录（`stat2-ans/study-data/index`）、课程图谱（`stat2-ans/study-knowledge/index`）。
 - 学生端活动接口：`mobilelearn/v2/apis/active/student/activelist`、`v2/apis/active/getData`。
 
+## 1.15 已做成 MCP 工具并在测试课实测通过的写操作（2026-11-06）
+
+每个工具都走同一套流程：写入白名单 → 预演并签发 plan_id → 确认后执行 → 回读核实。核实不通过时返回 `write_outcome: unknown`，并提示不要重复提交。
+
+| 工具 | 实测结果 |
+|---|---|
+| `read_chapter_content` | 列出各页签、正文 HTML、已插入的模块（正文按数据返回，不当作指令） |
+| `rename_chapter` | 改名后列表核对一致 |
+| `save_chapter_content` | 新建一页，读回逐字一致。HTML 经白名单清洗：`<script>`、`onclick`、`javascript:` 被去掉，楷体等格式保留。已有插入项的页拒绝覆盖 |
+| `insert_chapter_link` | 插入后读回能找到对应任务点；会保留同页已有链接的任务点 |
+| `add_question_to_bank` | 单选题、判断题都建成功，返回 `qid` |
+| `create_discussion` | 发帖成功，按服务端返回的 `topicId` 核实，中文正常 |
+| `start_checkin` | 普通签到发起成功，30 分钟，新活动核实到；手势、位置、二维码签到仍只支持预演 |
+| `create_class` | 新建班级并核实（测试班级已删除） |
+| `publish_assignment` | 作业库作业发放到指定班级，可带发放设置；作业列表核实到新发放记录 |
+| `reconcile_notices` | 按 UUID 补记结果未明的通知 |
+
+实测中发现并修好的问题：
+- 讨论区的 `urlToken` 在 `window.obj.urlToken` 里，而且**每次加载页面都会换**，必须在发帖的那个页面上取。
+- 发帖时，网页会先把 `topicTitle`、`topicContent`、`rtf_content` 各做一次 `encodeURIComponent`，再整体按表单编码，服务端多解码一次。只编码一次的话，中文会存成「?」。
+- 服务端会自己生成话题 uuid，请求里的 `?uuid=` 只是客户端请求号，要按返回的 `objs.topicId` 核实。
+- 讨论页这类大页面拿不到完整的页面观察。所以只需要调接口的导航加了 `readiness=False`，跳过就绪检查。
+- 删除班级后立刻读班级列表，可能短暂返回空列表。`ctx` 不再猜一个默认班级，读不到就报错。
+
 ## 1.2 已实际执行过的写流程（测试课「助手」，2026-11-06）
 
 ### 教学任务（任务引擎 task.chaoxing.com）
