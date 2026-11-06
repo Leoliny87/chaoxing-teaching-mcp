@@ -38,11 +38,54 @@ def redact_result(value, *, preserve_details: bool = False):
     return value
 
 
+_CJK = re.compile(r"[一-鿿]")
+_LONG_DIGITS = re.compile(r"\d{5,}")
+_SAFE_CODE = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}")
+
+
+def _safe_code(error) -> str:
+    code = str(getattr(error, "code", "") or "")
+    return code if _SAFE_CODE.fullmatch(code) else "error"
+
+
+def safe_error_text(error) -> str:
+    """User-facing text for an exception without relaying unstructured evidence.
+
+    * Local BskError / XxtError / ValueError messages are written by this package.
+    * BskError from the bsk process (origin="cli") may echo page data, inputs or
+      handles: only its code is shown; structured labels go via safe_browser_error_details().
+    * Page-script errors (JsError) keep only messages that look like this package's own
+      Chinese `throw Error(...)` texts; anything else (TypeError text, page strings) is dropped.
+    * Every other exception is reduced to its type name.
+    """
+    name = type(error).__name__
+    if name == "BskError":
+        if getattr(error, "origin", "cli") == "local":
+            return redact_text(f"{_safe_code(error)}: {getattr(error, 'message', '')}")
+        return f"{_safe_code(error)}（BrowserSkill 返回，原始内容已隐藏）"
+    if name == "JsError":
+        msg = str(error)
+        if _CJK.search(msg) and not _LONG_DIGITS.search(msg) and len(msg) <= 120:
+            return redact_text(msg)
+        return "页面脚本异常（原始内容已隐藏）"
+    if name in ("XxtError", "NeedsHuman", "ValueError"):
+        return redact_text(str(error))
+    return name
+
+
+def safe_exception_log(error) -> str:
+    """Exception type plus code locations only; never the exception message or locals."""
+    import traceback
+    frames = traceback.extract_tb(error.__traceback__)[-8:]
+    where = " <- ".join(f"{f.filename.replace(chr(92), '/').rsplit('/', 1)[-1]}:{f.lineno}({f.name})" for f in reversed(frames))
+    return f"{type(error).__name__} at {where or '?'}"
+
+
 def safe_browser_error_details(error, *, health_step: str | None = None) -> dict:
     """Keep bounded diagnostic labels, never raw page evidence or error payloads."""
     data = getattr(error, "data", None)
     data = data if isinstance(data, dict) else {}
-    details = {}
+    details = {"code": _safe_code(error)} if type(error).__name__ == "BskError" else {}
     for key in ("reason", "phase", "effect_state"):
         value = data.get(key)
         if isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value):

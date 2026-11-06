@@ -42,12 +42,18 @@ BLANK_URL = "https://mooc2-ans.chaoxing.com/mooc2-ans/js/ServerHost.js"
 
 
 class BskError(RuntimeError):
-    def __init__(self, code: str, message: str, data: Any = None, raw: str = ""):
+    """origin="local": code and message were written by this package (safe to show).
+    origin="cli": message/raw came from the bsk process and may echo page data or inputs;
+    callers that report to users or logs must use only `code` and privacy.safe_browser_error_details().
+    """
+
+    def __init__(self, code: str, message: str, data: Any = None, raw: str = "", *, origin: str = "local"):
         super().__init__(f"{code}: {message}")
         self.code = code or "error"
         self.message = message or ""
         self.data = data if isinstance(data, dict) else {}
         self.raw = raw
+        self.origin = origin
 
     @property
     def not_dispatched(self) -> bool:
@@ -148,7 +154,9 @@ def _summarize_args(args: list[str]) -> str:
 
 def _setup_logger(cfg: Config) -> logging.Logger:
     lg = logging.getLogger("xuexitong_mcp.bsk")
-    if lg.handlers:
+    # Only our own redacting file handler counts: a handler attached by a host
+    # or test framework must not stop the file log (and its filter) being set up.
+    if any(getattr(h, "_xxt_redacting", False) for h in lg.handlers):
         return lg
     cfg.log_dir.mkdir(parents=True, exist_ok=True)
     try:
@@ -166,6 +174,7 @@ def _setup_logger(cfg: Config) -> logging.Logger:
         pass
     h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     h.addFilter(_RedactLogFilter())
+    h._xxt_redacting = True
     lg.addHandler(h)
     lg.setLevel(getattr(logging, cfg.log_level.upper(), logging.INFO))
     lg.propagate = False
@@ -201,7 +210,10 @@ class Bsk:
         t0 = time.time()
         self.calls += 1
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout or self.cfg.t_command)
+            # bsk emits UTF-8 JSON. Without an explicit encoding Windows decodes it
+            # with the ANSI code page (e.g. GBK) and Chinese labels/page text break.
+            p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                               timeout=timeout or self.cfg.t_command)
         except subprocess.TimeoutExpired:
             self.log.warning("bsk TIMEOUT %.1fs %s", time.time() - t0, _short(_summarize_args(cmd[1:])))
             raise BskError("timeout", f"bsk command timed out after {timeout or self.cfg.t_command}s")
@@ -232,9 +244,9 @@ class Bsk:
                     except json.JSONDecodeError:
                         pass
         if isinstance(data, dict) and data.get("code") and (p.returncode != 0 or "message" in data):
-            raise BskError(str(data.get("code")), str(data.get("message", "")), data.get("data"), raw=out + err)
+            raise BskError(str(data.get("code")), str(data.get("message", "")), data.get("data"), raw=out + err, origin="cli")
         if p.returncode != 0:
-            raise BskError("exit_%d" % p.returncode, _short(err or out, 500), raw=out + err)
+            raise BskError("exit_%d" % p.returncode, _short(err or out, 500), raw=out + err, origin="cli")
         if data is None:
             return {"text": out}
         return data if isinstance(data, dict) else {"value": data}
@@ -289,7 +301,8 @@ class Bsk:
                 st = json.loads(STATE_FILE.read_text())
                 if st.get("session") in self._live_sessions():
                     self.session, self.tab = st["session"], st.get("tab")
-                    self.log.info("reusing session %s tab %s", self.session, self.tab)
+                    # Session/tab identifiers are control handles: never log them.
+                    self.log.info("reusing session from previous run")
                     if self.tab:
                         try:
                             self.run(["tab", "select", str(self.tab)])
@@ -318,7 +331,7 @@ class Bsk:
         self.session = d["session_id"]
         self.tab = None
         self._initialize_owned_tab()
-        self.log.info("started session %s tab %s", self.session, self.tab)
+        self.log.info("started session")
 
     def _initialize_owned_tab(self):
         """Navigate the one session-created blank tab before attempting a sync.
@@ -419,7 +432,7 @@ class Bsk:
 
     def recover_tab(self):
         """Abandon a stuck tab (e.g. cdp_failed) and continue in a fresh one."""
-        self.log.warning("recover_tab: replacing tab %s", self.tab)
+        self.log.warning("recover_tab: replacing owned tab")
         try:
             self._new_tab()
         except BskError as e:
@@ -429,7 +442,7 @@ class Bsk:
 
     def recover_session(self):
         """Hard recovery (permission_denied 'Receiving end does not exist', stuck session)."""
-        self.log.warning("recover_session: restarting session %s", self.session)
+        self.log.warning("recover_session: restarting session")
         old = self.session
         self.session = None
         if old:
@@ -553,12 +566,13 @@ class Bsk:
         for dl in dialogs:
             typ = str(dl.get("type") or "").lower()
             host = (_up.urlsplit(str(dl.get("url") or "")).hostname or "").lower()
-            msg = str(dl.get("message") or "")[:120]
             if typ != "beforeunload" or not allow_leave or not host.endswith(self._LEAVE_OK_HOSTS):
                 self.log.warning("refusing to auto-handle dialog type=%s host=%s", typ, host)
+                # The dialog text is page content (may name people); keep it out of
+                # the error so it cannot reach tool results or logs.
                 raise BskError("dialog_needs_human",
-                               f"页面上有未处理的 {typ or '未知'} 对话框（{msg or '无文字'}），为安全起见不会自动点“确定”。"
-                               "请在 Chrome 里人工处理后再试。", data={"dialog": {"type": typ, "host": host, "message": msg}})
+                               f"页面上有未处理的 {typ or '未知'} 对话框，为安全起见不会自动点“确定”。"
+                               "请在 Chrome 里人工查看并处理后再试。", data={"dialog": {"type": typ, "host": host}})
         for dl in dialogs:
             did = dl.get("dialog_id") or dl.get("id")
             self.run(["dialog", "accept", str(did)], timeout=10)
@@ -588,12 +602,11 @@ class Bsk:
         return v
 
     def href(self) -> str:
+        # A browser error must not silently return a stale URL: callers parse
+        # course/class IDs from it. Only a page-script failure keeps the cache.
         try:
             self.url = self.eval("return location.href")
-        except BskError as e:
-            if e.code == "permission_denied":
-                raise
-        except Exception:
+        except JsError:
             pass
         return self.url
 

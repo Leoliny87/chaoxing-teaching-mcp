@@ -128,7 +128,7 @@ class NoticeOps:
         path.parent.mkdir(parents=True,exist_ok=True)
         fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600)
         try:
-            os.fchmod(fd,0o600)
+            if hasattr(os,'fchmod'):os.fchmod(fd,0o600)  # absent on Windows before 3.13
             os.write(fd,(json.dumps({'time':time.time(),**entry},ensure_ascii=False)+'\n').encode())
             os.fsync(fd)
         finally:os.close(fd)

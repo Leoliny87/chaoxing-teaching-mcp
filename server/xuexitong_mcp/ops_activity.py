@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .bsk import BskError, FIXED_HOMEPAGE
-from .privacy import safe_browser_error_details
+from .privacy import safe_browser_error_details, safe_error_text
 from .xxt import (ACTIVE_STATUS, BASE_PAGE, ML, NOTICE, SIGN_TYPES, _G, Course, XxtBase, XxtError, _best, _safe_id)
 
 
@@ -173,7 +173,7 @@ class ActivityOps(XxtBase):
                     time.sleep(1.5)
                 self.b.click_label(r'(link|button) "确定"', settle=1.5)
             except BskError as e:
-                raise XxtError(f"地图选点失败（{e.message}）。可以不传 address，使用默认的学校位置。")
+                raise XxtError(f"地图选点失败（{safe_error_text(e)}）。可以不传 address，使用默认的学校位置。")
             self.b.sync()
             ref_line = next((ln for ln in self.b.obs_text.splitlines() if re.search(r'@e\d+ button "定位', ln)), "")
             loc = re.search(r'button "定位\s*([^"]*)"', ref_line)
@@ -339,7 +339,7 @@ class ActivityOps(XxtBase):
                 res["hint"] = "Chrome 里的 BrowserSkill 扩展没有连接：请确认 Chrome 已打开，点击一下扩展图标或刷新任意页面让它重新连接（不需要重启 Chrome）。"
                 return res
         except BskError as e:
-            res["bsk_doctor"] = f"失败: {e}"
+            res["bsk_doctor"] = f"失败: {safe_error_text(e)}"
             res["browser_error"] = safe_browser_error_details(e, health_step=step)
             self.b.preserve_tab = True
             res["ok"] = False
@@ -353,7 +353,8 @@ class ActivityOps(XxtBase):
         try:
             step = "session"
             self.b.ensure_session(renew_idle_readonly=True)
-            res["session"] = {"session": self.b.session, "tab": self.b.tab}
+            # Report only that control is bound; session/tab handles stay internal.
+            res["session"] = {"bound": isinstance(self.b.session, str) and isinstance(self.b.tab, int)}
             step = "login"
             lg = self.on(NOTICE, "const r=await fetch('/mobile/notice/getNoticeList?type=2&tag=&lastValue=',{credentials:'include'}); if(!r.ok) return {ok:false,http_status:r.status}; const t=await r.text(); try{const j=JSON.parse(t); return {ok:Array.isArray(j?.notices?.list)}}catch(e){return {ok:false,url:r.url}}")
             res["login"] = "已登录" if isinstance(lg, dict) and lg.get("ok") else f"未登录或登录已过期，请在 Chrome 中手动登录学习通（{lg}）"
@@ -375,7 +376,7 @@ class ActivityOps(XxtBase):
             sample = self.here("return document.body.innerText.slice(0,300)") or ""
             res["ui_language"] = "中文" if re.search(r"(我教的课|我学的课|新建课程)", sample) else ("English" if re.search(r"Teaching|Learning|New Create", sample) else "未知")
         except BskError as e:
-            res["error"] = f"BskError: {e}"
+            res["error"] = f"BskError: {safe_error_text(e)}"
             if e.code != "login_required":
                 self.b.preserve_tab = True
                 self.b._login_handoff = False
@@ -384,9 +385,9 @@ class ActivityOps(XxtBase):
                 res.update(login="未登录", needs_human=True, login_url=FIXED_HOMEPAGE,
                            hint="请本人在固定 local_browser / example-browser-id Profile 手动登录学习通；不要提交密码到聊天，也不要切换浏览器实例或自动重试。")
                 if isinstance(self.b.session, str) and isinstance(self.b.tab, int):
-                    res["session"] = {"session": self.b.session, "tab": self.b.tab}
+                    res["session"] = {"bound": True}
         except Exception as e:  # report, don't raise
-            res["error"] = f"{type(e).__name__}: {e}"
+            res["error"] = safe_error_text(e)
         res["ok"] = (res.get("bsk_doctor") == "ok" and res.get("guard_extension") is True
                      and res.get("login") == "已登录" and res.get("ui_language") == "中文"
                      and isinstance(res.get("courses"), int) and "error" not in res)

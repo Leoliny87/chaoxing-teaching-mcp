@@ -27,7 +27,7 @@ from . import __version__
 from . import config as _config
 from .bsk import BskError, JsError, FIXED_HOMEPAGE
 from .xxt import NeedsHuman, XxtError, make_client
-from .privacy import redact_result, safe_browser_error_details
+from .privacy import redact_result, safe_browser_error_details, safe_error_text, safe_exception_log
 
 INSTRUCTIONS = """学习通教师端研究工具。所有写操作先预演，向用户复述具体课程、对象、受众和影响，取得明确批准后，使用相同参数、confirm=true 和单次 plan_id 执行。plan_id 仅绑定参数，不代表用户批准。未配置的课程禁止写入。失败、超时、被拒或结果不明时，停止提交并先查状态；不得绕过浏览器检查。验证码、短信、协议接受等由用户本人处理。当前功能和真实验证尚不完整，详见交接文档。"""
 
@@ -54,10 +54,12 @@ def shutdown():
 
 def _err(e: Exception) -> dict:
     if isinstance(e, NeedsHuman):
-        return {"ok": False, "needs_human": True, "error": str(e)}
+        return {"ok": False, "needs_human": True, "error": safe_error_text(e)}
     if isinstance(e, (XxtError, ValueError)):
-        return {"ok": False, "error": str(e)}
+        return {"ok": False, "error": safe_error_text(e)}
     if isinstance(e, BskError):
+        msg = f"浏览器自动化(bsk)出错：{safe_error_text(e)}"
+        details = safe_browser_error_details(e)
         # Do not turn a rejected/uncertain read into an implicit shutdown action.
         # Retain the owned tab and state for deliberate reconciliation.
         existing = _state.get("client")
@@ -67,26 +69,27 @@ def _err(e: Exception) -> dict:
                 existing.b._login_handoff = False
         if e.code == "login_required":
             return {"ok": False, "needs_human": True, "login": "未登录", "login_url": FIXED_HOMEPAGE,
-                    "error": str(e), "hint": "请本人在配置指定的本地 Profile 手动登录后继续；不自动重试，不更换实例。"}
+                    "error": msg, "hint": "请本人在配置指定的本地 Profile 手动登录后继续；不自动重试，不更换实例。"}
         if e.code in ("control_not_ready", "sync_incomplete", "observation_unavailable") or e.code.startswith("readiness_"):
-            return {"ok": False, "error": f"浏览器自动化(bsk)出错：{e}",
+            return {"ok": False, "error": msg, "browser_error": details,
                     "hint": "当前控制状态或同步凭据不完整，已停止操作；请检查状态，勿自动重试。"}
         if e.code == "permission_denied":
-            details = safe_browser_error_details(e)
-            return {"ok": False, "error": f"浏览器自动化(bsk)出错：{e}", "browser_error": details,
+            return {"ok": False, "error": msg, "browser_error": details,
                     "hint": "BrowserSkill 已拒绝本次操作；停止自动重试及替代路径，先核对状态并按适用授权处理。"}
-        return {"ok": False, "error": f"浏览器自动化(bsk)出错：{e}", "hint": "可先调用 health_check；若 Chrome/扩展断开请人工处理。写操作不要盲目重试，先用列表工具确认是否已生效。"}
+        return {"ok": False, "error": msg, "browser_error": details,
+                "hint": "可先调用 health_check；若 Chrome/扩展断开请人工处理。写操作不要盲目重试，先用列表工具确认是否已生效。"}
     if isinstance(e, JsError):
-        return {"ok": False, "error": f"页面脚本出错：{e}"}
+        return {"ok": False, "error": f"页面脚本出错：{safe_error_text(e)}"}
     # Error reporting must not create a new client or mask the original error
     # when initialisation failed or the logger itself is unavailable.
+    # Log only the exception type and code locations, never its message.
     try:
         c = _state.get("client")
         if c is not None:
-            c.b.log.error("tool error: %s", traceback.format_exc())
+            c.b.log.error("tool error: %s", safe_exception_log(e))
     except Exception:
         pass
-    return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return {"ok": False, "error": f"内部错误：{safe_error_text(e)}"}
 
 
 # ------------------------------------------------------------------ dry-run plans (server-side)
@@ -279,7 +282,8 @@ def _upload_preview_digest(path):
         digest = hashlib.sha256()
         # Avoid blocking on a substituted FIFO and do not follow a final symlink
         # introduced after the path allowlist check.
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0))
+        # O_NONBLOCK / O_NOFOLLOW are POSIX-only; O_BINARY is Windows-only.
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "rb") as stream:
             before = os.fstat(stream.fileno())
             if not stat.S_ISREG(before.st_mode):

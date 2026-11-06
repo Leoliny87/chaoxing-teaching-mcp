@@ -206,6 +206,12 @@ class XxtBase:
     def on(self, host: str, body: str, *, retry_safe: bool = True, timeout: float | None = None) -> Any:
         """Run JS `body` (async function body, may use F/J/POST/D/T helpers) on an origin of `host`."""
         js = JS_PRELUDE + f"if(location.host!=={json.dumps(host)}) return {{__wo:location.host}};\n" + body
+        # Same-origin fetch only needs an origin, not the current UI page. The
+        # new Vue pages (mooc2-ans-vue) keep re-rendering, so BrowserSkill
+        # rejects an evaluate there (document_changed / observation_changed).
+        # Always run from the host's static base page, whose document is stable.
+        if self.b.url != BASE_PAGE[host]:
+            self.b.navigate(BASE_PAGE[host], settle=0.2)
         for _ in range(2):
             r = self.b.eval(js, retry_safe=retry_safe, timeout=timeout)
             if isinstance(r, dict) and "__wo" in r:
@@ -218,7 +224,13 @@ class XxtBase:
         return self.b.eval(JS_PRELUDE + body, retry_safe=retry_safe)
 
     def wait_for(self, js_cond: str, timeout: float = 15, interval: float = 1.0) -> Any:
-        """Poll until JS body returns a truthy value."""
+        """Poll until JS body returns a truthy value.
+
+        Only a page-script exception (element/global not there yet) means "keep
+        waiting". Every BrowserSkill error -- timeout, control not ready, denied,
+        stale receipt -- propagates at once: polling past it would issue further
+        browser commands after the controller reported a problem.
+        """
         t0 = time.time()
         last = None
         while time.time() - t0 < timeout:
@@ -226,9 +238,6 @@ class XxtBase:
                 last = self.here(js_cond)
                 if last:
                     return last
-            except BskError as e:
-                if e.code == "permission_denied":
-                    raise
             except JsError:
                 pass
             time.sleep(interval)
@@ -311,15 +320,14 @@ class XxtBase:
                 return [...d.querySelectorAll('li.changeclazzlistli[data]')].map(l=>({{clazz_id:l.getAttribute('data'),name:T(l.querySelector('p'))||T(l)}}));
             """)
             c.classes = cls or [{"clazz_id": c.clazz_id, "name": ""}]
-        except BskError as e:
-            if e.code == "permission_denied":
-                # Do not leave partially refreshed identifiers or an older class
-                # list usable as a fresh context after the denied read.
-                c.classes = []
-                c.enc = ""
-                c.ctx_time = 0.0
-                raise
-            c.classes = [{"clazz_id": c.clazz_id, "name": ""}]
+        except BskError:
+            # Any browser error (denied, timeout, control not ready): do not
+            # fall back to a guessed single-class list -- publish targets are
+            # resolved from it. Leave no partially refreshed context usable.
+            c.classes = []
+            c.enc = ""
+            c.ctx_time = 0.0
+            raise
         except JsError:
             c.classes = [{"clazz_id": c.clazz_id, "name": ""}]
         c.ctx_time = time.time()
