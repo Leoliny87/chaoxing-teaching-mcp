@@ -240,6 +240,31 @@
     | 注释 | **正文里的行内标记，不进 attachments** | `<a textvalue="标题" data="内容" imgs="" insertnotes="1" bgcolor="#333333" type="text" _href="javascript:void(0);" style="text-decoration: underline dotted rgb(242,140,36)">标题</a>`，插在光标处。原生标记里还有一个属性名带全角空格的 `href　=`。弹窗字段：注释标题、注释内容、附件、浮窗背景色。插入注释的工具要自己生成这段标记，不能经过正文清洗器 |
     | 讨论（插入主题讨论） | attachments，话题随 `savecard` 由服务端创建，没有单独请求 | `{"module":"insertbbs","title","detail","images":[],"endtime","replywordnum","replytimes","allowViewReply":1,"isJob","_jobid","mid"}`。弹窗字段：标题、正文、任务点开关、设置（截止时间、最少字数、回复次数、是否可看他人回复）。任务点开关的 input 被隐藏，要点它可见的外层元素 |
 
+  - **上传类插入（2026-11-06 实测，全部插入并保存成功）**：都是先 `POST mooc1/ananas/generate-sign`，再 `POST pan-yz.chaoxing.com/upload/v2/uploadfile`（存到云盘「课程/<课程名>/章节」）。上传控件的 input 被裁成 1px，上面盖着一个 `LABEL`，要对这个 label 执行 `bsk upload`。
+    | 插入项 | 支持格式 | attachments 项 |
+    |---|---|---|
+    | 图片 | gif jpeg png jpg svg bmp tif（来源：本地、云盘、课程资料、图片地址） | 正文里是行内 `<img src="https://p.cldisk.com/star4/<objectid>/origin.png" objectid=… size=…>`；attachments 里是 `{"module":"insertimage","objectid","mid","_jobid"}` |
+    | 文档 | doc docx ppt pptx pdf xlsx xls | `{"module":"insertdoc","objectid","name","type","size","hsize","title","pagenum","mid","jobid","_jobid"}`，带任务点 |
+    | 音频 | aac ac3 aif amr ape asf flac m4a mp3 ogg wav… | `{"module":"insertaudio","objectid","name","type","size","hsize","title","mid","jobid","_jobid"}`，带任务点 |
+    | 附件 | 所有格式 | `{"module":"downloadfile","objectid","name","type","size","hsize","src","_src","title","mid"}`，**不带任务点** |
+    | 视频 | rmvb 3gp mpg mov wmv avi mkv mp4 flv vob f4v（另有「在线视频」） | `{"module":"insertvideo","objectid","name","type","size","hsize","title","mid","jobid","_jobid","fastforward","doublespeed","indexOrder"}`，带任务点 |
+  - **其余插入项的弹窗字段（已打开记录）**：
+    - 章节测验：创建新测验（输入标题后去编辑题目），或从作业库选择。
+    - 投票问卷：可加单选、多选、简答、判断题，或从问卷库选题；每题可设必答；整体可设允许参与者查看统计、匿名、活动时长。
+    - 直播：创建新直播或从个人直播间选择；直播方式有手机 App、直播客户端、OBS；学生在章节里观看直播才算完成任务点。**没有实际创建**，因为会在个人直播间里真的生成一个直播。
+    - 速课：从「全部速课」列表里选。
+    - 课程图谱：选择知识点（「助手」里暂时没有知识点）。
+    - 本课资料：从课程资料库里选，插入后是 `downloadfile` 模块。
+    - 录音：需要麦克风，Agent 环境用不了。
+    - 图书：按书名或作者搜索在线图书。
+    - 图书内页：弹窗标题是「插入知识点」。
+    - 动画：只支持 swf，可本地、云盘、课程资料来源，电脑和移动端都不能原位播放。
+    - 3D 资源、智雅资源库：弹窗一直在加载。
+    - 全景资源：上传全景资源或选择已有资源，可选资源类型。
+    - 资源库：提示「未检查到用户登录信息」。
+    - 扩展阅读（组件「相关知识」）：按关键词搜索期刊、图书、报纸。
+    - 文档导入：本地、云盘、课程资料。
+    - 本课资料、速课、扩展阅读已经在编辑器里选好，但最后一次保存没有成功，**服务端还没有这三项**，下次要重做并保存。
   - 还没试的插入项：云盘、视频、图片、文档、音频、附件、本课资料、录音、图书、图书内页、动画、3D 资源、智雅资源库、全景资源、资源库、扩展阅读、章节测验、投票问卷、直播、速课、课程图谱、文档导入，以及 3 个 AI 功能。
   - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。**这些插入项还没有逐个实际添加过。**
 
