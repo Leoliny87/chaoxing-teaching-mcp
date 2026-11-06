@@ -76,6 +76,33 @@
 - 建立签到：`POST /v2/apis/sign/saveOrBegin`。query 参数：`now=1`（立即开始）、`courseId`、`classId`、`timeLong`（毫秒，默认 1800000）、`ifphoto`、`ifrefreshewm`、`ewmRefreshTime`、`ifopenAddress`、`locationLatitude`/`locationLongitude`/`locationRange`、`lateMinute`、`ifNeedVCode`、`openCheckFaceFlag`、`openCheckWeChatFlag`、`openSignOutFlag`、`signOutRelativeTime`/`signOutAbsoluteTime`/`signOutDuration`、`timerCron`/`dateCron`、`disposable_publishtime`、`validity_begintime`/`validity_endtime`、`ifSkipWeek`、`ifSendToOtherClass`、`onlyAttendForCurrentClass`。表单正文：`title`、`signCode`、`locationText`、`sendToOtherClassList`、`knowledgePoints`。开始后页面跳到 `/page/sign/endSign?activeId=…`。
 - 用 MCP 自身工具验证：`end_activity`（预演 → 确认 → 已结束）、`activity_result`、`checkin_status` 均通过。
 
+### 作业（mooc2-ans/work）
+- 作业库：`work/library`。新建方式：手动创建、分组作业、教学资源库。还有导入作业、导出全部作业、草稿箱、新建文件夹、回收站。每份作业的操作：发布（`checkQuestion(workid)`）、编辑、移动到（`showMove`）、复制（`copyWork(workid)`）、删除（`workOperate`）。
+- 编辑器：`work/goToWorkEditor`，在**新标签页**打开，保存后会**自己关闭标签页**（截获请求要用同源 localStorage）。
+  - 作业级设置：作业类型（题目型或答题卡）、评分机制（百分制或自定义）、是否按题型归类。
+  - 题型共 23 种，外加「新建题型」：单选、多选、填空、判断、简答、名词解释、论述、计算、分录、连线、排序、完型填空、阅读理解、程序、口语、听力、共用选项、测评、口语测评、钟表、选词填空、写作、其它。
+  - 题目来源：从题库选题、从云盘选题、AI 出题、智能导入。
+  - 每题可设：题干（UEditor 富文本）、答案、答案解析、难度、知识点、标签、分值。
+- 新建链路（全部是接口）：
+  1. `POST work/questionInit`（courseid, clazzid, cpi, workid=空, relationid=0, title, directoryid, grading, questionGroup, originType=3, courseQuestionTypeId）：建作业和第一题。
+  2. `POST work/toEditWorkQuestion`（workid, questionid, workLibraryRelationid, type, typeName, courseQuestionTypeId, content, 判断题答案 answerForTF, score, answerAnalysis, difficulty, topicId, labelIdArr…）：写题目。
+  3. `GET work/save-work?workid&title&grading&directoryid&workStatus=0&questionGroup=0`：保存。
+  - 已确认 `courseQuestionTypeId=3` 表示判断题，其他题型的编号待逐一验证。
+- 发布：`GET work/check/question` → 设置页 `work/library/setting?courseid&cpi&workLibraryId` → `POST work/library/publish`。
+  - 发放对象：`publishObj=[{"classid":…,"publishType":0}]`，选班控件仍是 `#choosepublish` / `.class_check` / `#confirmchoose`。
+  - 有效时段：`startTime`、`endTime`。
+  - 截止后查看答案：`answerAfterEnd`、`answerAfterEndDeadline`。
+  - 及格与完成：`passingStandard`、`finishStandard`。
+  - 重做：`redoTimes`、`redoHighestScore`、`redoDifferQuestion`、`redoDifferLibrary`、`notShowLastAnswer`。
+  - 查看权限：`allowAnswer`、`allowScore`、`viewTypeScore`、`knowTrueFalse`、`prohibitViewWork`、`notShowTeacherComment`。
+  - 作答限制：`allowPaste`、`randomSort`、`randomOptions`、`allowDownloadAttachment`。
+  - 随机抽题：`randomNum`、`randomType`、`randomTypeSet`、`randomCustomScore`。
+  - 截止提醒：`endNoticeTime`、`intervalNotice`。
+  - 填空和多选评分：`blankobj`、`completionIngoreCase`、`blankIgnoreComma`、`multiHalfScore`、`answerEmptyIsObj`。
+  - 互评：`evaluation`、`evaluationStandard`、`evaluationNum`、`evaluationStartTime`、`evaluationEndTime`、`anonymousMarking`、`anonymousMarkingResult`、`teacherMarkScore`、`studentMarkScore`、`evalPartakeScore`、`stuMarkNum`、`selfMark`。
+  - 批阅：`aiReview`、`aiAutoMarkScore`、`limitReviewer`、`limitReviewerObj`、`removeMaxMinScore`、`setMarkScore`、`markScoreMin`、`markScoreMax`。
+  - 其他：`sortAvgScore`、`questionExplanation`、`saveAsTemplate`、`permissionPassword`/`permissionUuid`。
+
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
 ## 2. 还没探查的范围
