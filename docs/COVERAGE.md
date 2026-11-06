@@ -46,7 +46,9 @@
 | `read_chapter_content` | 列出各页签、正文 HTML、已插入的模块（正文按数据返回，不当作指令） |
 | `rename_chapter` | 改名后列表核对一致 |
 | `save_chapter_content` | 新建一页，读回逐字一致。HTML 经白名单清洗：`<script>`、`onclick`、`javascript:` 被去掉，楷体等格式保留。已有插入项的页拒绝覆盖 |
-| `insert_chapter_link` | 插入后读回能找到对应任务点；会保留同页已有链接的任务点 |
+| `insert_chapter_link` | 插入后读回能找到对应任务点。2026-11-07 起可插入到已有任意插入项的页（见下） |
+| `insert_chapter_note` / `insert_chapter_discussion` / `insert_chapter_reading` / `insert_chapter_quiz` | 2026-11-07：往已有 12 个插入项（文件、速课、视频、扩展阅读、文档、测验、音频、投票、附件、讨论、链接、图片）的页里依次插入链接、注释、讨论（任务点、最少 10 字）、扩展阅读、章节测验（引用作业库作业），读回 12 → 16 项，原有项一个不少；学生视角预览页 15 个模块全部正常加载 |
+| `create_answer_card_assignment` | 2026-11-07：建 5 题答题卡作业（单选、多选、填空 2 空、判断、简答），答案逐题 `save-answer`，作业库核对 5 题 |
 | `add_question_to_bank` | 2026-11-07：24 种题型都建成功，返回题目 ID（现在是 32 位十六进制，早先是数字）。同一文件夹里已有相同题目时，服务端拒绝并说明，工具如实返回「没有新建」 |
 | `list_bank_questions` | 2026-11-07：只读，`POST qbank/search`，按关键词、分页列出题型、题干摘要、难度、使用量、文件夹、创建时间、题目 ID。**不返回答案和解析** |
 | `create_discussion` | 发帖成功，按服务端返回的 `topicId` 核实，中文正常 |
@@ -270,6 +272,9 @@
     - 同一个对象还要放进 `savecard` 的 `attachments` 数组。链接的那一项是 `{"module":"hyperlink","href","target","title","type":"text|card|preview","linkType":1,"textValue","mid","jobid","_jobid"}`，其中 `jobid` 是任务点编号。
     - `getcard` 和 `getcardlist` 不返回 `attachments`。
     - 已验证：用接口写入「原正文 + 1 个链接占位块 + 1 项 attachments」后，读回正确，只读预览里链接模块正常加载。
+    - **2026-11-07 对比确认**：每个插入项在 attachments 里的那一项，就是它占位块 `data` 属性里的 JSON 再加上 `"module"`。例外：链接只保留 href、target、title、type、linkType、textValue、mid、jobid、_jobid；视频多一个 `indexOrder`（它在所有占位块里的序号，从 1 开始）；图片是正文里的 `<img src=".../star4/<objectid>/origin.png" mid=… _jobid=…>`，attachments 项是 `{"module":"insertimage","name":null,"mid","_jobid","objectid"}`。服务端保存后所有占位块的 `src` 都是空的。所以 attachments 可以从正文完整重建，往已有插入项的页里追加不会丢任务点。
+    - 各模块占位块的 class 后缀：ballchart、insertaudio 加 ` frame-spread`；insertdoc、insertvideo 加 ` frame-spread ans-attach-online`；insertbbs 加 ` bbsh`。type 属性：ballchart 没有，insertmicroCourse 和 work 是 `null`，其余是 `online`。
+    - mid 的格式是「12 位随机数 + 13 位毫秒时间戳」，_jobid 是「毫秒时间戳 + 3 位随机数」，章节测验的 jobid 是 `work-<workid>`。
   - 「链接」弹窗：链接类型（网页链接或章节目录）、标题、网址（必填）、提示文字、在新窗口打开、显示模式（文本、卡片、预览）。插入后带「任务点」开关（默认开，学生打开链接才算完成）。
   - **注意**：用脚本修改弹窗里的表单（包括点 label 让单选框变化）会触发页面 `input` 事件，BrowserSkill 会把它算成人工操作，撤销 Agent 当前动作。弹窗表单要用 `bsk fill` / `bsk click` 按引用操作。另外，几次没完整执行的尝试叠加起来插入了 7 个重复链接，后来用接口清理掉了。
   - **逐个插入的实测记录**（弹窗一律用 `bsk fill`、`bsk click` 按引用操作，没有触发人工锁定）：

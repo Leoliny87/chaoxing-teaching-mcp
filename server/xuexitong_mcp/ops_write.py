@@ -166,6 +166,79 @@ def _ok(resp: Any) -> bool:
     return False
 
 
+# ---------------------------------------------------------------- chapter modules (verified 2026-11-07)
+# The stored attachments item of every inserted module equals its placeholder's
+# data JSON plus "module" (getcard does not return attachments, so they are
+# rebuilt from the body).  Exceptions: hyperlink keeps a subset; insertvideo adds
+# indexOrder (1-based position among placeholders); images are inline <img>.
+# The server stores src="" for every placeholder.
+_HYPERLINK_KEYS = ("href", "target", "title", "type", "linkType", "textValue", "mid", "jobid", "_jobid")
+_MOD_CLASS = {"ballchart": " frame-spread", "insertaudio": " frame-spread", "insertbbs": " bbsh",
+              "insertdoc": " frame-spread ans-attach-online", "insertvideo": " frame-spread ans-attach-online"}
+_MOD_TYPE = {"ballchart": None, "insertmicroCourse": "null", "work": "null"}
+
+
+def _mid() -> str:
+    return f"{random.randint(10 ** 11, 10 ** 12 - 1)}{_ms()}"
+
+
+def _jobid() -> str:
+    return f"{_ms()}{random.randint(100, 999)}"
+
+
+def module_block(module: str, data: dict) -> str:
+    if not re.fullmatch(r"[A-Za-z]{2,30}", module):
+        raise XxtError("模块名无效。")
+    iid = secrets.token_hex(5)[:9]
+    typ = _MOD_TYPE.get(module, "online")
+    t = f' type="{typ}"' if typ else ""
+    return (f'<div class="taskIframeWrap" data-iframeid="{iid}" contenteditable="false"><iframe class="taskIframe ans-module '
+            f'ans-{module}-module{_MOD_CLASS.get(module, "")}" id="{iid}" module="{module}"{t} ywbf="1" '
+            f'data="{_h.escape(json.dumps(data, ensure_ascii=False), quote=True)}" src=""></iframe></div>')
+
+
+def _attachment(module: str, data: dict, position: int) -> dict:
+    item = {k: data.get(k) for k in _HYPERLINK_KEYS} if module == "hyperlink" else dict(data)
+    item["module"] = module
+    if module == "insertvideo":
+        item["indexOrder"] = position
+    return item
+
+
+def card_attachments(desc: str) -> list[dict]:
+    """Rebuild a card's attachments from its body; raises XxtError if any placeholder is unreadable."""
+    out, n = [], 0
+    for tag in re.findall(r"<iframe\s[^>]*>", desc or ""):
+        m = re.search(r'\smodule="([\w\-]+)"', tag)
+        d = re.search(r'\sdata="([^"]*)"', tag)
+        if not m:
+            continue
+        n += 1
+        try:
+            data = json.loads(_h.unescape(d.group(1))) if d else None
+        except ValueError:
+            data = None
+        if not isinstance(data, dict):
+            raise XxtError(f"卡片里第 {n} 个插入项（{m.group(1)}）的数据无法解析；为避免丢失任务点，没有修改。")
+        out.append(_attachment(m.group(1), data, n))
+    for tag in re.findall(r"<img\s[^>]*>", desc or ""):
+        oid = re.search(r'src="https://p\.cldisk\.com/star4/([0-9a-f]{32})/', tag)
+        mid = re.search(r'\smid="(\d+)"', tag)
+        if oid and mid:
+            jb = re.search(r'\s_jobid="(\d+)"', tag)
+            out.append({"module": "insertimage", "name": None, "mid": mid.group(1), "_jobid": jb.group(1) if jb else "",
+                        "objectid": oid.group(1)})
+    return out
+
+
+def note_markup(title: str, content: str) -> str:
+    """The 注释 insert: an inline anchor (not an attachment), as the editor writes it (incl. its odd full-width-space attribute)."""
+    t, c = _h.escape(title, quote=True), _h.escape(content, quote=True)
+    return (f'<p><a textvalue="{t}" data="{c}" imgs="" insertnotes="1" bgcolor="#333333" type="text" '
+            f'href　="javascript:void(0);" _href="javascript:void(0);" '
+            f'style="text-decoration: underline dotted rgb(242, 140, 36);">{_h.escape(title)}</a></p>')
+
+
 class WriteOps(XxtBase):
     # ================================================================ requests
     def _call(self, host: str, path: str, method: str = "GET", form: dict | list | None = None) -> dict:
@@ -242,45 +315,78 @@ class WriteOps(XxtBase):
         return {"ok": ok, "card_id": saved_id or None, "chars": len(html),
                 **({} if ok else {"write_outcome": "unknown", "error": "保存后读回不一致；请用 read_chapter_content 核查，不要重复提交。"})}
 
+    def insert_chapter_module(self, course: str, chapter_id: str, card_id: str, module: str, data: dict,
+                              inline_html: str = "") -> dict:
+        """Append one module placeholder (or inline markup) to a card, keeping every existing insert and its task point."""
+        c = self.course(course)
+        cur = self._read_card(c, chapter_id, card_id)
+        if cur is None:
+            raise XxtError("指定的章节卡片不存在；没有插入。")
+        desc = cur.get("description") or ""
+        atts = card_attachments(desc)
+        n = len(re.findall(r"<iframe\s[^>]*\smodule=", desc))
+        if inline_html:
+            new_desc, marker = desc + inline_html, None
+        else:
+            data = {**data, "mid": data.get("mid") or _mid()}
+            new_desc, marker = desc + module_block(module, data), data["mid"]
+            atts.append(_attachment(module, data, n + 1))
+        r = self._save_card(c, chapter_id, card_id, cur.get("title") or "", new_desc, atts)
+        back = self._read_card(c, chapter_id, card_id)
+        body = (back or {}).get("description") or ""
+        if marker:
+            found = marker in body
+        else:
+            text = lambda h: re.sub(r"\s+", "", _h.unescape(re.sub(r"<[^>]+>", "", h)))  # noqa: E731
+            found = body.count("insertnotes") > desc.count("insertnotes") and text(inline_html) in text(body)
+        ok = r.get("http") == 200 and back is not None and found
+        return {"ok": ok, "card_id": card_id, "module": module, "mid": marker,
+                "inserts_in_card": len(card_attachments(body)) if back is not None else None,
+                **({} if ok else {"write_outcome": "unknown", "error": "插入后读回没有找到新插入项；请用 read_chapter_content 核查，不要重复插入。"})}
+
     def insert_chapter_link(self, course: str, chapter_id: str, card_id: str, title: str, url: str,
                             tips: str = "", mode: str = "text") -> dict:
-        """Append a hyperlink module (with task point) to a card that has no other inserted modules."""
-        c = self.course(course)
         safe = _safe_url(url)
         if not safe:
             raise XxtError("链接必须是 http/https 网址。")
         if mode not in ("text", "card", "preview"):
             raise XxtError("显示模式必须是 text / card / preview。")
-        cur = self._read_card(c, chapter_id, card_id)
-        if cur is None:
-            raise XxtError("指定的章节卡片不存在；没有插入。")
-        desc = cur.get("description") or ""
-        existing = re.findall(r'module="([\w\-]+)"', desc)
-        if any(m != "hyperlink" for m in existing):
-            raise XxtError("卡片里已有非链接类插入项，当前实现不能安全重建其任务点信息；请插入到新卡片。")
-        attachments = []
-        for m in re.finditer(r'module="hyperlink"[^>]*\sdata="([^"]*)"', desc):
-            d = json.loads(_h.unescape(m.group(1)))
-            attachments.append({k: d.get(k) for k in ("href", "target", "title", "type", "linkType", "textValue",
-                                                      "mid", "jobid", "_jobid")} | {"module": "hyperlink"})
-        now = _ms()
-        job = f"{now}{random.randint(0, 9)}"
+        job = _jobid()
         data = {"data": tips, "href": safe, "target": "_blank", "title": title, "tips": "yes" if tips else "no",
-                "type": mode, "_href": safe, "linkType": 1, "textValue": title,
-                "mid": f"{now - random.randint(10**8, 10**9)}{now}", "jobid": job, "_jobid": job}
-        iid = secrets.token_hex(5)[:9]
-        block = (f'<div class="taskIframeWrap" data-iframeid="{iid}" contenteditable="false"><iframe class="taskIframe '
-                 f'ans-module ans-hyperlink-module" id="{iid}" module="hyperlink" type="online" ywbf="1" '
-                 f'data="{_h.escape(json.dumps(data, ensure_ascii=True), quote=True)}" '
-                 f'src="/ananas2/html/inserthyperlink.html"></iframe></div>')
-        attachments.append({k: data[k] for k in ("href", "target", "title", "type", "linkType", "textValue",
-                                                 "mid", "jobid", "_jobid")} | {"module": "hyperlink"})
-        r = self._save_card(c, chapter_id, card_id, cur.get("title") or "", desc + block, attachments)
-        back = self._read_card(c, chapter_id, card_id)
-        ok = r.get("http") == 200 and back is not None and job in (back.get("description") or "")
-        return {"ok": ok, "card_id": card_id, "job_id": job, "links_in_card": len(attachments),
-                "note": "任务点是否计入学生进度尚待学生端验证。",
-                **({} if ok else {"write_outcome": "unknown", "error": "插入后读回未找到该链接；请核查，不要重复插入。"})}
+                "type": mode, "_href": safe, "linkType": 1, "textValue": title, "mid": _mid(), "jobid": job, "_jobid": job}
+        r = self.insert_chapter_module(course, chapter_id, card_id, "hyperlink", data)
+        return {**r, "job_id": job, "note": "任务点是否计入学生进度尚待学生端验证。"}
+
+    def insert_chapter_discussion(self, course: str, chapter_id: str, card_id: str, title: str, detail: str,
+                                  task_point: bool = False, end_time: str = "", min_words: int = 0, reply_times: int = 0,
+                                  allow_view_reply: bool = True) -> dict:
+        if not title.strip() or len(title) > 100:
+            raise XxtError("讨论标题需为 1–100 字。")
+        if end_time and not re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", end_time):
+            raise XxtError("截止时间格式为 YYYY-MM-DD HH:MM。")
+        data = {"title": title, "images": [], "detail": detail, "endtime": end_time,
+                "replywordnum": str(int(min_words)) if min_words else "", "replytimes": str(int(reply_times)) if reply_times else "",
+                "allowViewReply": 1 if allow_view_reply else 0, "_jobid": _jobid(), "mid": _mid(), "isJob": bool(task_point)}
+        return self.insert_chapter_module(course, chapter_id, card_id, "insertbbs", data)
+
+    def insert_chapter_reading(self, course: str, chapter_id: str, card_id: str, keyword: str) -> dict:
+        if not keyword.strip() or len(keyword) > 50:
+            raise XxtError("扩展阅读关键词需为 1–50 字。")
+        return self.insert_chapter_module(course, chapter_id, card_id, "ballchart", {"mid": _mid(), "keyword": keyword.strip()})
+
+    def insert_chapter_quiz(self, course: str, chapter_id: str, card_id: str, library_id: str) -> dict:
+        wid = _safe_id(library_id)
+        lib = [x for x in self.assignment_library_first_page(course).get("items", []) if str(x.get("id")) == wid]
+        if len(lib) != 1:
+            raise XxtError("作业库第一页里没有这份作业；没有插入。")
+        data = {"mid": _mid(), "_jobid": f"work-{wid}", "jobid": f"work-{wid}", "workid": wid, "title": lib[0].get("title") or "",
+                "worktype": "workA"}
+        return self.insert_chapter_module(course, chapter_id, card_id, "work", data)
+
+    def insert_chapter_note(self, course: str, chapter_id: str, card_id: str, title: str, content: str) -> dict:
+        if not title.strip() or len(title) > 50 or not content.strip() or len(content) > 2000:
+            raise XxtError("注释标题 1–50 字，内容 1–2000 字。")
+        return self.insert_chapter_module(course, chapter_id, card_id, "insertnote", {}, inline_html=note_markup(title, content))
 
     # ================================================================ discussion
     def create_topic_v3(self, course: str, title: str, content: str, class_ids: list[str]) -> dict:

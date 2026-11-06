@@ -131,7 +131,7 @@ def test_insert_link_rebuilds_existing_link_attachments(client, monkeypatch):
     monkeypatch.setattr(client, "_save_card", save)
     monkeypatch.setattr(client, "_read_card", lambda c, n, cid: {"title": "页", "description": seen.get("html", desc)})
     r = client.insert_chapter_link("1", "10", "5", "新链接", "https://www.chaoxing.com", "看看", "card")
-    assert r["ok"] is True and r["links_in_card"] == 2
+    assert r["ok"] is True and r["inserts_in_card"] == 2
     assert [a["jobid"] for a in seen["att"]][0] == "111" and all(a["module"] == "hyperlink" for a in seen["att"])
     assert seen["html"].startswith(desc) and seen["html"].count('module="hyperlink"') == 2
     new = json.loads(_h.unescape(re.findall(r'data="([^"]*)"', seen["html"])[-1]))
@@ -206,3 +206,41 @@ def test_create_topic_double_encodes_text_and_verifies_by_returned_id(client, mo
     assert sent["form"]["topicTitle"] == "%E6%B5%8B%E8%AF%95%E6%A0%87%E9%A2%98" and unquote(sent["form"]["topicContent"]) == "正文"
     assert sent["form"]["tags"] == "classId2" and sent["form"]["urlToken"] == "a" * 32
     assert r["ok"] is True and r["topic"]["id"] == "42"
+
+
+def test_card_attachments_rebuilds_every_module_and_images():
+    from xuexitong_mcp.ops_write import card_attachments, module_block
+    body = (module_block("downloadfile", {"objectid": "o1", "mid": "1", "title": "f"}) + "<p>x</p>"
+            + module_block("insertvideo", {"objectid": "o2", "mid": "2", "jobid": "j", "_jobid": "j"})
+            + module_block("hyperlink", {"href": "https://a.b", "data": "tip", "_href": "x", "tips": "yes", "mid": "3", "jobid": "k"})
+            + '<img class="img_pic" src="https://p.cldisk.com/star4/' + "a" * 32 + '/origin.png" mid="4" _jobid="5">')
+    att = card_attachments(body)
+    assert [a["module"] for a in att] == ["downloadfile", "insertvideo", "hyperlink", "insertimage"]
+    assert att[0] == {"objectid": "o1", "mid": "1", "title": "f", "module": "downloadfile"} and att[1]["indexOrder"] == 2
+    assert "data" not in att[2] and "_href" not in att[2] and att[2]["href"] == "https://a.b"
+    assert att[3] == {"module": "insertimage", "name": None, "mid": "4", "_jobid": "5", "objectid": "a" * 32}
+    with pytest.raises(XxtError):
+        card_attachments('<iframe module="work" data="not json"></iframe>')
+
+
+def test_inserts_keep_existing_modules(client, monkeypatch):
+    from xuexitong_mcp.ops_write import module_block
+    desc = module_block("insertdoc", {"objectid": "d", "mid": "7", "jobid": "77", "_jobid": "77"})
+    seen = {}
+    monkeypatch.setattr(client, "_save_card", lambda c, n, card, t, html, att: seen.update(html=html, att=att) or {"http": 200, "json": {}})
+    monkeypatch.setattr(client, "_read_card", lambda c, n, cid: {"title": "页", "description": seen.get("html", desc)})
+    r = client.insert_chapter_discussion("1", "10", "5", "讨论<b>", "正文", task_point=True, min_words=20)
+    assert r["ok"] is True and [a["module"] for a in seen["att"]] == ["insertdoc", "insertbbs"]
+    bbs = seen["att"][1]
+    assert bbs["isJob"] is True and bbs["replywordnum"] == "20" and bbs["title"] == "讨论<b>" and "<b>" not in seen["html"].split("data=")[-1]
+    r = client.insert_chapter_reading("1", "10", "5", "中药")
+    assert r["ok"] and seen["att"][-1] == {"mid": r["mid"], "keyword": "中药", "module": "ballchart"} and len(seen["att"]) == 3
+
+
+def test_note_is_inline_markup_and_escaped(client, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(client, "_save_card", lambda c, n, card, t, html, att: seen.update(html=html, att=att) or {"http": 200, "json": {}})
+    monkeypatch.setattr(client, "_read_card", lambda c, n, cid: {"title": "页", "description": seen.get("html", "<p>正文</p>")})
+    r = client.insert_chapter_note("1", "10", "5", "标题\"x", "内容<script>")
+    assert r["ok"] is True and seen["att"] == [] and 'insertnotes="1"' in seen["html"]
+    assert "<script>" not in seen["html"] and "&lt;script&gt;" in seen["html"] and "href　=" in seen["html"]

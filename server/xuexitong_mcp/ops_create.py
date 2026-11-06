@@ -100,6 +100,101 @@ class CreateOps(XxtBase):
         return {"ok": ok, "library_id": wid, "title": title, "questions": done, "grading": grading,
                 **({} if ok else {"write_outcome": "unknown", "error": "作业已提交但作业库核对不一致；请在作业库核查。"})}
 
+    # ================================================================ answer-card assignment
+    CARD_TYPES = {"选择": 1, "填空": 2, "判断": 3, "简答": 4}
+
+    def card_items(self, items: list[dict]) -> list[dict]:
+        if not items or len(items) > 200:
+            raise XxtError("答题卡需要 1–200 道题。")
+        out = []
+        for i, it in enumerate(items, 1):
+            t = self.CARD_TYPES.get(str(it.get("type") or "").replace("题", ""))
+            if not t:
+                raise XxtError(f"第 {i} 题：答题卡题型只能是 选择、填空、判断、简答。")
+            score = float(5 if it.get("score") in (None, "") else it["score"])
+            if not 0 < score <= 100:
+                raise XxtError(f"第 {i} 题分值必须在 0–100 之间。")
+            d: dict = {"t": t, "score": score}
+            if t == 1:
+                n = int(it.get("options") or 4)
+                if not 2 <= n <= 26:
+                    raise XxtError(f"第 {i} 题选项数需为 2–26。")
+                ans = sorted(set(str(it.get("answer") or "").upper().replace(",", "")))
+                if not ans or any(a not in [chr(65 + k) for k in range(n)] for a in ans):
+                    raise XxtError(f"第 {i} 题答案必须是前 {n} 个字母中的若干个。")
+                d.update(n=n, answer=ans)
+            elif t == 2:
+                blanks = it.get("answer") if isinstance(it.get("answer"), list) else [it.get("answer")]
+                if not blanks or any(not str(b or "").strip() for b in blanks) or len(blanks) > 50:
+                    raise XxtError(f"第 {i} 题填空答案为空（每空一项，最多 50 空）。")
+                d.update(n=len(blanks), answer=[p(b) for b in blanks])
+            elif t == 3:
+                a = it.get("answer")
+                if a not in ("对", "错", True, False):
+                    raise XxtError(f"第 {i} 题判断答案必须是 对 或 错。")
+                d.update(n="", answer=a in ("对", True))
+            else:
+                d.update(n="", answer=None)
+            out.append(d)
+        return out
+
+    def create_card_work(self, course: str, title: str, description: str, items: list[dict], grading: str = "百分制") -> dict:
+        """Answer-card assignment: a rich-text body plus answer slots (chain verified 2026-11-07)."""
+        its = self.card_items(items)
+        if grading not in GRADING:
+            raise XxtError("评分机制只能是 百分制 或 自定义。")
+        g = GRADING[grading]
+        c = self.ctx(course)
+        cid, clz, cpi = _safe_id(c.id), _safe_id(c.clazz_id), _safe_id(c.cpi)
+        wid = ""
+        for i, d in enumerate(its, 1):
+            r = self._call(M2, "/mooc2-ans/work/add-question?" + up.urlencode({
+                "courseid": cid, "clazzid": clz, "cpi": cpi, "workid": wid, "type": d["t"], "count": 1,
+                "score": num(d["score"]) if g else 5, "optionCount": d["n"], "title": title, "grading": g}))
+            j = _j(r)
+            if r.get("http") != 200 or j.get("status") is not True or not str(j.get("workid") or wid):
+                raise XxtError(f"第 {i} 题添加失败；答题卡作业{('（' + wid + '）') if wid else ''}可能已部分创建，请在作业库和草稿箱核查。")
+            wid = _safe_id(j.get("workid") or wid)
+        qs = self.on(M2, f"""
+            const h=await (await fetch('/mooc2-ans/work/goToWorkEditor?courseid={cid}&clazzid={clz}&cpi={cpi}&workid={wid}&built=1&from=',{{credentials:'include'}})).text();
+            const d=new DOMParser().parseFromString(h,'text/html');
+            return [...d.querySelectorAll('.workQuestion[data]')].map(q=>({{id:q.getAttribute('data'),type:q.getAttribute('type'),
+              names:[...q.querySelectorAll('.optionName[data]')].map(x=>x.getAttribute('data'))}}));
+        """)
+        if not isinstance(qs, list) or [str(q.get("type")) for q in qs] != [str(d["t"]) for d in its]:
+            raise XxtError(f"答题卡作业 {wid} 的题目与请求不一致；请在草稿箱核查，没有继续设置答案。")
+        answers = {}
+        for q, d in zip(qs, its):
+            qid = _safe_id(q["id"])
+            if d["t"] == 1:
+                ans = [{"name": chr(65 + k), "content": "", **({"isanswer": True} if chr(65 + k) in d["answer"] else {})} for k in range(d["n"])]
+            elif d["t"] == 2:
+                names = q.get("names") or [str(k + 1) for k in range(d["n"])]
+                ans = [{"name": str(nm), "content": b} for nm, b in zip(names, d["answer"])]
+            elif d["t"] == 3:
+                ans = [{"answer": d["answer"]}]
+            else:
+                ans = [{"answer": ""}]
+            answers[qid] = json.dumps(ans, ensure_ascii=False, separators=(",", ":"))
+            if d["t"] != 4:
+                s = self._call(M2, "/mooc2-ans/work/save-answer", "POST", {"courseid": cid, "clazzid": clz, "cpi": cpi, "workid": wid,
+                                                                             "questionid": qid, "answer": answers[qid]})
+                if not _ok(s):
+                    raise XxtError(f"答题卡作业 {wid} 第 {len(answers)} 题答案保存失败；请在草稿箱核查。")
+        if description.strip():
+            e = self._call(M2, "/mooc2-ans/work/save/explain", "POST", {"courseid": cid, "clazzid": clz, "cpi": cpi, "workid": wid,
+                                                                         "title": title, "grading": g, "explain": p(description)})
+            if not _ok(e):
+                raise XxtError(f"答题卡作业 {wid} 的正文保存失败；请在草稿箱核查。")
+        form = [("courseid", cid), ("clazzid", clz), ("cpi", cpi), ("workid", wid), ("questionids", ",".join(answers) + ","),
+                ("directoryid", 0), ("title", title)] + [(f"answer{k}", v) for k, v in answers.items()]
+        sv = self._call(M2, "/mooc2-ans/work/save-scantron", "POST", form)
+        fin = self._call(M2, f"/mooc2-ans/work/update-scantron?courseid={cid}&clazzid={clz}&cpi={cpi}&workid={wid}")
+        lib = [x for x in self.assignment_library_first_page(cid).get("items", []) if str(x.get("id")) == wid]
+        ok = _ok(sv) and _ok(fin) and len(lib) == 1 and str(lib[0].get("questions")) == str(len(its))
+        return {"ok": ok, "library_id": wid, "title": title, "questions": len(its), "grading": grading,
+                **({} if ok else {"write_outcome": "unknown", "error": "答题卡作业已提交但作业库核对不一致；请在作业库和草稿箱核查。"})}
+
     # ================================================================ exam paper
     def create_paper(self, course: str, title: str, questions: list[dict]) -> dict:
         qs = normalize_list(questions, "exam")

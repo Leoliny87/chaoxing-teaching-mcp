@@ -497,6 +497,28 @@ def create_assignment(course: Course_, title: Annotated[str, Field(description="
     return client().create_work(course, title, questions, grading)
 
 
+CardItems = Annotated[list[dict], Field(description="答题卡题目，按顺序：{type:'选择',options:选项数(默认4),answer:'B' 或 'AC'}、"
+                                                    "{type:'填空',answer:[每空答案]}、{type:'判断',answer:'对'|'错'}、{type:'简答'}；"
+                                                    "自定义评分时可加 score")]
+
+
+@tool(W, "新建答题卡作业（正文写题目，学生按答题卡作答）并存入作业库；先预演，确认后创建、设答案并核对。发放请再用 publish_assignment。")
+def create_answer_card_assignment(course: Course_, title: Annotated[str, Field(description="作业标题")],
+                                  description: Annotated[str, Field(description="作业正文（题目内容，纯文本）")],
+                                  items: CardItems,
+                                  grading: Annotated[str, Field(description="百分制 或 自定义")] = "百分制",
+                                  confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    its = client().card_items(items)
+    if grading not in ("百分制", "自定义"):
+        raise XxtError("评分机制只能是 百分制 或 自定义。")
+    if not confirm:
+        names = {1: "选择", 2: "填空", 3: "判断", 4: "简答"}
+        return _dry(c, "新建答题卡作业（存入作业库，不发放）", title=title, grading=grading, description_chars=len(description),
+                    items=[names[d["t"]] for d in its])
+    return client().create_card_work(course, title, description, items, grading)
+
+
 PublishSettings = Annotated[dict, Field(description="可选发放设置（0/1 或数字）：allowAnswer 允许看答案、allowScore 允许看分数、allowPaste 允许粘贴、"
                                                    "knowTrueFalse 显示对错、randomSort 题目乱序、randomOptions 选项乱序、redoTimes 重做次数、"
                                                    "passingStandard 及格分、answerAfterEnd 截止后看答案、notShowLastAnswer、prohibitViewWork、"
@@ -742,6 +764,62 @@ def insert_chapter_link(course: Course_, chapter: Chapter_, card_id: Annotated[s
         return _dry(c, "在章节中插入链接（学生可见，带任务点）", bind={"chapter": ch["chapter_id"]},
                     chapter=f"{ch['number']} {ch['title']}", card_id=card_id, title=title, url=url, tips=tips, mode=mode)
     return client().insert_chapter_link(course, chapter, card_id, title, url, tips, mode)
+
+
+CardId_ = Annotated[str, Field(description="卡片ID（read_chapter_content 可查）")]
+
+
+def _chapter_dry(c, chapter: str, action: str, **details) -> dict:
+    ch = client().find_chapter(c.id, chapter)
+    if int(ch.get("layer") or 1) <= 1:
+        raise XxtError("一级目录不允许编辑内容，请插入到子章节。")
+    return _dry(c, action, bind={"chapter": ch["chapter_id"]}, chapter=f"{ch['number']} {ch['title']}", **details)
+
+
+@tool(W, "在章节某一页末尾插入注释（行内的悬浮说明，学生把鼠标放上去可见）。先预演，确认后插入并核对，保留该页已有的全部插入项。")
+def insert_chapter_note(course: Course_, chapter: Chapter_, card_id: CardId_,
+                        title: Annotated[str, Field(description="注释标题（正文里显示的文字），1–50 字")],
+                        content: Annotated[str, Field(description="注释内容，1–2000 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _chapter_dry(c, chapter, "在章节中插入注释（学生可见）", card_id=card_id, title=title, content=content)
+    return client().insert_chapter_note(course, chapter, card_id, title, content)
+
+
+@tool(W, "在章节某一页末尾插入主题讨论（保存时服务端创建话题），可设为任务点、截止时间、最少字数、回复次数。先预演，确认后插入并核对。")
+def insert_chapter_discussion(course: Course_, chapter: Chapter_, card_id: CardId_,
+                              title: Annotated[str, Field(description="讨论标题，1–100 字")],
+                              detail: Annotated[str, Field(description="讨论正文")],
+                              task_point: Annotated[bool, Field(description="是否作为任务点")] = False,
+                              end_time: Annotated[str, Field(description="截止时间 YYYY-MM-DD HH:MM，留空=不限")] = "",
+                              min_words: Annotated[int, Field(description="回复最少字数，0=不限")] = 0,
+                              reply_times: Annotated[int, Field(description="回复次数要求，0=不限")] = 0,
+                              allow_view_reply: Annotated[bool, Field(description="是否允许看他人回复")] = True,
+                              confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _chapter_dry(c, chapter, "在章节中插入主题讨论（学生可见）", card_id=card_id, title=title, detail=detail,
+                            task_point=task_point, end_time=end_time, min_words=min_words, reply_times=reply_times)
+    return client().insert_chapter_discussion(course, chapter, card_id, title, detail, task_point, end_time, min_words,
+                                              reply_times, allow_view_reply)
+
+
+@tool(W, "在章节某一页末尾插入扩展阅读（按关键词推荐期刊、图书、报纸）。先预演，确认后插入并核对。")
+def insert_chapter_reading(course: Course_, chapter: Chapter_, card_id: CardId_,
+                           keyword: Annotated[str, Field(description="关键词，1–50 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _chapter_dry(c, chapter, "在章节中插入扩展阅读（学生可见）", card_id=card_id, keyword=keyword)
+    return client().insert_chapter_reading(course, chapter, card_id, keyword)
+
+
+@tool(W, "把作业库里的一份作业作为章节测验插入章节某一页（带任务点）。先预演，确认后插入并核对。")
+def insert_chapter_quiz(course: Course_, chapter: Chapter_, card_id: CardId_,
+                        library_id: Annotated[str, Field(description="作业库ID（list_assignment_library 可查）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _chapter_dry(c, chapter, "在章节中插入章节测验（学生可见，带任务点）", card_id=card_id, library_id=library_id)
+    return client().insert_chapter_quiz(course, chapter, card_id, library_id)
 
 
 @tool(W, "新建一个班级；先预演，确认后新建并核对。")
