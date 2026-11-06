@@ -50,6 +50,7 @@
 | `insert_chapter_note` / `insert_chapter_discussion` / `insert_chapter_reading` / `insert_chapter_quiz` | 2026-11-07：往已有 12 个插入项（文件、速课、视频、扩展阅读、文档、测验、音频、投票、附件、讨论、链接、图片）的页里依次插入链接、注释、讨论（任务点、最少 10 字）、扩展阅读、章节测验（引用作业库作业），读回 12 → 16 项，原有项一个不少；学生视角预览页 15 个模块全部正常加载 |
 | `upload_material` | 2026-11-07：改为可执行。预演记录文件 SHA-256 并绑定到 plan；确认时把文件复制成私有快照，哈希必须与预演一致；页面里再算一次暂存字节的哈希，一致才上传。上传 55 B 文本，资料列表核对到新条目 |
 | `insert_chapter_file` | 2026-11-07：文档（PDF，自动取页数）、音频、视频、图片（正文内）、附件各插入一次，读回 1 → 6 项；学生视角预览里 PDF 阅读器、音频、视频播放器、附件、图片（64×64 已加载）全部正常 |
+| `create_teaching_task` / `publish_teaching_task` | 2026-11-07：新建教学任务（名称、简介、起止时间、把作业库作业加为任务点），读回名称和任务点数一致；发布到「测试」班，任务列表显示已发布 |
 | `create_answer_card_assignment` | 2026-11-07：建 5 题答题卡作业（单选、多选、填空 2 空、判断、简答），答案逐题 `save-answer`，作业库核对 5 题 |
 | `add_question_to_bank` | 2026-11-07：24 种题型都建成功，返回题目 ID（现在是 32 位十六进制，早先是数字）。同一文件夹里已有相同题目时，服务端拒绝并说明，工具如实返回「没有新建」 |
 | `list_bank_questions` | 2026-11-07：只读，`POST qbank/search`，按关键词、分页列出题型、题干摘要、难度、使用量、文件夹、创建时间、题目 ID。**不返回答案和解析** |
@@ -87,6 +88,12 @@
 4. 发布：`GET /peTaskPlan/taskPointCheckPublish` → `POST /taskReference/coursePublishAuthentication` → `POST /taskReference/couresPublishInitData`（返回各班 token）→ `POST /taskReference/taskPublish {encryTaskId, coursePublishParam:[{classId,className,publishtype:0,token}]}`。弹窗里可选班级，也可搜索具体学生。
 5. 任务设置：展示样式 16 种（列表、卡片、框架、图谱、藏宝图、3D小岛等）、封面模版、报名开关、证书开关、任务目标（≤200 字）、管理权限；任务设计里还有「达标标准」「组间闯关设置」和分组。
 6. 列表项字段：`taskId`（加密）、`name`、`publishStatus`、`taskPointsNumber`、`taskStudentsNumber`、`startDateStr`/`endDateStr`、`labelList`、`isCreator` 等。
+6.5 **2026-11-07 接口版（做成工具）**：
+   - `task/index?courseId&type=course` 的内联脚本里有 `encryptedCourseId`、`encryptedType` 两个常量（不需要外壳的 enc）。
+   - `GET /task/createTask` → `GET /task/newTaskToList?…&token`（打开草稿）→ `GET /task/onMountGetTaskData?taskId=<加密ID>`：`groups[0].id` 是默认分组，`groups[0].fkTaskId` 是数字任务 ID。
+   - `POST /task/taskCommit` 是 JSON，最少 `{taskId, name}` 就能保存；**`startDate`、`endDate` 必须是毫秒时间戳**，传「2026-11-07 08:00」这类字符串会 400（Failed to read request）。
+   - 作业任务点：`POST /homework/getMoocData {page,pageSize,searchKey,moocCourseId,isCheckedExist:"1"}`（本课作业）→ `POST /homework/checkAddition [{name,courseId,workLibraryId}]` → `POST /taskPoint/saveTaskPoints {taskPoints:[{imageUrl,name,exist,externalDataId:workLibraryId,workType,localDataId:id,desc,courseId,fkGroupId,type:4,fkTaskId,shareType:0}]}`。只有跨课复制才需要 `cloneCourseHomework`。
+   - 发布：`GET /peTaskPlan/taskPointCheckPublish?encryptedTaskId` → `POST /taskReference/coursePublishAuthentication {encryTaskId,courseId}` 返回选班插件地址 `mooc2-ans/exam/test/publish-plugin?courseid&cpi`；插件页每个 `.classitem` 带 `data=班级ID`、`data-token`（32 位）→ `POST /taskReference/taskPublish {encryTaskId, coursePublishParam:[{classId:数字,className,publishtype:0,token}], taskPublishParam:null}`（课程任务 taskPublishParam 为 null）。`couresPublishInitData` 只返回已选对象，新任务是空数组。
 7. 接口目录（从页面脚本提取）：`createTask`、`createOrEditTask`、`deleteTaskInfo`、`taskDelete`、`swapTaskOrder`、`taskMoveToFolder`、`addNewFolder`、`reNameFolderConfirm`、`removeFolderConfirm`、`exportTask`、`getCourseImportTasks`/`confirmCourseImport`、`confirmCourseCopyTask`、`tasklabel/getTaskLabelDatas`/`saveOrDeleteTaskLabelData`、`commitPeTaskBaseInfo`、`taskStatistics/index`、`taskReference/getCourseIdClazz`。
 
 ### 讨论（groupweb）

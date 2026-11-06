@@ -822,6 +822,33 @@ def insert_chapter_quiz(course: Course_, chapter: Chapter_, card_id: CardId_,
     return client().insert_chapter_quiz(course, chapter, card_id, library_id)
 
 
+@tool(W, "新建教学任务（任务引擎）：名称、简介、起止时间，可把作业库里的作业加为任务点；先预演，确认后创建并读回核对。发布请再用 publish_teaching_task。")
+def create_teaching_task(course: Course_, name: Annotated[str, Field(description="任务名称，1–100 字")],
+                         start_time: Annotated[str, Field(description="开始时间 YYYY-MM-DD HH:MM（北京时间）")],
+                         end_time: Annotated[str, Field(description="结束时间 YYYY-MM-DD HH:MM（北京时间）")],
+                         intro: Annotated[str, Field(description="任务简介，可留空")] = "",
+                         assignment_ids: Annotated[list[str], Field(description="作为任务点加入的作业库ID列表，可为空")] = [],  # noqa: B006
+                         confirm: Confirm = False) -> dict:
+    from .ops_task import epoch_ms
+    c = _check_write(course)
+    if epoch_ms(end_time) <= epoch_ms(start_time):
+        raise XxtError("结束时间必须晚于开始时间。")
+    if not confirm:
+        return _dry(c, "新建教学任务（未发布，学生不可见）", name=name, start_time=start_time, end_time=end_time, intro=intro,
+                    assignment_ids=list(assignment_ids))
+    return client().create_task(course, name, intro, start_time, end_time, list(assignment_ids))
+
+
+@tool(W, "把教学任务发布到一个明确班级（学生可见）；先预演，确认后发布并在任务列表核实已发布。")
+def publish_teaching_task(course: Course_, task_id: Annotated[str, Field(description="任务ID（list_teaching_tasks 返回的加密ID）")],
+                          class_name: Class_ = "", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, "发布教学任务（学生可见）", bind={"class_name": target["id"]}, task_id=task_id, classes=[target])
+    return client().publish_task(course, task_id, [class_name])
+
+
 @tool(W, "新建一个班级；先预演，确认后新建并核对。")
 def create_class(course: Course_, name: Annotated[str, Field(description="班级名称，1–50 字")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
