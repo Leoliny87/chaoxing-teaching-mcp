@@ -202,7 +202,16 @@ class NoticeOps:
             if e.not_dispatched:self._notice_journal({**journal,'state':'not_dispatched'})
             raise
         time.sleep(3.5)
-        self.b.wait_readiness()
+        try:
+            self.b.wait_readiness()
+        except BskError as e:
+            # Observed 2026-11-06: right after 发送 the editor page is replaced and
+            # a sync can intermittently answer not_found. The click was already
+            # dispatched, so do NOT treat this as a failure to retry: go straight
+            # to the read-only inventory below, which navigates on its own and
+            # settles the outcome by UUID. Other errors still stop here.
+            if e.code!='not_found' and not e.transient:raise
+            self.b.obs_text=''
         inv=self.notice_inventory(course,1000,full_content=True)
         matches=[n for n in inv['items'] if n.get('uuid')==s['uuid']]
         if (len(matches)!=1 or matches[0]['title']!=title
@@ -214,6 +223,38 @@ class NoticeOps:
         self._notice_journal({**journal,'state':'published','notice_id':n['notice_id']})
         return {'ok':True,'notice':n,'verification':'matched_uuid_title_body_and_class','pagination':inv['pagination'],
                 'warning':'删除通知不能保证撤回已送达提醒；平台可能同时创建通知活动。'}
+
+    def reconcile_notices(self, course):
+        """Settle 'attempted' notice sends by UUID against the live list (read-only on the site).
+
+        Appends 'published' (with notice_id) or 'absent_after_reconcile' to the local
+        outcome journal, so a verified test notice becomes deletable by delete_notice.
+        """
+        c=self.course(course)
+        path=self.cfg.log_dir/'notice-outcomes.jsonl'
+        if not path.exists():return {'course_id':c.id,'checked':0,'results':[]}
+        latest={}
+        for line in path.read_text().splitlines():
+            try:r=json.loads(line)
+            except ValueError:raise XxtError('通知结果台账损坏，停止核查。')
+            if r.get('course_id')==c.id and r.get('uuid'):latest[r['uuid']]=r
+        pending={u:r for u,r in latest.items() if r.get('state')=='attempted'}
+        if not pending:return {'course_id':c.id,'checked':0,'results':[]}
+        inv=self.notice_inventory(c.id,1000,full_content=True)
+        complete=bool(inv['pagination'].get('complete'))
+        results=[]
+        for u,r in pending.items():
+            hits=[n for n in inv['items'] if n.get('uuid')==u]
+            base={k:r.get(k) for k in ('course_id','class_id','uuid','draft_uuid','request_digest')}
+            if len(hits)==1:
+                self._notice_journal({**base,'state':'published','notice_id':hits[0]['notice_id'],'via':'reconcile'})
+                results.append({'uuid':u,'state':'published','notice_id':hits[0]['notice_id'],'title':hits[0].get('title')})
+            elif not hits and complete:
+                self._notice_journal({**base,'state':'absent_after_reconcile'})
+                results.append({'uuid':u,'state':'absent'})
+            else:
+                results.append({'uuid':u,'state':'still_unknown','reason':'多条匹配或列表未遍历完整'})
+        return {'course_id':c.id,'checked':len(pending),'list_complete':complete,'results':results}
 
     def prepare_notice_deletion(self, course, notice_id):
         c=self.course(course)

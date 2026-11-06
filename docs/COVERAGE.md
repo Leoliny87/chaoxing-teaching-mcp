@@ -55,6 +55,17 @@
 6. 列表项字段：`taskId`（加密）、`name`、`publishStatus`、`taskPointsNumber`、`taskStudentsNumber`、`startDateStr`/`endDateStr`、`labelList`、`isCreator` 等。
 7. 接口目录（从页面脚本提取）：`createTask`、`createOrEditTask`、`deleteTaskInfo`、`taskDelete`、`swapTaskOrder`、`taskMoveToFolder`、`addNewFolder`、`reNameFolderConfirm`、`removeFolderConfirm`、`exportTask`、`getCourseImportTasks`/`confirmCourseImport`、`confirmCourseCopyTask`、`tasklabel/getTaskLabelDatas`/`saveOrDeleteTaskLabelData`、`commitPeTaskBaseInfo`、`taskStatistics/index`、`taskReference/getCourseIdClazz`。
 
+### 讨论（groupweb）
+- 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
+- 发帖页还提供：附件、图片、云盘、笔记、录音、网页链接、公式/LaTeX、表格、思维导图、白板、导入文档、选择讨论区、关联知识点。发帖后页面会整体刷新。
+- 话题操作菜单：转发、置顶、加精、编辑、移动到、删除。删除：`GET /pc/topic/{bbsid}/{话题uuid}/deleteTopic`，先弹「确认删除？」。
+- 其他入口：新建文件夹、新建讨论区、讨论区管理、话题管理、回收站、章节讨论、我发布的/我回复的/回复我的。
+- `list_discussions` 在有话题时已验证可读（字段：topic_id、title、content、author、replies、reads、time）。
+
+### 通知（notice）——用 MCP 自身工具端到端验证
+- `publish_notice` 预演 → 确认发送 → 按 UUID 核实标题、正文和班级 → `delete_notice` 预演 → 确认删除 → 复查列表为空，全链路通过。
+- 发现并修复：发送后页面被替换时，同步偶尔返回 `not_found`。现在改为直接进入只读核实，不再报「结果未知」。新增 `reconcile_notices`，按 UUID 补记结果未明的发送。
+
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
 ## 2. 还没探查的范围

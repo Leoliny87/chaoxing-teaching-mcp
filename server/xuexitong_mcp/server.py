@@ -438,6 +438,11 @@ def _check_prepared_notice_authority(course: str, preparation_id: str) -> None:
         raise XxtError("通知预演对应的课程已不在写入白名单中；未填写或发送。")
 
 
+@tool(R, "按 UUID 核实“发送结果未明”的通知是否真的已发出，并在本机台账补记（只读核查，不会发送或删除）。")
+def reconcile_notices(course: Course_) -> dict:
+    return client().reconcile_notices(course)
+
+
 @tool(D, "清理本服务已记录成功创建的通知：必须给准确ID，先预演并校验内容，再删除并遍历核对；既有通知仅预演。")
 def delete_notice(course: Course_, notice: Annotated[str, Field(description="通知ID；标题只提供不可执行预演")], confirm: Confirm = False,
                   deletion_id: Annotated[str, Field(description="由预演绑定，调用时保持默认空值")] = "") -> dict:
