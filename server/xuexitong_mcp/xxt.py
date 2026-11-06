@@ -388,7 +388,8 @@ def make_client(cfg: Config):
     from .ops_content import ContentOps
     from .ops_course import CourseOps
     from .ops_notice import NoticeOps
+    from .ops_v3 import V3Ops
 
-    class Xxt(NoticeOps, ContentOps, CourseOps, ActivityOps):
+    class Xxt(NoticeOps, V3Ops, ContentOps, CourseOps, ActivityOps):
         pass
     return Xxt(cfg)

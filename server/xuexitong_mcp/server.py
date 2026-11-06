@@ -277,6 +277,10 @@ def _check_upload_path(file_path: str):
 def _upload_preview_digest(path):
     """Fingerprint a stable file for review; this is not an upload snapshot."""
     def identity(st):
+        # On Windows st_ctime is the metadata-change time, which antivirus or
+        # indexing may touch without changing content; size+mtime cover content.
+        if os.name == "nt":
+            return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
         return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
     try:
         digest = hashlib.sha256()
@@ -345,6 +349,43 @@ def open_course(course: Course_) -> dict:
     c = client().ctx(course, refresh=True)
     return {"course_id": c.id, "name": c.name, "role": "本人创建" if c.role == "1" else "团队教学", "default_clazz_id": c.clazz_id, "classes": c.classes,
             "url": f"https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/tch?courseid={c.id}&clazzid={c.clazz_id}&cpi={c.cpi}&enc={c.enc}&t={c.t}"}
+
+
+@tool(R, "新版课程的模块菜单（首页、教学任务、教学活动、资源中心、AI助教、学情统计、课程管理等）、资源中心各库，以及通知和讨论入口。")
+def list_course_modules(course: Course_) -> dict:
+    return client().course_modules(course)
+
+
+@tool(R, "新版教师首页看板：近期待办、作业和考试进度提醒、AI 实践预警、学情概览及高风险学生。每项单独标明是否读取成功。")
+def get_course_dashboard(course: Course_) -> dict:
+    return client().dashboard(course)
+
+
+@tool(R, "资源中心统计：课件、题库与章节资源、知识点、作业、考试、活动库的数量。每项单独标明是否读取成功。")
+def get_resource_overview(course: Course_) -> dict:
+    return client().resource_overview(course)
+
+
+@tool(R, "新版“教学任务”（任务引擎）列表，可分页，可查看回收站。")
+def list_teaching_tasks(course: Course_, page: Annotated[int, Field(ge=1, description="页码")] = 1,
+                        page_size: Annotated[int, Field(ge=1, le=100, description="每页条数")] = 50,
+                        deleted: Annotated[bool, Field(description="是否查看回收站")] = False) -> dict:
+    return client().teaching_tasks(course, page, page_size, deleted)
+
+
+@tool(R, "资源中心·课件库列表（可分页、按文件夹、按关键字）。")
+def list_coursewares(course: Course_, page: Annotated[int, Field(ge=1, description="页码")] = 1,
+                     page_size: Annotated[int, Field(ge=1, le=100, description="每页条数")] = 50,
+                     folder_id: Annotated[str, Field(description="文件夹ID，0=根目录")] = "0",
+                     keyword: Annotated[str, Field(description="按名称搜索，可留空")] = "") -> dict:
+    return client().coursewares(course, page, page_size, folder_id, keyword)
+
+
+@tool(R, "资源中心·实践库，以及已发布的 AI 实践（分别标明是否读取成功）。")
+def list_practices(course: Course_, trash: Annotated[bool, Field(description="是否查看回收站")] = False,
+                   page: Annotated[int, Field(ge=1, description="页码")] = 1,
+                   page_size: Annotated[int, Field(ge=1, le=100, description="每页条数")] = 50) -> dict:
+    return client().practices(course, trash, page, page_size)
 
 
 @tool(R, "列出课程某个班级的学生名单（姓名、学号、personId）。")

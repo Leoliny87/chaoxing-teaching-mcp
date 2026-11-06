@@ -387,17 +387,13 @@ class ContentOps(XxtBase):
     def _bbsid(self, c: Course) -> str:
         if c.bbsid:
             return c.bbsid
-        self.b.navigate(f"https://mooc1.chaoxing.com/course/isNewCourse?courseId={c.id}&cpi={c.cpi}&v=6&edit=true", settle=1.0)
-        self.wait_for("const f=document.querySelector('iframe'); try{return f&&f.contentDocument&&f.contentDocument.querySelectorAll('p.application-name').length>0}catch(e){return false}", timeout=20)
-        src = self.here("""
-            const d=document.querySelector('iframe').contentDocument;
-            const e=[...d.querySelectorAll('p.application-name')].find(e=>e.innerText.trim()==='讨论');
-            if(!e) return null; (e.closest('li,.app-info')||e).click();
-            for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,500)); const f=[...document.querySelectorAll('iframe')].map(f=>f.src).find(s=>/bbsid=/.test(s)); if(f) return f;}
-            return null;""")
-        m = re.search(r"bbsid=([0-9a-f]+)", src or "")
+        # The new course shell (fanyav3) returns the discussion entry, bbsid
+        # included, from coursemanagev3/base-info. The old UI's iframe/app-card
+        # scraping no longer exists after isNewCourse redirects to the Vue shell.
+        url = self.shell_info(c).get("discuss_url") or ""
+        m = re.search(r"[?&]bbsid=([0-9A-Fa-f]{16,64})(?:&|$)", url)
         if not m:
-            raise XxtError("无法获取讨论区 bbsid（课程可能未开启讨论）")
+            raise XxtError("课程信息中没有讨论区入口（课程可能未开启讨论）")
         c.bbsid = m.group(1)
         return c.bbsid
 
@@ -406,6 +402,10 @@ class ContentOps(XxtBase):
         bbs = self._bbsid(c)
         result = self.on(GROUP, f"""
             const j=await J('/course/topic/{bbs}/getTopicList?folder_uuid=&page=1&pageSize={int(limit)}&kw=&courseId={c.id}&isSetTop=&selectedStartTime=&selectedEndTime=&selectedType=0&learnSilverStartTime=&learnSilverEndTime=&lastAuxValue=');
+            // Observed 2026-11: an empty forum answers status:true with NO datas field
+            // (keys: update_time,userAuth,member,folder_list,poff,circle,status).
+            // Only that exact success shape counts as an empty list.
+            if(j?.status===true && j.datas===undefined && j.userAuth && Array.isArray(j.folder_list)) return {{valid:true,items:[]}};
             if(!Array.isArray(j?.datas) || j?.status===false || j?.success===false) return {{valid:false}};
             if(j.datas.some(x=>!x || !x.uuid || typeof x.title!=='string')) return {{valid:false}};
             return {{valid:true,items:j.datas.map(x=>({{topic_id:x.uuid,id:String(x.id),title:x.title,content:(x.content||'').slice(0,200),author:x.createrName,replies:x.reply_count,reads:x.readPersonCount,time:x.ftime}}))}};
