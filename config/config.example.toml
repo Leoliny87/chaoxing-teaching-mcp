@@ -1,0 +1,23 @@
+# Copy outside the repository to ~/.config/xuexitong-mcp/config.toml.
+# No username, password, cookie or token belongs in this file.
+write_allow_courses = []
+upload_allow_dirs = []
+cpi = ""
+fid = ""
+bsk_path = "bsk"
+
+[timeouts]
+command = 45
+navigate = 40
+upload = 120
+settle = 1.5
+
+[cache]
+course_list_ttl = 600
+course_ctx_ttl = 1800
+
+[log]
+level = "INFO"
+
+[downloads]
+dir = "~/Downloads/xuexitong-mcp"

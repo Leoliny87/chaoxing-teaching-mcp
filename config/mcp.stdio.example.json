@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "chaoxing-teaching": {
+      "command": "/ABSOLUTE/PATH/TO/PROJECT/.venv/bin/python",
+      "args": ["-I", "/ABSOLUTE/PATH/TO/PROJECT/scripts/launch_stdio.py"],
+      "env": {
+        "XUEXITONG_MCP_BROWSER": "REPLACE_WITH_YOUR_EXISTING_BROWSER_INSTANCE_ID",
+        "XUEXITONG_MCP_BOOTSTRAP_COURSE": "",
+        "BSK_AUTO_START": "0",
+        "BSK_AUTO_UPDATE": "off"
+      }
+    }
+  }
+}
