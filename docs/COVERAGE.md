@@ -37,6 +37,22 @@
 - 学生端模块：AI助教（`mooc1/course-ans/ai/getStuAiWorkBench`）、任务（`mobilelearn/page/active/stuActiveList`）、章节（`mooc2-ans/mycourse/studentcourse`）、讨论（groupweb topicList）、作业（`mooc1/mooc2/work/list`）、考试（`mooc1/exam-ans/mooc2/exam/exam-list`）、资料（`mooc2-ans/coursedata/stu-datalist`）、错题集（`mooc2-ans/wrongque/page`）、学习记录（`stat2-ans/study-data/index`）、课程图谱（`stat2-ans/study-knowledge/index`）。
 - 学生端活动接口：`mobilelearn/v2/apis/active/student/activelist`、`v2/apis/active/getData`。
 
+### 学生端工具（2026-11-07，用本人在「助手」里的学生身份实测）
+| 工具 | 实测结果 |
+|---|---|
+| `list_my_courses` | 读 mooc1 `/visit/courselistdata?courseType=1`，每个 `li.course` 带 courseid、clazzid、personid（学生 cpi）；列出 20 门 |
+| `list_my_assignments` | 打开学生课程外壳（`visit/stucoursemiddle` → `mycourse/stu`），取隐藏字段 enc、workEnc、examEnc、openc、t；作业列表 `mooc1 /mooc2/work/list?courseId&classId&cpi&ut=s&t&stuenc=<enc>&enc=<workEnc>`（跨域，必须从 mooc1 页发起）；列出 2 份作业、状态和剩余时间 |
+| `read_my_assignment` | 作业链接跳到 `mooc-ans/mooc2/work/dowork`；列出题号、题型、题干、选项和已暂存作答，不含参考答案（页面里本来就没有） |
+| `save_my_answers` | 暂存判断题 2 道，服务端「保存成功！」，读回 true/false |
+| `submit_my_assignment` | 预演后必须带 `confirm_text="确认提交"` 和 plan_id；提交后作业列表状态从「未交」变为「已完成」 |
+
+- 作答表单 `form#submitForm` 提交到 `/mooc-ans/work/addStudentWorkNewWeb?…`（地址里带页面签名 token）。字段：courseId、classId、cpi、workRelationId、workAnswerId、standardEnc、enc_work、totalQuestionNum、workTimesEnc、`answertype<题目ID>`、`answer<题目ID>`，以及 `answerwqbid`（`#questionIds`）。
+- 作答值：单选是选项的 data（A），多选是拼起来的字母（AC），判断是 true/false，主观题是 HTML。
+- 暂存：地址加 `&pyFlag=1&ua=pc&formType=post&saveStatus=1&version=1`，表单里 pyFlag=1；提交：地址同上但不带 pyFlag，表单 pyFlag 为空。
+- **`answerwqbid` 必须填全部题目 ID 加逗号**（页面自己保存前才填），留空服务端返回「无效的参数：code-1」。
+- 页面只在真实界面改动后才弹「离开页面」提示（`isContentChanged`）；脚本直接写隐藏字段不会触发，保存后也会复位。
+- 已支持作答的题型：单选、多选、判断、简答、名词解释、论述、计算、其它、口语、写作。填空、连线、排序、组合题等暂未支持，会明确拒绝。
+
 ## 1.15 已做成 MCP 工具并在测试课实测通过的写操作（2026-11-06）
 
 每个工具都走同一套流程：写入白名单 → 预演并签发 plan_id → 确认后执行 → 回读核实。核实不通过时返回 `write_outcome: unknown`，并提示不要重复提交。

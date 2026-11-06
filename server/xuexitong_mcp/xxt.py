@@ -405,7 +405,8 @@ def make_client(cfg: Config):
     from .ops_create import CreateOps
     from .ops_upload import UploadOps
     from .ops_task import TaskOps
+    from .ops_student import StudentOps
 
-    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, WriteOps, V3Ops, ContentOps, CourseOps, ActivityOps):
+    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, WriteOps, V3Ops, ContentOps, CourseOps, ActivityOps):
         pass
     return Xxt(cfg)
