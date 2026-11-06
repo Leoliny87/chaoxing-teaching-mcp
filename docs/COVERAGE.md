@@ -2,7 +2,7 @@
 
 目标：**自动化核心覆盖新版学习通师生两端所有功能的读写**。"哪些角色能用哪些功能"由独立的策略层决定（见第 4 节），不在核心里砍功能。
 
-本文的界面结构与接口均来自 2026-11-06 在一台教师机上用真实登录态做的**只读**探查（BrowserSkill 0.4.2，Chrome 156）。本次未执行任何写操作。接口路径只记录主机和路径，不记录签名参数。
+本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
 ## 1. 新版教师端结构（实测）
 
@@ -161,6 +161,47 @@
   - 管理：移除（`removeStudent`，可在操作日志里恢复）、调班、学生加入申请（`codeAddClazzApplyList`）、分组管理（`toClazzGroupManage`）、导出学生名单（`exportClassStudent`）、更改学生信息（`updateStudentDataPop`）、访问日志。
   - 部分操作需要绑定手机或通过滑块验证（「请完成安全验证」），只能本人操作。
   - 学生的增删改会影响真实成员，本轮没有执行。
+
+### 章节（新章节编辑器 mooc1/ananas2）
+- 入口：
+  - 章节列表页 `mooc2-ans/mycourse/tchcourse?courseid&clazzid&cpi&enc&t&ut&v`（资源中心 → 课程章节）。
+  - 每个章节的操作：编辑（`toEditOld`）、学生开放设置、教师权限设置、开放（`setOpenStatus`）；顶部还有批量设置、打印、定时开放任务点提醒。
+  - 编辑器地址 `mooc1/ananas2/index?courseId&knowledgeId&clazzId&cpi`，由 `mooc1/mycourse/transfer?moocId&clazzid&ut=t&refer=<编码后的编辑器地址>` 跳转进入。
+  - 只读预览：`mooc2-ans/mycourse/teacherstudy?chapterId&courseId&clazzid`，内容在 `/knowledge/cards` iframe 里，和学生看到的一致。
+- 目录操作（已实测）：
+  - 一级目录不能编辑内容，只能加同级目录或子目录。
+  - 新建：`POST mooc-ans/edit/createchapter`（courseid、name、parentid、layer、mooc2=1），默认名称是「新建目录课程」。
+  - 改名：`POST mooc-ans/edit/changename`（courseid、nodeid、name、cpi）。
+  - 节点悬浮菜单：重命名（`a.list_rename`）、移动到（`popMoveBnt`）、删除（`list_delete`）。
+  - 其他接口：`deletechapter`、`chaptermove`、`movechapter/drag`、`importdir`、`importdirForText`（按文本批量导入目录）、`get-knowledge-list`。
+- 内容卡片：
+  - 每个章节可以有多个页签（「无标题」，可「+」新增、可重命名），每个页签是一张卡片。
+  - 读取：`GET mooc-ans/edit/getcardlist?courseid&nodeid&cpi`，返回 `data[]`，每项有 `{id,title,description,nodeid}`；`GET mooc-ans/edit/getcard?cardid&nodeid&courseid&cpi`，同样返回 `data[]`。
+  - 保存：`POST mooc-ans/edit/savecard`（title、courseId、nodeid、description=正文 HTML、attachments=JSON、id=卡片 ID，新卡为 0；可选 `?recordJson=[…]`）。编辑器切换章节或离开页面时会自动保存。
+  - 其他：`deletecard`、`movecard`、`move-attachment`、`set-reuse-card`、`get-reusecard-template`、`validate-chapter-test`。
+- 正文编辑器是 ProseMirror。工具栏全部选项：
+  - 段落样式：正文、标题 1–6
+  - 字体：宋体、楷体、微软雅黑、黑体、隶书、andale mono、arial、arial black、comic sans ms、impact、times new roman
+  - 字号：9、12、14、16、18、20、24、28、32、36、42、48、56、64
+  - 颜色：文字颜色、背景色
+  - 对齐：左、居中、右、两端、顶部、垂直居中、底部
+  - 行距：1、1.25、1.5、1.75、2、2.5、3
+  - 表格：插入表格、插入行和列、合并、拆分、删除
+  - 对已插入元素：下载、剪切、复制、替换、编辑、删除、全屏、预览
+- **已实测：工具栏的这些格式都能用指令实现。** 正文 HTML 用行内样式写好（`<hN>`、`font-family`、`font-size`、`color`、`background-color`、`text-align`、`line-height`、`strong/em/u/s/sub/sup`、`ul/ol`、`table`、`hr`、`a`、特殊符号），调一次 `savecard`：
+  - 服务端读回与写入逐字一致；
+  - 只读预览页（即学生看到的页面）里 11 种字体、14 种字号、7 种行距、4 种对齐、6 级标题、列表、表格、符号全部正确显示。
+- **注意**：
+  - 不要在页面里用 `execCommand('insertText')` 往 ProseMirror 打字。它产生的是浏览器认定为真实的输入事件，BrowserSkill 会把标签页切到「人工控制」，Agent 之后无法再操作，只能换新会话。
+  - `bsk fill` 往 ProseMirror 填写时也可能因为焦点问题失败。
+  - 写正文应走 `savecard` 接口。
+  - 编辑器离开页面时会弹 beforeunload 对话框。
+- 可插入的内容：
+  - 学习资料（17 种）：云盘、视频、图片、文档、音频、附件、本课资料、录音、图书、图书内页、链接、动画、3D 资源、智雅资源库、全景资源、资源库、扩展阅读
+  - 学习任务（6 种）：章节测验、讨论、投票问卷、直播、速课、课程图谱
+  - 更多：注释、文档导入
+  - AI：AI 排版（通用模板 1/2、科技蓝，或自定义要求）、智能编写、AI 校正
+  - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。**这些插入项还没有逐个实际添加过。**
 
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
