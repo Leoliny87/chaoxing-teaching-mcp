@@ -103,6 +103,32 @@
   - 批阅：`aiReview`、`aiAutoMarkScore`、`limitReviewer`、`limitReviewerObj`、`removeMaxMinScore`、`setMarkScore`、`markScoreMin`、`markScoreMax`。
   - 其他：`sortAvgScore`、`questionExplanation`、`saveAsTemplate`、`permissionPassword`/`permissionUuid`。
 
+### 考试（mooc2-ans/exam）
+- 试卷库：`exam/paperlist`。操作有：新建考试（`chooseCreatePaperPop`）、导入试卷、导出全部试卷、安全设置（`confirmUpdateSafe`）、新建文件夹、回收站。每份试卷可以：发布（`checkPaperAnswer(paperid,0,'/mooc2-ans/exam/test/topublish?...')`）、编辑（`openUrl`）、锁定题目（`showLockOperate`）、复制或复制后发布（`copyAndPublishPaper`）、移动、题号模式（`saveItemSerialNumberMode`）。
+- 新建方式 4 种（`chooseCreatePaperPop` 里的 value）：
+  - 0 手动创建：`GET exam/createAnEmptyPaper?courseid&clazzid&pid&parallelpaper=0` 返回 `paperId`，编辑页是 `exam/create-exampaper?courseid&clazzid&paperid&isCustomPaper=false&cpi&ut`
+  - 1 随机组卷（从题库）：`exam/toAutoCreatePaperPage?…&createPaperType=1`
+  - 2 智能组卷助手：`exam/ai-paper?…&from=2`
+  - 3 平行试卷：`createAnEmptyPaper` 加 `parallelpaper=1`，编辑页是 `exam/parallel-paper`
+- 编辑器：试卷标题 `#examPaperTitle`、试卷难度、新建分卷、批量操作、题号模式（连续或按题型）、是否按题型归类。题型同作业，多了选做题，没有钟表题和口语测评题。题目来源：从题库、从云盘、AI 出题、智能导入。
+- 编辑链路：
+  1. `POST exam/update-exampaper-title`（paperid, title）
+  2. `POST exam/add-empty-paperquestion`（paperid, relationid=客户端 uuid, qtype, courseQuestionTypeId, groupId）
+  3. `GET exam/toHandAddPaperQuestion?…&qtype&questionid&edit=true`（打开题目编辑器）
+  4. 每种题型有自己的保存接口，判断题是 `POST exam/editPaperTrueFalseV2`（paperid, courseid, isOpen, score, content, answer, type=3, questionId, typeId, difficulty, easy, topicId, labelIdArr, schoolTopicIds, answerAnalysis）。页面上的校验：分值大于 0、题干非空、已选答案（`.check_answer`，要原生 click 选项 `a.num_option`）。
+  5. 「完成」只做 `GET exam/check-question-answer` 和界面确认，不再提交；每题保存时试卷就已经存好了。
+- 发放：`exam/test/topublish?taskid=0&clazzid&courseid&ut&cpi&paperid&score` → 确认提示「发布后不可修改题量和分值」→ `POST exam/test/publish`。
+  - 发放对象：`publishObj=[{"classid":…,"publishType":0}]`、`makeup`（补考）。
+  - 时间：`startTime`、`endTime`、`limitTime`（分钟），`limitTimeType`、`questypeLimitTime`。
+  - 交卷与进入：`submitLimitTimeMode`、`submitLimitTime`、`entryLimitTime`、`expiredAutoSubmit`。
+  - 防作弊：`forbidMultiterminal`、`terminalFeatureVerify`、`terminalUnlockWay`、`switchScreenControl`、`switchScreenNumberLimit`、`switchScreenThresholdTime`、`snapshotMonitor`、`snapshotInterval`、`notAllowExit`、`pcclientSwitchout`、`clientExam`、`allowCopy`、`allowPaste`、`randomSort`、`randomOptions`、`randomNum`、`randomDifferPaper`、`identifyCode`、`examCode`、`examCodeExpiredTime`、`allowIp`。
+  - 查看与成绩：`allowLookpaper`、`allowAnswer`、`allowScore`、`allowViewRightwrong`、`viewTypeScore`、`allowLookObjScore`、`showRank`、`scoreStandard`、`passingStandard`、`retestNum`、`finishStandard`。
+  - 评分：`blankobj`、`completionIngoreCase`、`blankIgnoreComma`、`multiHalfScore`。
+  - 互评：`evaluation`、`evaluationNum`、`evaluationStandard`、`evaluationStartTime`、`evaluationEndTime`、`anonymousSubmitter`、`anonymousMarker`。
+  - 附件与上传：`phoneUploadable`、`forbidCloudFile`、`forbidPhonePhoto`、`forbidPhoneRecording`、`allowDownloadAttachment`。
+  - 须知与提醒：`examNotes`、`pcExamNotes`、`examInform`、`scheduledInformTime`、`examNotice`、`endNoticeTime`、`endNoticeTimeMinute`。
+  - 作答：`keepLastAnswer`、`allowAnswerBack`。
+
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
 ## 2. 还没探查的范围
