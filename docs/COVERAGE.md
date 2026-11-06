@@ -232,6 +232,15 @@
     - 已验证：用接口写入「原正文 + 1 个链接占位块 + 1 项 attachments」后，读回正确，只读预览里链接模块正常加载。
   - 「链接」弹窗：链接类型（网页链接或章节目录）、标题、网址（必填）、提示文字、在新窗口打开、显示模式（文本、卡片、预览）。插入后带「任务点」开关（默认开，学生打开链接才算完成）。
   - **注意**：用脚本修改弹窗里的表单（包括点 label 让单选框变化）会触发页面 `input` 事件，BrowserSkill 会把它算成人工操作，撤销 Agent 当前动作。弹窗表单要用 `bsk fill` / `bsk click` 按引用操作。另外，几次没完整执行的尝试叠加起来插入了 7 个重复链接，后来用接口清理掉了。
+  - **逐个插入的实测记录**（弹窗一律用 `bsk fill`、`bsk click` 按引用操作，没有触发人工锁定）：
+
+    | 插入项 | 存放方式 | 字段 / 说明 |
+    |---|---|---|
+    | 链接 | 占位块 + attachments | `module:hyperlink`，见上文 |
+    | 注释 | **正文里的行内标记，不进 attachments** | `<a textvalue="标题" data="内容" imgs="" insertnotes="1" bgcolor="#333333" type="text" _href="javascript:void(0);" style="text-decoration: underline dotted rgb(242,140,36)">标题</a>`，插在光标处。原生标记里还有一个属性名带全角空格的 `href　=`。弹窗字段：注释标题、注释内容、附件、浮窗背景色。插入注释的工具要自己生成这段标记，不能经过正文清洗器 |
+    | 讨论（插入主题讨论） | attachments，话题随 `savecard` 由服务端创建，没有单独请求 | `{"module":"insertbbs","title","detail","images":[],"endtime","replywordnum","replytimes","allowViewReply":1,"isJob","_jobid","mid"}`。弹窗字段：标题、正文、任务点开关、设置（截止时间、最少字数、回复次数、是否可看他人回复）。任务点开关的 input 被隐藏，要点它可见的外层元素 |
+
+  - 还没试的插入项：云盘、视频、图片、文档、音频、附件、本课资料、录音、图书、图书内页、动画、3D 资源、智雅资源库、全景资源、资源库、扩展阅读、章节测验、投票问卷、直播、速课、课程图谱、文档导入，以及 3 个 AI 功能。
   - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。**这些插入项还没有逐个实际添加过。**
 
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
