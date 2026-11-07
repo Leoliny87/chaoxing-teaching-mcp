@@ -386,7 +386,7 @@
 - 中心辅导：`ask_tutor` 只把学生的问题和学生选择附上的内容 POST 到教师配置的 https 地址（本机测试可用 http://127.0.0.1），带教师发的令牌，不带学习通登录信息；回复只当建议。
 - 预审：`record_review_suggestion` 只写本机 `reviews/<日期>.jsonl`，「拿不准」必定交人工，其余按比例抽查；`list_review_suggestions` 查看。
 - 实测：学生配置下即使环境变量要求 teacher，也只注册 11 个学生工具；学生调用 publish_notice 被拒；ask_tutor 打到本机模拟辅导服务，服务只收到问题、课程、客户端名和令牌。
-- 还没做：教师端读取每个学生的具体作答（批阅页）给预审用。
+- 预审读作答（`read_student_answers`，教师和 reviewer 角色，学生角色加不进去）：已交名单 `work/mark-list?…&submit=true` 每行 `ul.dataBody_td[id=workAnswerId]` 带「批阅」链接 `work/library/review-work?courseid&clazzid&workId&workAnswerId&…`（按人批阅）；每题一个 `.mark_item1[id=index_N]`，组合题里嵌套小题块，文本里有「学生答案…」「正确答案…」，`.mark_name` 是「N. (题型, 分值) 题干」。2026-11-07 用 reviewer 角色实测：全题型作业 22 题逐题读出学生答案和参考答案（阅读理解带 2 道小题），结果带 untrusted 说明；随后记录两条预审建议，「拿不准」必定交人工；reviewer 调用 publish_notice 被拒。
 
 ### 4.1 角色配置（规则放在 MCP 里，不放在提示词里）
 - 服务端配置 `profile = teacher | student | reviewer`。启动时只注册该角色允许的工具，不允许的工具根本不出现在工具列表里。
