@@ -39,7 +39,7 @@ export XUEXITONG_MCP_BROWSER='YOUR_EXISTING_BROWSER_INSTANCE_ID'
 
 ## 安装与一键更新
 
-当前版本 0.3.0。安装是一份 git 检出（固定在某个发布标签），这样以后可以一条命令更新和回退：
+当前版本 0.4.0。安装是一份 git 检出（固定在某个发布标签），这样以后可以一条命令更新和回退：
 
 ```powershell
 # Windows（PowerShell 5.1+）；默认角色 student，教师加 -Profile teacher
