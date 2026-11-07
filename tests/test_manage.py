@@ -78,6 +78,14 @@ def test_weight_changes():
             weight_changes(cur, bad)
 
 
+def test_outline_levels():
+    from xuexitong_mcp.ops_manage import outline_levels
+    assert outline_levels("一\n  一.一\n\t\t一.一.一\n二\r\n") == [(0, "一"), (1, "一.一"), (2, "一.一.一"), (0, "二")]
+    for bad in ("", "一\n    跳级", "  开头就缩进", "\n".join(["x"] * 101)):
+        with pytest.raises(XxtError):
+            outline_levels(bad)
+
+
 def test_bank_question_ids():
     from xuexitong_mcp.ops_bank import _qids
     assert _qids(["96c9c9c158034b3281f6fde35ecd201c", " 123 "]) == ["96c9c9c158034b3281f6fde35ecd201c", "123"]

@@ -31,6 +31,26 @@ BIN_KINDS = ("作业", "考试", "试卷", "资料")
 PURGE_KINDS = ("试卷", "资料")
 
 
+def outline_levels(outline: str) -> list[tuple[int, str]]:
+    """Outline text -> [(level from 0, title)]; a tab or two spaces is one level; levels may only go one deeper at a time."""
+    out: list[tuple[int, str]] = []
+    for raw in (outline or "").replace("\r", "").split("\n"):
+        if not raw.strip():
+            continue
+        lead = raw[:len(raw) - len(raw.lstrip())]
+        lv = lead.count("\t") + (len(lead.replace("\t", "")) + 1) // 2
+        prev = out[-1][0] if out else -1
+        if lv > prev + 1 or lv > 6:
+            raise XxtError(f"「{raw.strip()[:30]}」的缩进跳级了（每深一级多缩进两个空格，最多 7 层）。")
+        t = raw.strip()
+        if len(t) > 100:
+            raise XxtError("每个目录名最多 100 字。")
+        out.append((lv, t))
+    if not out or len(out) > 100:
+        raise XxtError("outline 每行一个目录，1–100 行；下一级在行首多缩进两个空格。")
+    return out
+
+
 def moved_check(before: list[str], after: list[str], binned: list[str] | None, target: str) -> tuple[bool, str]:
     """True when `target` left the list, nothing else did, and (if a bin was read) it is in the bin."""
     b, a = set(map(str, before)), set(map(str, after))
@@ -266,6 +286,70 @@ class ManageOps(XxtBase):
         if not ok:
             out.update(write_outcome="unknown", error="删除后核对不通过（章节还在，或别的章节也不见了）；请用 list_chapters 核查。",
                        server=r if isinstance(r, dict) else None)
+        return out
+
+    def _chapter_post(self, path: str, form: dict) -> dict:
+        r = self.on(M1, "const f=new FormData(); for(const [k,v] of Object.entries(%s)) f.append(k,v); return await J(%s,{method:'POST',body:f});"
+                    % (json.dumps(form, ensure_ascii=False), json.dumps(path)), retry_safe=False)
+        return r if isinstance(r, dict) else {}
+
+    def move_chapter(self, course: str, chapter: str, parent: str) -> dict:
+        """移动到: the chapter (with its children) becomes the last child of `parent`."""
+        c = self.course(course)
+        chs = self.chapters(c.id)
+        ch = _best(chs, chapter, id_keys=("chapter_id", "number"))
+        p = _best(chs, parent, id_keys=("chapter_id", "number"))
+        if p["chapter_id"] == ch["chapter_id"] or p["number"].startswith(ch["number"] + "."):
+            raise XxtError("不能移到它自己或它的子章节下面。")
+        depth = max([x["number"].count(".") for x in chs if x["number"] == ch["number"] or x["number"].startswith(ch["number"] + ".")])
+        if p["number"].count(".") + 1 + (depth - ch["number"].count(".")) + 1 > 7:
+            raise XxtError("移动后会超过 7 层目录。")
+        r = self._chapter_post("/mooc-ans/edit/chaptermove", {"courseid": c.id, "nodeid": ch["chapter_id"], "pnodeid": p["chapter_id"]})
+        now = {x["chapter_id"]: x for x in self.chapters(c.id)}
+        ok = r.get("status") is True and now.get(ch["chapter_id"], {}).get("parent_id") == p["chapter_id"]
+        out = {"ok": ok, "chapter": ch["title"], "parent": p["title"], "number_now": now.get(ch["chapter_id"], {}).get("number")}
+        if not ok:
+            out.update(write_outcome="unknown", error="移动后读回的上级章节不对；请用 list_chapters 核查。", server=r)
+        return out
+
+    def reorder_chapter(self, course: str, chapter: str, target: str, position: str) -> dict:
+        """排序: put the chapter right before / after a sibling-level target (the editor's drag)."""
+        if position not in ("before", "after"):
+            raise XxtError("position 只能是 before 或 after。")
+        c = self.course(course)
+        chs = self.chapters(c.id)
+        ch = _best(chs, chapter, id_keys=("chapter_id", "number"))
+        t = _best(chs, target, id_keys=("chapter_id", "number"))
+        if ch["chapter_id"] == t["chapter_id"] or t["number"].startswith(ch["number"] + "."):
+            raise XxtError("目标不能是它自己或它的子章节。")
+        if ch["layer"] != 1 and t["layer"] == 1:
+            raise XxtError("非一级目录不能成为一级目录。")
+        r = self._chapter_post("/mooc-ans/edit/movechapter/drag", {"courseid": c.id, "nodeid": ch["chapter_id"], "destid": t["chapter_id"], "position": position})
+        now = self.chapters(c.id)
+        sib = [x["chapter_id"] for x in now if x["parent_id"] == t["parent_id"]]
+        ok = r.get("status") is True and ch["chapter_id"] in sib and t["chapter_id"] in sib and \
+            sib.index(ch["chapter_id"]) == sib.index(t["chapter_id"]) + (1 if position == "after" else -1)
+        num = next((x["number"] for x in now if x["chapter_id"] == ch["chapter_id"]), None)
+        out = {"ok": ok, "chapter": ch["title"], "position": position, "target": t["title"], "number_now": num}
+        if not ok:
+            out.update(write_outcome="unknown", error="排序后读回的位置不对；请用 list_chapters 核查。", server=r)
+        return out
+
+    def import_chapters(self, course: str, outline: str) -> dict:
+        """快速导入目录: each line one chapter; the editor's format indents each level by two spaces.  Appended to the course."""
+        rows = outline_levels(outline)
+        c = self.course(course)
+        before = {x["chapter_id"] for x in self.chapters(c.id)}
+        text = "".join("  " * lv + t + "\n" for lv, t in rows)
+        r = self._chapter_post("/mooc-ans/edit/importdirForText", {"courseId": c.id, "text": text})
+        now = self.chapters(c.id)
+        new = [x for x in now if x["chapter_id"] not in before]
+        ok = (r.get("success") is True or r.get("status") is True) and \
+            [(int(x["layer"]) - 1, x["title"]) for x in new] == [(lv, t) for lv, t in rows]
+        out = {"ok": ok, "created": [{"number": x["number"], "title": x["title"], "layer": x["layer"]} for x in new]}
+        if not ok:
+            out.update(write_outcome="unknown" if new or not r.get("msg") else "not_written",
+                       error=f"导入后的目录和大纲不一致（{str(r.get('msg') or '')[:60]}）；请用 list_chapters 核查。")
         return out
 
     # ------------------------------------------------------------------ materials

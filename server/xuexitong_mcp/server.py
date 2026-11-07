@@ -1181,6 +1181,44 @@ def add_question_to_bank(course: Course_, question: Annotated[dict, Field(descri
     return client().add_bank_question(course, question)
 
 
+@tool(W, "把章节（连同子章节）移到另一个章节下面，作为它的最后一个子章节（「移动到」）。先预演，确认后移动并读回上级章节。")
+def move_chapter(course: Course_, chapter: Annotated[str, Field(description="要移动的章节编号/标题/ID")],
+                 parent: Annotated[str, Field(description="新的上级章节编号/标题/ID")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        from .xxt import _best
+        chs = client().chapters(c.id)
+        ch, p = _best(chs, chapter, id_keys=("chapter_id", "number")), _best(chs, parent, id_keys=("chapter_id", "number"))
+        return _dry(c, "移动章节（学生端目录随之变化）", bind={"chapter": ch["chapter_id"], "parent": p["chapter_id"]},
+                    chapter=f"{ch['number']} {ch['title']}", new_parent=f"{p['number']} {p['title']}")
+    return client().move_chapter(course, chapter, parent)
+
+
+@tool(W, "调整章节顺序：把章节排到同级另一个章节的前面或后面（编辑器里的拖动）。先预演，确认后保存并读回顺序。")
+def reorder_chapter(course: Course_, chapter: Annotated[str, Field(description="要调整的章节编号/标题/ID")],
+                    target: Annotated[str, Field(description="参照章节编号/标题/ID")],
+                    position: Annotated[str, Field(description="before=排到它前面，after=排到它后面")] = "after", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        from .xxt import _best
+        chs = client().chapters(c.id)
+        ch, t = _best(chs, chapter, id_keys=("chapter_id", "number")), _best(chs, target, id_keys=("chapter_id", "number"))
+        return _dry(c, "调整章节顺序", bind={"chapter": ch["chapter_id"], "target": t["chapter_id"]},
+                    chapter=f"{ch['number']} {ch['title']}", position={"before": "排到前面", "after": "排到后面"}.get(position, position),
+                    target=f"{t['number']} {t['title']}")
+    return client().reorder_chapter(course, chapter, target, position)
+
+
+@tool(W, "按大纲快速导入章节目录（追加在课程目录末尾）：每行一个目录，下一级在行首多缩进两个空格（或一个 Tab）。先预演，确认后导入并核对标题和层级。")
+def import_chapters(course: Course_, outline: Annotated[str, Field(description="大纲文本，如 \"第一章\\n  1.1 节\\n  1.2 节\"")], confirm: Confirm = False) -> dict:
+    from .ops_manage import outline_levels
+    c = _check_write(course)
+    rows = outline_levels(outline)
+    if not confirm:
+        return _dry(c, f"导入 {len(rows)} 个章节目录（追加到目录末尾）", outline=[("  " * lv) + t for lv, t in rows])
+    return client().import_chapters(course, outline)
+
+
 QIds_ = Annotated[list[str], Field(description="题目ID列表（list_bank_questions 的 question_id）")]
 
 
