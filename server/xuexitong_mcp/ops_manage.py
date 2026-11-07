@@ -74,11 +74,20 @@ class ManageOps(XxtBase):
             js = """const d=D(await F(%s)); if(!d.querySelector('#recycle')) return null;
                 return [...d.querySelectorAll('.taskList li[id^=work]')].map(li=>({id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class'))}));"""
         elif kind == "考试":
-            u = (f"/mooc2-ans/exam/test?courseid={cid}&ut=&cpi={cpi}&clazzid={clz}&recyle=1&topicid=0" if binned
-                 else f"/mooc2-ans/exam/test?{self.q(c)}")
-            js = """const d=D(await F(%s)); if(!d.querySelector('#recyle')) return null;
-                return [...d.querySelectorAll('li[data]')].filter(l=>l.querySelector('.list_li_tit')).map(l=>({id:l.getAttribute('data'),
-                  title:T(l.querySelector('.list_li_tit')),paper_id:(l.querySelector('.list_li_content')||{getAttribute:()=>null}).getAttribute('data'),class:T(l.querySelector('.list_class'))}));"""
+            # the exam list (and its bin) only shows the class named in clazzid: read every class
+            us = [(f"/mooc2-ans/exam/test?courseid={cid}&ut=&cpi={cpi}&clazzid={_safe_id(x['clazz_id'])}&recyle=1&topicid=0" if binned
+                   else f"/mooc2-ans/exam/test?courseid={cid}&clazzid={_safe_id(x['clazz_id'])}&cpi={cpi}&ut=t&enc={c.enc}&t={c.t}")
+                  for x in c.classes]
+            r = self.on(M2, """
+                const out=[], seen=new Set();
+                for(const u of %s){ const d=D(await F(u)); if(!d.querySelector('#recyle')) return null;
+                  for(const l of d.querySelectorAll('li[data]')){ if(!l.querySelector('.list_li_tit')||seen.has(l.getAttribute('data'))) continue; seen.add(l.getAttribute('data'));
+                    out.push({id:l.getAttribute('data'),title:T(l.querySelector('.list_li_tit')),paper_id:(l.querySelector('.list_li_content')||{getAttribute:()=>null}).getAttribute('data'),
+                      class:T(l.querySelector('.list_class')),time:T(l.querySelector('p.list_li_time span')).replace('考试时间：','')}); } }
+                return out;""" % json.dumps(us))
+            if not isinstance(r, list):
+                raise XxtError(f"考试{'回收站' if binned else '列表'}读取失败或结构不完整；没有继续。")
+            return r
         elif kind == "试卷":
             u = f"/mooc2-ans/exam/paperlist?clazzid=-1&courseid={cid}&ut=t&cpi={cpi}&topicid=0" + ("&type=1" if binned else "")
             js = """const d=D(await F(%s)); if(!d.querySelector('#courseId')) return null;
@@ -409,6 +418,86 @@ class ManageOps(XxtBase):
         if folder and folder != "0":
             folder = _best([x for x in self._rows("资料", c) if x["folder"]], folder, key="title", id_keys=("id",))["id"]
         return self._rows("资料", c, folder=folder)
+
+    # ------------------------------------------------------------------ published assignment settings
+    def update_assignment_times(self, course: str, assignment: str, end_time: str, start_time: str = "") -> dict:
+        """修改设置 of one published assignment: the page's own rePublicWork() (POST work/library/update-publish with every
+        setting read from the page); only the start/end times are changed.  Its window.close() is neutralised."""
+        from .xxt import norm_time
+        c = self.ctx(course)
+        a = self._find_assignment(c, assignment)
+        # the page's date pickers use yyyy-MM-dd HH:mm:ss; a value without seconds is stored as "no end time"
+        end = norm_time(end_time)
+        st = norm_time(start_time, 0) if start_time else ""
+        self.b.navigate(f"https://{M2}/mooc2-ans/work/rePublishSetting?courseid={_safe_id(c.id)}&classid=0&cpi={_safe_id(c.cpi)}"
+                        f"&id={_safe_id(a['id'])}&from=", settle=0.8)
+        if not self.wait_for("return typeof rePublicWork==='function' && !!document.getElementById('endTime')", timeout=20):
+            raise XxtError("修改设置页没有加载；没有修改。")
+        r = self.here("""
+            window.close=function(){}; window.__rp=null;
+            const orig=$.ajax; $.ajax=function(o){ if(o&&/update-publish/.test(o.url||'')){ const s=o.success; o.success=function(d){window.__rp=d||{}; try{s&&s.apply(this,arguments)}catch(e){}}; o.error=function(){window.__rp={status:false,msg:'网络错误'}} } return orig.apply(this,arguments) };
+            const old={start:$('#startTime').val(),end:$('#endTime').val()};
+            $('#endTime').val(%(end)s); if(%(st)s) $('#startTime').val(%(st)s);
+            try{ if(typeof endTimeChanged==='function') endTimeChanged() }catch(e){}
+            const ret=rePublicWork();
+            for(let i=0;i<40&&!window.__rp;i++) await new Promise(r=>setTimeout(r,250));
+            return {old, sent:!!window.__rp, resp:window.__rp, refused:ret===false};
+        """ % {"end": json.dumps(end), "st": json.dumps(st)}, retry_safe=False)
+        if not isinstance(r, dict):
+            raise XxtError("修改设置页没有响应。")
+        if r.get("refused") and not r.get("sent"):
+            return {"ok": False, "write_outcome": "not_written", "error": "页面校验没通过（例如开始时间早于现在）；没有提交。"}
+        resp = r.get("resp") or {}
+        row = next((x for x in self.assignments(c.id) if x["id"] == a["id"]), {})
+        tm = str(row.get("time") or "")
+        head, _, tail = tm.partition("至")
+        ok = resp.get("status") is True and tail.strip().endswith(end[5:16]) and (not st or head.strip().endswith(st[5:16]))
+        out = {"ok": ok, "assignment": a["title"], "class": a.get("class"), "time_before": a.get("time"), "time_now": tm}
+        if not ok:
+            refused = resp.get("status") is False
+            out.update(write_outcome="not_written" if refused else "unknown",
+                       error=f"服务端拒绝：{str(resp.get('msg') or '')[:80]}" if refused else "作业列表里的时间和新设置不一致；请核查。")
+        return out
+
+    def update_exam_times(self, course: str, exam: str, end_time: str, start_time: str = "", limit_minutes: int | None = None) -> dict:
+        """修改设置 of a published exam: the page's own updatepublish() (POST exam/test/update-publishsettings with every
+        setting read from the page); only the times / duration are changed."""
+        from .xxt import norm_time
+        c = self.ctx(course)
+        e = _best(self._rows("考试", c), exam, key="title", id_keys=("id",))
+        end = norm_time(end_time)
+        st = norm_time(start_time, 0) if start_time else ""
+        if limit_minutes is not None and (not isinstance(limit_minutes, int) or not 1 <= limit_minutes <= 100000):
+            raise XxtError("考试时长是正整数（分钟）。")
+        clz = next((x["clazz_id"] for x in c.classes if x.get("name") == e.get("class")), c.clazz_id)
+        self.b.navigate(f"https://{M2}/mooc2-ans/exam/test/topublishsettings?clazzid={_safe_id(clz)}&courseid={_safe_id(c.id)}&ut="
+                        f"&cpi={_safe_id(c.cpi)}&id={_safe_id(e['id'])}", settle=0.8)
+        if not self.wait_for("return typeof updatepublish==='function' && !!document.getElementById('endTime')", timeout=20):
+            raise XxtError("考试修改设置页没有加载；没有修改。")
+        r = self.here("""
+            window.close=function(){}; window.__up=null;
+            const orig=$.ajax; $.ajax=function(o){ if(o&&/update-publishsettings/.test(o.url||'')){ const s=o.success; o.success=function(d){window.__up=d||{}; try{s&&s.apply(this,arguments)}catch(e){}}; o.error=function(){window.__up={status:false,msg:'网络错误'}} } return orig.apply(this,arguments) };
+            $('#endTime').val(%(end)s); if(%(st)s) $('#startTime').val(%(st)s); if(%(lim)s) $('#limitTime').val(%(lim)s);
+            // true = skip the page's own "times changed" confirmation (the preview is our confirmation)
+            let ret=updatepublish(true);
+            for(let i=0;i<40&&!window.__up;i++) await new Promise(r=>setTimeout(r,250));
+            return {sent:!!window.__up, resp:window.__up, refused:ret===false};
+        """ % {"end": json.dumps(end), "st": json.dumps(st), "lim": json.dumps(str(limit_minutes) if limit_minutes else "")}, retry_safe=False)
+        if not isinstance(r, dict):
+            raise XxtError("考试修改设置页没有响应。")
+        if not r.get("sent"):
+            return {"ok": False, "write_outcome": "not_written", "error": "页面校验没通过或没有发出保存请求；没有修改。"}
+        resp = r.get("resp") or {}
+        row = next((x for x in self._rows("考试", c) if x["id"] == e["id"]), {})
+        tm = str(row.get("time") or "")
+        head, _, tail = tm.partition("至")
+        ok = resp.get("status") is True and tail.strip().endswith(end[5:16]) and (not st or head.strip().endswith(st[5:16]))
+        out = {"ok": ok, "exam": e["title"], "class": row.get("class"), "time_now": tm}
+        if not ok:
+            refused = resp.get("status") is False
+            out.update(write_outcome="not_written" if refused else "unknown",
+                       error=f"服务端拒绝：{str(resp.get('msg') or '')[:80]}" if refused else "考试列表里的时间和新设置不一致；请核查。")
+        return out
 
     # ------------------------------------------------------------------ grade export
     def export_grades_verified(self, course: str, cls: str) -> dict:

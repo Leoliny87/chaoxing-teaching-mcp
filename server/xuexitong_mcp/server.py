@@ -627,6 +627,21 @@ def remind_assignment(course: Course_, assignment: Annotated[str, Field(descript
     return client().urge_students(course, assignment, list(person_ids))
 
 
+@tool(W, "修改一次已发布作业的开始/截止时间（作业列表里的「修改设置」；其他发放设置保持不变）。先预演，确认后保存并在作业列表核对时间。")
+def update_assignment_times(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID（一个班的一次发放）")],
+                            end_time: EndTime, start_time: Annotated[str, Field(description="新的开始时间，留空=不改")] = "",
+                            confirm: Confirm = False) -> dict:
+    from .xxt import norm_time
+    c = _check_write(course)
+    if not confirm:
+        a = client()._find_assignment(c, assignment)
+        et = norm_time(end_time)
+        st = norm_time(start_time, 0) if start_time else ""
+        return _dry(c, "修改已发布作业的时间（学生端随之变化）", bind={"assignment": a["id"], "end_time": et, "start_time": st},
+                    assignment=a["title"], class_name=a.get("class"), time_now=a.get("time"), new_end=et, new_start=st or "不改")
+    return client().update_assignment_times(course, assignment, end_time, start_time)
+
+
 @tool(D, "删除一次作业发放（移入作业回收站，可用 restore_deleted 还原）。先预演，确认后删除，并核对：列表里没了、其他作业都还在、回收站里有它。")
 def delete_assignment(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID（assignments 列表里的 id）")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
@@ -725,6 +740,21 @@ def publish_exam(course: Course_, paper: Annotated[str, Field(description="试�
                     paper=p["title"], paper_id=p["paper_id"], start_time=st, end_time=et, limit_minutes=limit_minutes,
                     classes=[target], settings=settings or "默认")
     return client().publish_exam_v3(course, paper, [class_name], start_time, end_time, limit_minutes, settings)
+
+
+@tool(W, "修改一场已发布考试的开始/截止时间和答题时长（考试列表里的「修改设置」；其他设置保持不变）。先预演，确认后保存并在考试列表核对时间。")
+def update_exam_times(course: Course_, exam: Annotated[str, Field(description="考试标题或考试ID")], end_time: EndTime,
+                      start_time: Annotated[str, Field(description="新的开始时间，留空=不改")] = "",
+                      limit_minutes: Annotated[int | None, Field(description="新的答题时长（分钟），留空=不改")] = None, confirm: Confirm = False) -> dict:
+    from .xxt import norm_time
+    c = _check_write(course)
+    if not confirm:
+        e = client().find_binnable(c.id, "考试", exam)
+        et = norm_time(end_time)
+        st = norm_time(start_time, 0) if start_time else ""
+        return _dry(c, "修改已发布考试的时间（学生端随之变化）", bind={"exam": e["id"], "end_time": et, "start_time": st},
+                    exam=e["title"], class_name=e.get("class"), new_end=et, new_start=st or "不改", limit_minutes=limit_minutes or "不改")
+    return client().update_exam_times(course, exam, end_time, start_time, limit_minutes)
 
 
 @tool(D, "删除一场已发布的考试（移入考试回收站，可用 restore_deleted 还原；试卷库里的试卷不受影响）。先预演，确认后删除并核对列表和回收站。")

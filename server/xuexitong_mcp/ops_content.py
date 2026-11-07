@@ -267,14 +267,19 @@ class ContentOps(XxtBase):
 
     # ================================================================ exams
     def exams(self, course: str) -> list[dict]:
+        """Every class's exams (the list page only shows the class named in clazzid)."""
         c = self.ctx(course)
+        us = [f"/mooc2-ans/exam/test?courseid={c.id}&clazzid={x['clazz_id']}&cpi={c.cpi}&ut=t&enc={c.enc}&t={c.t}" for x in c.classes] or \
+             [f"/mooc2-ans/exam/test?{self.q(c)}"]
         return self.on(M2, f"""
-            const d=D(await F('/mooc2-ans/exam/test?{self.q(c)}'));
-            return [...d.querySelectorAll('li[data]')].filter(l=>l.querySelector('.list_li_tit')).map(l=>{{
-              const cnt=T(l.querySelector('.piyuePcon'));
-              return {{id:l.getAttribute('data'),paper_id:l.querySelector('.list_li_content')?.getAttribute('data'),title:T(l.querySelector('.list_li_tit')),
-               class:T(l.querySelector('.list_class')),time:T([...l.querySelectorAll('.list_li_time')].pop()).replace('考试时间：',''),
-               pending:(cnt.match(/(\\d+)\\s*待批/)||[])[1],submitted:(cnt.match(/(\\d+)\\s*已交/)||[])[1],unsubmitted:(cnt.match(/(\\d+)\\s*未交/)||[])[1]}}}});
+            const out=[], seen=new Set();
+            for(const u of {json.dumps(us)}){{ const d=D(await F(u));
+              for(const l of d.querySelectorAll('li[data]')){{ if(!l.querySelector('.list_li_tit')||seen.has(l.getAttribute('data'))) continue; seen.add(l.getAttribute('data'));
+                const cnt=T(l.querySelector('.piyuePcon'));
+                out.push({{id:l.getAttribute('data'),paper_id:l.querySelector('.list_li_content')?.getAttribute('data'),title:T(l.querySelector('.list_li_tit')),
+                 class:T(l.querySelector('.list_class')),time:T([...l.querySelectorAll('.list_li_time')].pop()).replace('考试时间：',''),
+                 pending:(cnt.match(/(\\d+)\\s*待批/)||[])[1],submitted:(cnt.match(/(\\d+)\\s*已交/)||[])[1],unsubmitted:(cnt.match(/(\\d+)\\s*未交/)||[])[1]}}); }} }}
+            return out;
         """)
 
     def papers(self, course: str) -> list[dict]:
