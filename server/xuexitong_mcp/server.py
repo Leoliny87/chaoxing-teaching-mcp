@@ -146,9 +146,7 @@ def _consume_plan(tool_name: str, args: dict, plan_id: str) -> dict:
 _PLAN_PARAM = inspect.Parameter("plan_id", inspect.Parameter.KEYWORD_ONLY, default="",
                                 annotation=Annotated[str, Field(description="预演返回的 plan_id；confirm=true 时必填")])
 
-_PREVIEW_ONLY_TOOLS = frozenset({"delete_chapter", "export_grades", "remind_assignment",
-                                 "delete_assignment", "delete_exam", "delete_exam_paper", "delete_material",
-                                 "delete_discussion"})
+_PREVIEW_ONLY_TOOLS: frozenset[str] = frozenset()
 
 
 def _wrap(fn: Callable, kind: str = "read") -> Callable:
@@ -603,29 +601,73 @@ def return_submission(course: Course_, assignment: Annotated[str, Field(descript
     return client().return_submission(course, assignment, student, reason)
 
 
-@tool(W, "给作业未交学生发催交提醒：当前仅支持预演，收件人可能变化。")
-def remind_assignment(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID")], confirm: Confirm = False) -> dict:
+@tool(W, "督促作业未交的学生（学生会收到通知）。预演列出当前未交名单并锁定收件人（可用 students 只督促其中几人）；确认时名单必须没变，只发给锁定的人。")
+def remind_assignment(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID（一个班的一次发放）")],
+                      students: Annotated[list[str], Field(description="只督促这些学生（姓名或 person_id），留空=全部未交")] = [],  # noqa: B006
+                      confirm: Confirm = False, person_ids: Annotated[list[str], Field(description="由预演绑定，调用时保持默认空值")] = []) -> dict:  # noqa: B006
     c = _check_write(course)
     if not confirm:
+        if person_ids:
+            raise XxtError("预演时 person_ids 必须留空。")
         s = client().submissions(c.id, assignment)
         if not isinstance(s, dict) or not isinstance(s.get("unsubmitted"), list) or any(not isinstance(x, dict) for x in s["unsubmitted"]):
             raise XxtError("未交名单读取不完整，无法预演。")
-        recipients = [{"name": x.get("name"), "person_id": x.get("person_id")} for x in s["unsubmitted"]]
-        draft = _dry(c, "督促未交学生", bind={"assignment": s.get("id") or assignment},
-                     assignment=s["assignment"], assignment_id=s.get("id"), unsubmitted=recipients)
-        draft["details"]["unsubmitted"] = recipients
-        return _preview_only(draft, "仅查看有限列表，可能不完整；平台按提交时未交名单全体发送，无法原子绑定预演名单。")
-    raise XxtError("作业催交通知暂不执行：收件人范围可能在预演后变化。")
+        pool = [{"name": x.get("name"), "person_id": str(x.get("person_id"))} for x in s["unsubmitted"]]
+        if students:
+            want = {str(x).strip() for x in students}
+            pool = [x for x in pool if x["person_id"] in want or x["name"] in want]
+            if len(pool) != len(want):
+                raise XxtError("students 里有人不在未交名单里（或重名）；请用 assignment_submissions 核对。")
+        if not pool:
+            raise XxtError("没有未交的学生，不需要督促。")
+        a = client()._find_assignment(c, assignment)
+        draft = _dry(c, "督促未交学生（每人收到一条通知）", bind={"assignment": a["id"], "person_ids": [x["person_id"] for x in pool]},
+                     assignment=s["assignment"], assignment_id=a["id"], recipients=pool)
+        return draft
+    return client().urge_students(course, assignment, list(person_ids))
 
 
-@tool(D, "删除作业：当前仅支持预演，删除后列表完整性未验证。")
-def delete_assignment(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID")], confirm: Confirm = False) -> dict:
+@tool(D, "删除一次作业发放（移入作业回收站，可用 restore_deleted 还原）。先预演，确认后删除，并核对：列表里没了、其他作业都还在、回收站里有它。")
+def delete_assignment(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID（assignments 列表里的 id）")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
         a = client()._find_assignment(c, assignment)
-        return _preview_only(_dry(c, "删除作业（移入回收站）", bind={"assignment": a["id"]}, target=a["title"], id=a["id"], time=a.get("time"), submitted=a.get("submitted")),
-                             "作业列表加载失败可能被误识别为空；删除后状态尚不能可靠核实。")
-    raise XxtError("作业删除暂不执行：删除后列表完整性未验证。")
+        return _dry(c, "删除作业发放（移入回收站，学生端不再显示）", bind={"assignment": a["id"]}, target=a["title"], id=a["id"], class_name=a.get("class"),
+                    time=a.get("time"), submitted=a.get("submitted"))
+    return client().delete_to_bin(course, "作业", assignment)
+
+
+BinKind_ = Annotated[str, Field(description="作业 / 考试 / 试卷 / 资料")]
+
+
+@tool(R, "列出回收站里的作业发放、考试、试卷或课程资料（标题和ID）。")
+def list_recycle_bin(course: Course_, kind: BinKind_) -> dict:
+    return client().recycle_bin(course, kind)
+
+
+@tool(W, "把回收站里的一项（作业发放 / 考试 / 试卷 / 资料）还原。先预演，确认后还原并核对已回到列表。")
+def restore_deleted(course: Course_, kind: BinKind_, target: Annotated[str, Field(description="回收站里的标题或ID（list_recycle_bin 可查）")],
+                    confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        t = client().find_binnable(c.id, kind, target, binned=True)
+        return _dry(c, f"从回收站还原{kind}", bind={"target": t["id"]}, title=t["title"], id=t["id"])
+    return client().bin_action(course, kind, target, "restore")
+
+
+@tool(D, "从回收站彻底删除试卷或课程资料（不可恢复）。先预演，确认后删除并核对回收站和列表里都没有它。")
+def purge_deleted(course: Course_, kind: Annotated[str, Field(description="试卷 / 资料")],
+                  target: Annotated[str, Field(description="回收站里的标题或ID（list_recycle_bin 可查）")], confirm: Confirm = False) -> dict:
+    from .ops_manage import PURGE_KINDS
+    c = _check_write(course)
+    if kind not in PURGE_KINDS:
+        raise XxtError(f"只有 {'、'.join(PURGE_KINDS)} 支持彻底删除。")
+    if not confirm:
+        t = client().find_binnable(c.id, kind, target, binned=True)
+        if t.get("purgeable") is False:
+            raise XxtError("这份试卷还被考试引用（包括回收站里的考试），平台不允许彻底删除。")
+        return _dry(c, f"从回收站彻底删除{kind}（不可恢复）", bind={"target": t["id"]}, title=t["title"], id=t["id"])
+    return client().bin_action(course, kind, target, "purge")
 
 
 # ------------------------------------------------------------------ 考试
@@ -685,26 +727,22 @@ def publish_exam(course: Course_, paper: Annotated[str, Field(description="试�
     return client().publish_exam_v3(course, paper, [class_name], start_time, end_time, limit_minutes, settings)
 
 
-@tool(D, "删除考试及可选的试卷：当前仅支持预演，删除后列表完整性未验证。")
-def delete_exam(course: Course_, exam: Annotated[str, Field(description="考试标题或考试ID")], delete_paper: Annotated[bool, Field(description="是否同时删除对应试卷")] = False, confirm: Confirm = False) -> dict:
+@tool(D, "删除一场已发布的考试（移入考试回收站，可用 restore_deleted 还原；试卷库里的试卷不受影响）。先预演，确认后删除并核对列表和回收站。")
+def delete_exam(course: Course_, exam: Annotated[str, Field(description="考试标题或考试ID")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
-        from .xxt import _best
-        e = _best(client().exams(c.id), exam, id_keys=("id", "paper_id"))
-        return _preview_only(_dry(c, "删除考试" + ("及试卷" if delete_paper else ""), bind={"exam": e["id"]}, target=e["title"], id=e["id"], paper_id=e["paper_id"], submitted=e.get("submitted")),
-                             "考试或试卷列表可能不完整；删除后状态尚不能可靠核实。")
-    raise XxtError("考试删除暂不执行：删除后列表完整性未验证。")
+        e = client().find_binnable(c.id, "考试", exam)
+        return _dry(c, "删除考试（移入回收站，学生端不再显示）", bind={"exam": e["id"]}, target=e["title"], id=e["id"], class_name=e.get("class"))
+    return client().delete_to_bin(course, "考试", exam)
 
 
-@tool(D, "删除试卷库中的试卷：当前仅支持预演，删除后列表完整性未验证。")
+@tool(D, "删除试卷库中的试卷（移入试卷回收站，可还原或用 purge_deleted 彻底删除）。先预演，确认后删除并核对列表和回收站。")
 def delete_exam_paper(course: Course_, paper: Annotated[str, Field(description="试卷标题或试卷ID")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
-        from .xxt import _best
-        p = _best(client().papers(c.id), paper, id_keys=("paper_id",))
-        return _preview_only(_dry(c, "删除试卷", bind={"paper": p["paper_id"]}, target=p["title"], paper_id=p["paper_id"]),
-                             "试卷列表加载失败可能被误识别为空；删除后状态尚不能可靠核实。")
-    raise XxtError("试卷删除暂不执行：删除后列表完整性未验证。")
+        p = client().find_binnable(c.id, "试卷", paper)
+        return _dry(c, "删除试卷（移入回收站）", bind={"paper": p["id"]}, target=p["title"], paper_id=p["id"])
+    return client().delete_to_bin(course, "试卷", paper)
 
 
 @tool(R, "查看考试批阅页人数和当前可见行；已交、未交名单尚未核实（逐题打分需人工完成）。")
@@ -716,8 +754,9 @@ def exam_marklist(course: Course_, exam: Annotated[str, Field(description="考�
 def question_bank_needs_human(what: Annotated[str, Field(description="题库 / 试卷库 / 考试管理")] = "题库") -> dict:
     return {"ok": False, "needs_human": True,
             "error": f"「{what}」页面受滑块验证码保护，自动化无法操作，请老师本人在 Chrome 中打开处理。",
-            "links": {"题库管理": "https://hnyyxx.kaoshi.chaoxing.com/tkgljs/list", "试卷库管理": "https://hnyyxx.kaoshi.chaoxing.com/kssjgljs/list",
-                      "考试管理": "https://hnyyxx.kaoshi.chaoxing.com/exam/jsmanage"},
+            "links": {"题库管理": "https://<学校>.kaoshi.chaoxing.com/tkgljs/list", "试卷库管理": "https://<学校>.kaoshi.chaoxing.com/kssjgljs/list",
+                      "考试管理": "https://<学校>.kaoshi.chaoxing.com/exam/jsmanage"},
+            "note": "<学校> 是本校在 kaoshi.chaoxing.com 下的子域名，请在学习通首页的考试系统入口里查看。",
             "hint": "课程内的“考试/试卷”可用 list_exams / create_exam / publish_exam 处理。"}
 
 
@@ -739,15 +778,40 @@ def create_discussion(course: Course_, title: Annotated[str, Field(description="
     return client().create_topic_v3(course, title, content or title, [class_name])
 
 
-@tool(D, "删除讨论区话题：当前仅支持预演，完整内容、回复和删除后状态尚未核实。")
+@tool(D, "删除讨论区话题（连同回复）。先预演显示标题和回复数，确认后删除并核对：话题不见了、其他话题都还在。")
 def delete_discussion(course: Course_, topic: Annotated[str, Field(description="话题标题或ID")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
         from .xxt import _best
-        t = _best(client().topics(c.id, 500), topic, id_keys=("topic_id", "uuid", "id"))
-        return _preview_only(_dry(c, "删除讨论话题", bind={"topic": t.get("topic_id") or t.get("uuid")}, target=t.get("title"), id=t.get("topic_id") or t.get("uuid")),
-                             "列表不保证完整且正文被截断，回复和删除后状态尚未核实。")
-    raise XxtError("话题删除暂仅支持预演，影响范围及删除后状态尚未核实。")
+        t = _best(client().topics(c.id, 200), topic, id_keys=("topic_id", "id"))
+        return _dry(c, "删除讨论话题（连同所有回复）", bind={"topic": t["topic_id"]}, target=t.get("title"), id=t["topic_id"], replies=t.get("replies"))
+    return client().delete_topic_verified(course, topic)
+
+
+@tool(W, "讨论话题置顶 / 取消置顶 / 加精 / 取消加精。先预演，确认后操作并读回状态。")
+def moderate_discussion(course: Course_, topic: Annotated[str, Field(description="话题标题或ID")],
+                        action: Annotated[str, Field(description="置顶 / 取消置顶 / 加精 / 取消加精")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if action not in ("置顶", "取消置顶", "加精", "取消加精"):
+        raise XxtError("action 只能是 置顶 / 取消置顶 / 加精 / 取消加精。")
+    if not confirm:
+        from .xxt import _best
+        t = _best(client().topics(c.id, 200), topic, id_keys=("topic_id", "id"))
+        return _dry(c, f"讨论话题{action}", bind={"topic": t["topic_id"]}, target=t.get("title"), id=t["topic_id"])
+    return client().moderate_topic(course, topic, action)
+
+
+@tool(W, "以教师身份回复讨论话题（纯文本，学生可见）。先预演，确认后回复并核对回复数增加。")
+def reply_discussion(course: Course_, topic: Annotated[str, Field(description="话题标题或ID")],
+                     content: Annotated[str, Field(description="回复内容，1–5000 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not content.strip() or len(content) > 5000:
+        raise XxtError("回复内容 1–5000 字。")
+    if not confirm:
+        from .xxt import _best
+        t = _best(client().topics(c.id, 200), topic, id_keys=("topic_id", "id"))
+        return _dry(c, "教师回复讨论（学生可见）", bind={"topic": t["topic_id"]}, target=t.get("title"), content=content)
+    return client().teacher_reply(course, topic, content)
 
 
 # ------------------------------------------------------------------ 章节 / 资料
@@ -903,7 +967,7 @@ def publish_teaching_task(course: Course_, task_id: Annotated[str, Field(descrip
     return client().publish_task(course, task_id, [class_name])
 
 
-TaskPointKind_ = Annotated[str, Field(description="作业 / 考试 / 章节 / 知识点 / 主题讨论 / 分组任务 / AI实践 / 电子书 / 任务 / 视频 / 文档 / 音频 / 问卷 / 审批 / 测验 / 自定义 / 线下课堂 / 线上课堂 / 仿真 / 签到（签到只能用 new_items 新建，任务需已发布）")]
+TaskPointKind_ = Annotated[str, Field(description="作业 / 考试 / 章节 / 知识点 / 主题讨论 / 分组任务 / AI实践 / 电子书 / 任务 / 视频 / 文档 / 音频 / 问卷 / 审批 / 测验 / 自定义 / 线下课堂 / 线上课堂 / 仿真 / 签到 / 自测（签到、自测只能用 new_items 新建，签到要求任务已发布）")]
 TaskId_ = Annotated[str, Field(description="任务ID（list_teaching_tasks 返回的加密ID）")]
 
 
@@ -918,7 +982,8 @@ def add_task_points(course: Course_, task_id: TaskId_, kind: TaskPointKind_,
                     items: Annotated[list[str], Field(description="要添加的条目名称或ID（list_task_point_options 可查）")] = [],  # noqa: B006
                     materials: Annotated[list[str], Field(description="仅视频/文档/音频：课程资料的完整名称或资料ID")] = [],  # noqa: B006
                     new_items: Annotated[list[dict], Field(description="新建再添加：[{name, describe}]；线下/线上课堂另需 start、end（YYYY-MM-DD HH:MM）；"
-                                                                       "自定义另需 custom_type（类型名≤4字，没有会新建），可带 url（仅 chaoxing.com 链接）；AI实践另需 requirement、ai_role、dialogue，可带 student_role、opening、criteria [{dimension, description, score}]")] = [],  # noqa: B006
+                                                                       "自定义另需 custom_type（类型名≤4字，没有会新建），可带 url（仅 chaoxing.com 链接）；AI实践另需 requirement、ai_role、dialogue，可带 student_role、opening、criteria [{dimension, description, score}]；"
+                                                                       "自测是 {name, mode: 模拟测验|刷题, minutes(模拟测验必填), source: 题库|错题集, count 随机抽题数 或 by_type {\"单选\": 3, …}}，课程需先开启「允许学生自测」")] = [],  # noqa: B006
                     confirm: Confirm = False) -> dict:
     from .ops_task import POINT_KINDS, library_create_payload
     c = _check_write(course)
@@ -926,8 +991,14 @@ def add_task_points(course: Course_, task_id: TaskId_, kind: TaskPointKind_,
         raise XxtError(f"任务点类型只能是：{'、'.join(POINT_KINDS)}。")
     if not items and not materials and not new_items:
         raise XxtError("至少给出一个要添加的条目（items）、课程资料（materials）或新建条目（new_items）。")
-    for x in new_items or []:   # validate before previewing
-        library_create_payload(kind, x, "1", {"id": 1} if kind == "自定义" else None, task_id)
+    if kind == "自测" and new_items:
+        from .ops_settings import selftest_form
+        opts = client()._selftest_options(c)
+        for x in new_items:
+            selftest_form(c.id, c.cpi, x, opts["types"], int(opts["total"]))
+    else:
+        for x in new_items or []:   # validate before previewing
+            library_create_payload(kind, x, "1", {"id": 1} if kind == "自定义" else None, task_id)
     if not confirm:
         return _dry(c, f"给教学任务添加{kind}任务点（已发布的任务学生会看到）", task_id=task_id, kind=kind, items=list(items), materials=list(materials),
                     new_items=list(new_items))
@@ -1110,22 +1181,23 @@ def add_question_to_bank(course: Course_, question: Annotated[dict, Field(descri
     return client().add_bank_question(course, question)
 
 
-@tool(D, "删除章节（含其下内容，不可恢复）。当前仅支持预演，不会执行删除。")
-def delete_chapter(course: Course_, chapter: Annotated[str, Field(description="章节编号/标题/ID")], confirm: Confirm = False) -> dict:
+@tool(D, "删除章节（连同子章节和其中内容，不可恢复）。预演列出全部子章节并锁定；确认时子章节有任何变化就不删。删除后核对这些章节都不见了、其他章节都还在。")
+def delete_chapter(course: Course_, chapter: Annotated[str, Field(description="章节编号/标题/ID")], confirm: Confirm = False,
+                   children: Annotated[list[str], Field(description="由预演绑定，调用时保持默认空值")] = []) -> dict:  # noqa: B006
     c = _check_write(course)
     if not confirm:
         from .xxt import _best
+        if children:
+            raise XxtError("预演时 children 必须留空。")
         tree = client().chapters(c.id)
         p = _best(tree, chapter, id_keys=("chapter_id", "number"))
         kids = [x for x in tree if x["number"].startswith(p["number"] + ".")]
         sub_chapters = [{"id": k["chapter_id"], "number": k["number"], "title": k["title"]} for k in kids]
-        draft = _dry(c, "删除章节（不可恢复）", bind={"chapter": p["chapter_id"]},
-                     target=f"{p['number']} {p['title']}", chapter_id=p["chapter_id"],
-                     sub_chapters=sub_chapters)
+        draft = _dry(c, "删除章节（不可恢复）", bind={"chapter": p["chapter_id"], "children": [k["chapter_id"] for k in kids]},
+                     target=f"{p['number']} {p['title']}", chapter_id=p["chapter_id"], sub_chapters=sub_chapters)
         draft["details"]["sub_chapters"] = sub_chapters  # show an explicit empty list, too
-        draft.update(preview_only=True, next="当前仅供预演，不会执行删除，也不会生成可执行的 plan_id。")
         return draft
-    raise XxtError("章节删除暂不执行：预演后子章节可能变化，影响范围无法可靠冻结。请在学习通中人工核对并操作。")
+    return client().delete_chapter_bound(course, chapter, list(children))
 
 
 @tool(R, "列出课程资料（课件/文件）。")
@@ -1171,15 +1243,53 @@ def insert_chapter_file(course: Course_, chapter: Chapter_, card_id: CardId_,
     return client().insert_chapter_file(course, chapter, card_id, str(p), kind, file_sha256)
 
 
-@tool(D, "删除课程资料：当前仅支持预演，删除后列表完整性未验证。")
+@tool(D, "删除课程资料（根目录里的文件或文件夹，移入资料回收站，可还原）。先预演，确认后删除并核对列表和回收站。")
 def delete_material(course: Course_, material: Annotated[str, Field(description="资料名或资料ID")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
-        from .xxt import _best
-        m = _best(client().materials(c.id), material, id_keys=("material_id",))
-        return _preview_only(_dry(c, "删除课程资料", bind={"material": m["material_id"]}, target=m["title"], material_id=m["material_id"]),
-                             "资料列表加载失败可能被误识别为空；删除后状态尚不能可靠核实。")
-    raise XxtError("资料删除暂不执行：删除后列表完整性未验证。")
+        m = client().find_binnable(c.id, "资料", material)
+        return _dry(c, "删除课程资料（移入回收站）" + ("——这是文件夹，里面的资料一起删除" if m.get("folder") else ""),
+                    bind={"material": m["id"]}, target=m["title"], material_id=m["id"])
+    return client().delete_to_bin(course, "资料", material)
+
+
+@tool(R, "列出课程资料某个文件夹里的内容（folder 留空=根目录），含是否允许下载。")
+def list_folder_materials(course: Course_, folder: Annotated[str, Field(description="文件夹名或ID，留空=根目录")] = "") -> dict:
+    return {"items": client().folder_materials(course, folder or "0")}
+
+
+@tool(W, "在课程资料根目录新建文件夹。先预演，确认后新建并核对。")
+def create_material_folder(course: Course_, name: Annotated[str, Field(description="文件夹名，2–100 字，不含特殊字符")], confirm: Confirm = False) -> dict:
+    import re
+    c = _check_write(course)
+    clean = re.sub(r"[`~!@#$%^&*+<>?:\"{},\\/;\[\]|]", "", name or "").strip()
+    if not confirm:
+        return _dry(c, "新建资料文件夹", bind={"name": clean}, name=clean,
+                    **({"note": f"平台不允许特殊字符，实际名称为「{clean}」"} if clean != name else {}))
+    return client().create_material_folder(course, name)
+
+
+@tool(W, "设置一份课程资料是否允许学生下载。先预演，确认后设置并读回。")
+def set_material_download(course: Course_, material: Annotated[str, Field(description="资料名或资料ID（根目录）")],
+                          allow: Annotated[bool, Field(description="true=允许下载")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        m = client().find_binnable(c.id, "资料", material)
+        return _dry(c, "设置资料下载权限", bind={"material": m["id"]}, target=m["title"], download_now=m.get("download"), download_new=allow)
+    return client().set_material_download(course, material, allow)
+
+
+@tool(W, "把根目录里的一份课程资料移到一个文件夹里。先预演，确认后移动并核对两边的列表。")
+def move_material(course: Course_, material: Annotated[str, Field(description="资料名或资料ID（根目录）")],
+                  folder: Annotated[str, Field(description="目标文件夹名或ID（根目录下）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        m = client().find_binnable(c.id, "资料", material)
+        f = [x for x in client().folder_materials(c.id) if x["folder"] and (x["id"] == folder or x["title"] == folder)]
+        if len(f) != 1:
+            raise XxtError("根目录里没有唯一匹配的文件夹。")
+        return _dry(c, "移动课程资料", bind={"material": m["id"], "folder": f[0]["id"]}, target=m["title"], folder=f[0]["title"])
+    return client().move_material(course, material, folder)
 
 
 # ------------------------------------------------------------------ 成绩
@@ -1188,19 +1298,16 @@ def get_grades(course: Course_, class_name: Class_ = "") -> dict:
     return client().grades(course, class_name)
 
 
-@tool(W, "导出班级成绩会创建平台导出任务并写入本机文件；目前仅支持预演。")
-def export_grades(course: Course_, class_name: Class_ = "", out_dir: Annotated[str, Field(description="保存目录，留空=配置的下载目录")] = "", confirm: Confirm = False) -> dict:
+@tool(W, "导出一个班的成绩（平台在下载中心生成 Excel，再下载到配置的下载目录）。先预演，确认后导出并核对文件。文件含学生姓名和成绩，只存本机。")
+def export_grades(course: Course_, class_name: Class_ = "", confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
         cfg = _state["cfg"] or _config.load()
-        destination = out_dir or str(cfg.download_dir)
-        draft = _dry(c, "导出班级成绩到本机", class_name=target["name"],
-                     class_id=target["id"], output_directory=destination,
-                     note="包含班级成绩；平台会创建导出任务，本机会保存文件。")
-        draft.update(preview_only=True, next="当前仅供预演，不会创建导出任务或下载，也不会生成可执行的 plan_id。")
-        return draft
-    raise XxtError("成绩导出暂不执行：尚不能可靠绑定本次导出任务。")
+        return _dry(c, "导出班级成绩到本机", bind={"class_name": target["id"]}, class_name=target["name"],
+                    class_id=target["id"], output_directory=str(cfg.download_dir),
+                    note="包含学生姓名和成绩，只保存在本机。")
+    return client().export_grades_verified(course, class_name)
 
 
 # ------------------------------------------------------------------ 课堂活动
@@ -1450,6 +1557,29 @@ def move_students_class(course: Course_, from_class: Annotated[str, Field(descri
                                                  "students": [x["person_id"] for x in p["students"]]},
                     students=p["students"], from_class=p["from"], to_class=p["to"])
     return client().move_students(c.id, from_class, to_class, list(students))
+
+
+@tool(R, "读取课程设置（课程管理 → 课程管理）：学生端配置的开关（自测、视频水印、承诺书、课程通知）、课程设置（活动同步、AI 功能、试读、资源下载、评价、门户栏目）和课程说明、英文名称、承诺书内容。")
+def get_course_settings(course: Course_) -> dict:
+    from .ops_settings import CHOICES, NOTICES, SWITCHES, TEXTS
+    r = client().course_settings(course)
+    basic = {k: v for k, v in (r.get("basic") or {}).items() if not k.startswith("_")}
+    return {"switches": r["switches"], "choices": r["choices"], "notices": r["notices"], "basic": basic,
+            "commitment": r.get("commitment"),
+            "writable": {"开关(true/false)": list(SWITCHES) + list(NOTICES), "选项": {k: list(v[2]) for k, v in CHOICES.items()}, "文字": list(TEXTS)}}
+
+
+@tool(W, "修改一项课程设置（get_course_settings 的 writable 列出可改项：开关用 true/false，选项用名称，文字用字符串）。先预演显示当前值和新值，确认后保存并读回核对。学习监控/人脸识别、克隆和映射课程、课程密码不在可改范围。")
+def set_course_setting(course: Course_, name: Annotated[str, Field(description="设置名，如 允许学生自测、章节试读、课程说明")],
+                       value: Annotated[bool | str, Field(description="新值：开关 true/false；选项如 试读全部；文字设置给字符串")],
+                       confirm: Confirm = False) -> dict:
+    from .ops_settings import read_value, setting_request
+    c = _check_write(course)
+    if not confirm:
+        cur = client().course_settings(c.id)
+        setting_request(name, value, cur)   # validates name and value
+        return _dry(c, f"修改课程设置「{name}」（对本课程所有班级生效）", setting=name, current=read_value(name, cur), new=value)
+    return client().set_course_setting(c.id, name, value)
 
 
 @tool(W, "把一份课程资料作为活动推送到一个明确的班级（学生在活动列表里看到并可打开）。先预演，确认后推送并在活动列表核实。")

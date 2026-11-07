@@ -166,7 +166,7 @@ def test_every_point_kind_builds_an_item():
                                 "onlineClassroomId", "simulationId", "dxid")}}
     for kind, spec in POINT_KINDS.items():
         it = task_point_item(kind, row)
-        assert it["name"] == "n" and it["externalDataId"] == "X" or (kind in ("章节", "签到") and it["externalDataId"] == 7), kind
+        assert it["name"] == "n" and it["externalDataId"] == "X" or (kind in ("章节", "签到", "自测") and it["externalDataId"] == 7), kind
         assert row.get(spec["by"][1]) is not None
 
 

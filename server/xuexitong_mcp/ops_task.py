@@ -283,7 +283,13 @@ class TaskOps(XxtBase):
         """ % {"files": json.dumps(files, ensure_ascii=False), "furl": json.dumps(spec.get("file") or "")}, retry_safe=False) if files else {"stage": "ok", "made": []}
         if not isinstance(r, dict) or r.get("stage") != "ok":
             raise XxtError(f"把课程资料登记为{kind}失败：{(r or {}).get('msg') or '未知'}；没有添加任务点。")
-        if news:
+        if news and kind == "自测":
+            op = self.on(TASK, _JS_HELPERS + "return await JG('/selfTest/isOpenSelfTest?courseId=%s');" % cid)
+            if not isinstance(op, dict) or op.get("result") is not True:
+                raise XxtError(f"课程没有开启自测：{str((op or {}).get('message') or '')[:80]}（可用 set_course_setting 打开「允许学生自测」）；没有添加。")
+            made = [{**m, "courseId": cid} for m in self.create_selftest_templates(c, news)]
+            r = {**r, "made": list(r.get("made") or []) + made}
+        elif news:
             ctype = None
             if kind == "自定义":
                 tname = {str(x.get("custom_type") or "").strip() for x in news if isinstance(x, dict)}
@@ -358,6 +364,9 @@ POINT_KINDS: dict[str, dict] = {
     "线上课堂": {"type": 3, "list": "/onlineClassroom/getData", "by": ("name", "onlineClassroomId"), "dated": True,
              "create": ("/onlineClassroom/addOrEdit", "27f276bab406868c4c25fc3d5dfcfda4.png")},
     "仿真": {"type": 19, "list": "/simulation/getData", "by": ("name", "simulationId")},
+    # 自测: no library list in the task engine; the dialog (mooc2-ans self-test/template/create-pop) creates a
+    # self-test template and posts {id, title} back. Needs the course's 允许学生自测 switch (selfTest/isOpenSelfTest).
+    "自测": {"type": 17, "list": None, "by": ("title", "id"), "create": ("/mooc2-ans/self-test/template/save", "8b82e8d56e37e409a0fbedfedf0eb930.png")},
 }
 
 
@@ -412,6 +421,9 @@ def task_point_item(kind: str, o: dict) -> dict:
     if t == 19:
         return {**base, "externalDataId": o.get("simulationId"), "localDataId": o.get("id"), "desc": o.get("describe"),
                 "simulationUrl": o.get("simulationUrl")}
+    if t == 17:
+        return {"imageUrl": _IMG + "8b82e8d56e37e409a0fbedfedf0eb930.png", "name": o.get("title"), "exist": False,
+                "externalDataId": o.get("id"), "courseId": o.get("courseId")}
     raise XxtError(f"不支持的任务点类型：{kind}")
 
 
