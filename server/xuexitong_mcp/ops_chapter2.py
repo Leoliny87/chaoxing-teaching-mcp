@@ -379,3 +379,19 @@ class ChapterInsertOps(XxtBase):
         if card_attachments(cur.get("description") or "") or "taskIframeWrap" in (cur.get("description") or ""):
             return {"ok": False, "write_outcome": "not_written", "error": "卡片里现在有插入项了；没有覆盖。"}
         return self._append_html(course, chapter_id, card_id, html, replace=True)
+
+    def insert_chapter_graph(self, course: str, chapter_id: str, card_id: str, point_ids: list[str]) -> dict:
+        """课程图谱 insert: POST mooc1 /mooc-ans/knowledge-topic-relation/save-knowledge-graph {courseid, mid, topicIds:"a,b,",
+        knowledgeid=<chapter>} -> data = knowledgeGraphId; module knowledgeGraph {mid, knowledgeGraphId}."""
+        c = self.course(course)
+        mid = _mid()
+        r = self.on(M1, """
+            const fd=new FormData(); fd.append('courseid',%s); fd.append('mid',%s); fd.append('topicIds',%s); fd.append('knowledgeid',%s);
+            return await J('/mooc-ans/knowledge-topic-relation/save-knowledge-graph',{method:'POST',body:fd});
+        """ % (json.dumps(str(c.id)), json.dumps(mid), json.dumps("".join(f"{_safe_id(x)}," for x in point_ids)), json.dumps(str(chapter_id))),
+            retry_safe=False)
+        gid = str((r or {}).get("data") or "") if isinstance(r, dict) else ""
+        if not isinstance(r, dict) or r.get("status") is not True or not gid:
+            return {"ok": False, "write_outcome": "not_written", "error": f"图谱没有建成（{str((r or {}).get('msg') or '')[:60]}）；章节没有修改。"}
+        out = self.insert_chapter_module(course, chapter_id, card_id, "knowledgeGraph", {"mid": mid, "knowledgeGraphId": gid})
+        return {**out, "graph_id": gid, "points": len(point_ids)}

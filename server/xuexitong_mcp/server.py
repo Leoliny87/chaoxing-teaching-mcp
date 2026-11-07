@@ -1703,6 +1703,21 @@ def link_questions_to_knowledge(course: Course_, point: Point_,
     return client().link_questions(course, point, list(question_ids))
 
 
+@tool(W, "把课程图谱里的知识点作为「课程图谱」插入章节某一页（学生在章节里看到这些知识点的图谱）。先预演，确认后插入并核对。")
+def insert_chapter_graph(course: Course_, chapter: Chapter_, card_id: CardId_,
+                         points: Annotated[list[str], Field(description="知识点名称或ID列表（get_course_graph 可查）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        pts = client().knowledge_points(c.id)
+        sel = [client().find_point(c.id, x, pts) for x in points]
+        if not sel:
+            raise XxtError("至少选一个知识点。")
+        d = _chapter_dry(c, chapter, "在章节中插入课程图谱（学生可见）", card_id=card_id, points=[p["name"] for p in sel])
+        d["_bind"]["points"] = [p["point_id"] for p in sel]
+        return d
+    return client().insert_chapter_graph(course, chapter, card_id, points)
+
+
 @tool(R, "查找可以插入章节的资源：速课（我的速课）、图书（按书名/作者搜索在线图书）、图书内页（按内容搜索书页）、全景（我的全景资源）。")
 def search_chapter_resources(course: Course_, kind: Annotated[str, Field(description="速课 / 图书 / 图书内页 / 全景")],
                              keyword: Annotated[str, Field(description="搜索词；图书和图书内页必填，速课和全景可按标题过滤")] = "",
