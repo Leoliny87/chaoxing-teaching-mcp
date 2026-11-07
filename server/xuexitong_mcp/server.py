@@ -903,7 +903,7 @@ def publish_teaching_task(course: Course_, task_id: Annotated[str, Field(descrip
     return client().publish_task(course, task_id, [class_name])
 
 
-TaskPointKind_ = Annotated[str, Field(description="作业 / 考试 / 章节 / 知识点 / 主题讨论 / 分组任务 / AI课堂 / 任务 / 视频 / 文档 / 音频 / 问卷 / 审批 / 测验 / 自定义 / 线下课堂 / 线上课堂 / 仿真")]
+TaskPointKind_ = Annotated[str, Field(description="作业 / 考试 / 章节 / 知识点 / 主题讨论 / 分组任务 / AI实践 / 电子书 / 任务 / 视频 / 文档 / 音频 / 问卷 / 审批 / 测验 / 自定义 / 线下课堂 / 线上课堂 / 仿真 / 签到（签到只能用 new_items 新建，任务需已发布）")]
 TaskId_ = Annotated[str, Field(description="任务ID（list_teaching_tasks 返回的加密ID）")]
 
 
@@ -913,20 +913,25 @@ def list_task_point_options(course: Course_, task_id: TaskId_, kind: TaskPointKi
     return client().task_point_options(course, task_id, kind, keyword)
 
 
-@tool(W, "给教学任务添加任意类型的任务点（作业、考试、章节、主题讨论、分组任务、视频、文档等）；items 按名称或ID从该类列表里选，视频/文档/音频也可用 materials 直接引用课程资料。先预演，确认后添加并核对任务点数量。")
+@tool(W, "给教学任务添加任意类型的任务点（作业、考试、章节、主题讨论、分组任务、视频、文档等）；items 按名称或ID从该类列表里选，视频/文档/音频也可用 materials 直接引用课程资料，问卷/审批/测验/知识点/AI实践/自定义/线下课堂/线上课堂可用 new_items 新建。先预演，确认后添加并核对任务点数量。")
 def add_task_points(course: Course_, task_id: TaskId_, kind: TaskPointKind_,
                     items: Annotated[list[str], Field(description="要添加的条目名称或ID（list_task_point_options 可查）")] = [],  # noqa: B006
                     materials: Annotated[list[str], Field(description="仅视频/文档/音频：课程资料的完整名称或资料ID")] = [],  # noqa: B006
+                    new_items: Annotated[list[dict], Field(description="新建再添加：[{name, describe}]；线下/线上课堂另需 start、end（YYYY-MM-DD HH:MM）；"
+                                                                       "自定义另需 custom_type（类型名≤4字，没有会新建），可带 url（仅 chaoxing.com 链接）；AI实践另需 requirement、ai_role、dialogue，可带 student_role、opening、criteria [{dimension, description, score}]")] = [],  # noqa: B006
                     confirm: Confirm = False) -> dict:
-    from .ops_task import POINT_KINDS
+    from .ops_task import POINT_KINDS, library_create_payload
     c = _check_write(course)
     if kind not in POINT_KINDS:
         raise XxtError(f"任务点类型只能是：{'、'.join(POINT_KINDS)}。")
-    if not items and not materials:
-        raise XxtError("至少给出一个要添加的条目（items）或课程资料（materials）。")
+    if not items and not materials and not new_items:
+        raise XxtError("至少给出一个要添加的条目（items）、课程资料（materials）或新建条目（new_items）。")
+    for x in new_items or []:   # validate before previewing
+        library_create_payload(kind, x, "1", {"id": 1} if kind == "自定义" else None, task_id)
     if not confirm:
-        return _dry(c, f"给教学任务添加{kind}任务点（已发布的任务学生会看到）", task_id=task_id, kind=kind, items=list(items), materials=list(materials))
-    return client().add_task_points(course, task_id, kind, list(items), list(materials))
+        return _dry(c, f"给教学任务添加{kind}任务点（已发布的任务学生会看到）", task_id=task_id, kind=kind, items=list(items), materials=list(materials),
+                    new_items=list(new_items))
+    return client().add_task_points(course, task_id, kind, list(items), list(materials), list(new_items))
 
 
 # ------------------------------------------------------------------ 学生端（我学的课）
@@ -1299,21 +1304,110 @@ def create_questionnaire(course: Course_, title: Annotated[str, Field(descriptio
     return client().create_questionnaire(c.id, class_name, title, questions, start, minutes, settings)
 
 
-@tool(W, "在一个明确的班级发起或保存分组任务（不分组的个人任务模式，教师评价）。start=true 立即开始（学生会收到），false 保存为未开始。先预演，确认后创建并在活动列表核实。")
+@tool(W, "在一个明确的班级发起或保存分组任务：默认个人任务（不分组）；settings.grouped=true 按班级分组方案分小组。start=true 立即开始（学生会收到），false 保存为未开始。先预演，确认后创建并在活动列表核实。")
 def create_group_task(course: Course_, title: Annotated[str, Field(description="任务标题")],
                       content: Annotated[str, Field(description="任务说明（纯文本，换行分段）")] = "",
                       class_name: Class_ = "", start: Annotated[bool, Field(description="true=立即开始；false=保存为未开始")] = False,
                       minutes: Annotated[int, Field(description="任务时长（分钟），默认 1 天，-1=手动结束")] = 1440,
-                      settings: Annotated[dict, Field(description="可选：star（星级评价，不计分）、view_others（允许互看作品）")] = {},  # noqa: B006
+                      settings: Annotated[dict, Field(description="可选：grouped（按分组方案分小组）、group_plan（分组方案名或ID，默认班级默认方案）、"
+                                                                 "leader_submits（仅组长提交）、weights {teacher, within, between, self}（评价权重，和为100；个人任务只有 teacher/self）、"
+                                                                 "star（星级评价，不计分）、view_others（允许互看作品）")] = {},  # noqa: B006
                       confirm: Confirm = False) -> dict:
     from .ops_active import group_task_form
     c = _check_write(course)
-    group_task_form("1", "1", "1", title, content, minutes, start, dict(settings or {}))   # validate before previewing
+    st = dict(settings or {})
+    group_task_form("1", "1", "1", title, content, minutes, start, st, {"plan_id": 0, "groups": 1, "max": 1} if st.get("grouped") else None)
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
-        return _dry(c, f"{'发起' if start else '保存'}分组任务（个人任务）{'（学生会收到）' if start else '（未开始）'}", bind={"class_name": target["id"]},
-                    title=title, content=content[:300], start=start, minutes=minutes, settings=settings or {}, classes=[target])
+        extra = {}
+        if st.get("grouped"):
+            g = client().class_groups(c.id, target["id"], str(st.get("group_plan") or ""))
+            extra = {"group_plan": g["plan"]["name"], "groups": [{"name": x["name"], "members": x["members"]} for x in g["groups"]]}
+        mode = "小组任务" if st.get("grouped") else "个人任务"
+        return _dry(c, f"{'发起' if start else '保存'}分组任务（{mode}）{'（学生会收到）' if start else '（未开始）'}", bind={"class_name": target["id"]},
+                    title=title, content=content[:300], start=start, minutes=minutes, settings=st, classes=[target], **extra)
     return client().create_group_task(c.id, class_name, title, content, start, minutes, settings)
+
+
+@tool(R, "教案库列表（名称、ID、更新时间）。课件库请用 list_coursewares。")
+def list_teaching_plans(course: Course_) -> dict:
+    return client().plan_items(course, "教案")
+
+
+@tool(W, "把一份课程资料（ppt/pptx/pdf/doc/docx 云盘文件）加入课件库。先预演，确认后添加并在课件库核实。")
+def create_courseware(course: Course_, material: Annotated[str, Field(description="课程资料的完整名称或资料ID")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        it = client()._course_resource(c, material)
+        return _dry(c, "把课程资料加入课件库（学生不可见）", bind={"material": str(it.get("dataId"))}, material=str(it.get("dataName") or "")[:100])
+    return client().create_courseware(c.id, material)
+
+
+@tool(W, "新建教案（空白模板），可带若干段落（如 课前/课中/课后）。先预演，确认后新建并读回段落核对。")
+def create_teaching_plan(course: Course_, title: Annotated[str, Field(description="教案名称，1–100 字")],
+                         sections: Annotated[list[dict], Field(description="[{name: 段落名, content: 纯文本内容}]，可为空")] = [],  # noqa: B006
+                         confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not isinstance(sections, list) or any(not isinstance(x, dict) or not str(x.get("name") or "").strip() for x in sections):
+        raise XxtError("sections 是 [{name, content}] 列表，name 不能为空。")
+    if not confirm:
+        return _dry(c, "新建教案（学生不可见）", title=title, sections=[{"name": x.get("name"), "chars": len(str(x.get("content") or ""))} for x in sections])
+    return client().create_teaching_plan(c.id, title, list(sections))
+
+
+@tool(W, "把课件库或教案库里的一项作为活动发到一个明确的班级（学生可见）。先预演，确认后发起并在活动列表核实。")
+def push_teaching_resource_activity(course: Course_, kind: Annotated[str, Field(description="课件 或 教案")],
+                                    item: Annotated[str, Field(description="课件/教案的名称或ID")], class_name: Class_ = "",
+                                    confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if kind not in ("课件", "教案"):
+        raise XxtError("kind 只能是 课件 或 教案。")
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, f"把{kind}作为活动发到班级（学生可见）", bind={"class_name": target["id"]}, kind=kind, item=item, classes=[target])
+    return client().push_plan_activity(c.id, class_name, kind, item)
+
+
+@tool(R, "查看一个班的分组方案和各小组人数。")
+def list_class_groups(course: Course_, class_name: Class_ = "", plan: Annotated[str, Field(description="分组方案名或ID，默认班级默认方案")] = "") -> dict:
+    c = client().course(course)
+    target = _preview_publish_class(c.id, class_name)
+    return client().class_groups(c.id, target["id"], plan)
+
+
+@tool(W, "在一个班的分组方案里新建小组（学生不会收到通知）。先预演，确认后新建并在分组列表核实。")
+def create_class_group(course: Course_, name: Annotated[str, Field(description="小组名称，1–30 字")], class_name: Class_ = "",
+                       plan: Annotated[str, Field(description="分组方案名或ID，默认班级默认方案")] = "", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, "新建班级小组", bind={"class_name": target["id"]}, name=name, plan=plan or "默认方案", classes=[target])
+    return client().create_group(c.id, class_name, name, plan)
+
+
+@tool(W, "把班里的学生分到某个小组（按姓名或 person_id；重名请用 person_id）。先预演，确认后分组并核对小组人数。")
+def assign_class_group(course: Course_, group: Annotated[str, Field(description="小组名或小组ID")],
+                       students: Annotated[list[str], Field(description="学生姓名或 person_id 列表")], class_name: Class_ = "",
+                       plan: Annotated[str, Field(description="分组方案名或ID，默认班级默认方案")] = "", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, "调整学生所在小组", bind={"class_name": target["id"]}, group=group, students=list(students), plan=plan or "默认方案",
+                    classes=[target])
+    return client().assign_group(c.id, class_name, group, list(students), plan)
+
+
+@tool(W, "调班：把学生从一个班移到同一门课的另一个班（按姓名或 person_id）。先预演列出学生，确认后调班并核对两个班的名单。")
+def move_students_class(course: Course_, from_class: Annotated[str, Field(description="原班级名或ID")],
+                        to_class: Annotated[str, Field(description="目标班级名或ID")],
+                        students: Annotated[list[str], Field(description="学生姓名或 person_id 列表")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        p = client().preview_move_students(c.id, from_class, to_class, list(students))
+        return _dry(c, "调班（学生改到另一个班）", bind={"from_class": p["from"], "to_class": p["to"],
+                                                 "students": [x["person_id"] for x in p["students"]]},
+                    students=p["students"], from_class=p["from"], to_class=p["to"])
+    return client().move_students(c.id, from_class, to_class, list(students))
 
 
 @tool(W, "把一份课程资料作为活动推送到一个明确的班级（学生在活动列表里看到并可打开）。先预演，确认后推送并在活动列表核实。")

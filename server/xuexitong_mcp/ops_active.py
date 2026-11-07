@@ -12,6 +12,7 @@ All calls go from a mobilelearn page.  type 0 = save as draft (未开始), 1 = s
 from __future__ import annotations
 
 import json
+import re
 import time
 import uuid
 
@@ -150,10 +151,25 @@ _STAR = {"partScoreStartArray": [], "evaluationOtherConfigForStar": {
     "isUseFiveStarEvaluation": 1, "isEmptyForFiveStarEvaluation": 0, "threeOrFiveStarEvaluationDetailArray": []}
 
 
-def group_task_form(course_id: str, class_id: str, cpi: str, title: str, content: str, minutes: float | None, start: bool, s: dict) -> dict:
-    """The form the 分组任务 editor's 保存 / 立即开始 (comomonVue.saveOrBegin) posts, in 不分组（个人任务）mode.
+def _weights(s: dict, grouped: bool) -> dict:
+    w = s.get("weights") or {"teacher": 100}
+    if not isinstance(w, dict) or set(w) - {"teacher", "within", "between", "self"}:
+        raise XxtError("weights 只能含 teacher、within（组内互评）、between（组间互评）、self（自评）。")
+    v = {k: int(w.get(k, 0) or 0) for k in ("teacher", "within", "between", "self")}
+    if any(x < 0 for x in v.values()) or sum(v.values()) != 100:
+        raise XxtError("评价权重必须是非负整数且总和为 100。")
+    if not grouped and (v["within"] or v["between"]):
+        raise XxtError("个人任务没有组内、组间互评。")
+    return {"weightTeacher": v["teacher"], "weightWithInGroup": v["within"], "weightBetween": v["between"], "weightSelf": v["self"]}
 
-    Grouped mode needs an existing grouping plan of students; it is not offered here (the test class has no students).
+
+def group_task_form(course_id: str, class_id: str, cpi: str, title: str, content: str, minutes: float | None, start: bool, s: dict,
+                    group: dict | None = None) -> dict:
+    """The form the 分组任务 editor's 保存 / 立即开始 (comomonVue.saveOrBegin) posts.
+
+    group=None -> 不分组（个人任务）: groupType 3, isSpecialPersonalTask 1.
+    group={plan_id, groups, max} -> 分组（小组任务）on a 分组方案: groupType 1, groupNum = number of groups,
+    maxStuNumOneGroup = largest group, moocGroupPlanId = plan (0 = the class's default plan).
     """
     from .questions import p as _p
     title = (title or "").strip()
@@ -163,15 +179,16 @@ def group_task_form(course_id: str, class_id: str, cpi: str, title: str, content
         raise XxtError("任务内容最多 20000 字。")
     js = lambda v: json.dumps(v, ensure_ascii=False, separators=(",", ":"))   # noqa: E731
     return {"fid": "", "classId": class_id, "courseId": course_id, "activeId": 0, "title": title, "content": _p(content),
-            "planId": 0, "planName": "", "timeLong": _ms(minutes), "moocGroupPlanId": 0,
-            "groupType": 3, "groupNum": 0, "maxStuNumOneGroup": 1, "isnorm": 1, "isSpecialPersonalTask": 1,
+            "planId": 0, "planName": "", "timeLong": _ms(minutes), "moocGroupPlanId": int(group["plan_id"]) if group else 0,
+            "groupType": 1 if group else 3, "groupNum": int(group["groups"]) if group else 0,
+            "maxStuNumOneGroup": int(group["max"]) if group else 1, "isnorm": 1, "isSpecialPersonalTask": 0 if group else 1,
             "markType": 1 if s.get("star") else 0,
-            "evaluationWeightCount": js({"weightTeacher": 100, "weightWithInGroup": 0, "weightBetween": 0, "weightSelf": 0}),
+            "evaluationWeightCount": js(_weights(s, bool(group))),
             "evaluationOtherConfig": js(_EVAL_OTHER), "ifUseStarEvaluation": 1 if s.get("star") else 0, "starEvaluationDetail": js(_STAR),
             "evaluationTimeType": 1, "evaluationStartTime": "", "evaluationEndTimeType": 1, "evaluationEndTime": "", "isCourseware": 0,
             "picId": "", "beginOrSave": 1 if start else 0, "fromDetail": "", "activeLibrary": 0, "pptLibrary": 0, "classroomPlanId": "",
             "pageNum": "", "isTeachingCalendar": 0, "isTeachingPlanLibrary": 0, "isOpenTimer": 0, "isOpenPrompt": 0, "promptTime": 0,
-            "onlyLeaderSubmit": 0, "isNeedSaveMarkHistory": 0, "useMarkHistoryId": 0, "ifSendToOtherClass": 0, "sendToOtherClassList": "",
+            "onlyLeaderSubmit": 1 if group and s.get("leader_submits") else 0, "isNeedSaveMarkHistory": 0, "useMarkHistoryId": 0, "ifSendToOtherClass": 0, "sendToOtherClassList": "",
             "ifOpenPartialAttend": 0, "ifForbidUnsignedAttend": 0, "selectClassStudentIdListStr": "[]", "isOpenRandomLeader": 0,
             "ifOpenViewOtherWorks": 1 if s.get("view_others") else 0, "openViewOtherWorksType": 1, "viewOtherWorksHideScore": 1,
             "ifHideStuPersonalScore": 0, "ifAllowEvaluateNoCommitTeam": 0, "popPage": 0, "parentActiveIdForPopPage": 0,
@@ -449,12 +466,140 @@ class ActiveOps(XxtBase):
         r = self.on(ML, _RES_PUSH_JS % {"form": json.dumps(form, ensure_ascii=False)}, retry_safe=False)
         return self._activity_result(c, cls, before, r, kind="资料", material=str(item.get("dataName") or "")[:100])
 
-    def create_group_task(self, course: str, class_id: str, title: str, content: str, start: bool,
-                          minutes: float | None = 1440, settings: dict | None = None) -> dict:
-        """分组任务 in 不分组（个人任务）mode: post what the task editor's 保存 / 立即开始 post."""
+    # ------------------------------------------------------------ 课件 / 教案 (mobilelearn activePlan + widget/teachingPlan)
+    _COURSEWARE_SUFFIX = ("ppt", "pptx", "pdf", "doc", "docx")
+
+    def _plan_list(self, c, cls: str, kind: str) -> list[dict]:
+        url = "/v2/apis/activePlan/getCourseWareList" if kind == "课件" else "/v2/apis/activePlan/getTeachingPlanList"
+        extra = "" if kind == "课件" else "&withTeachplan=1&withNewTeachplan=1"
+        r = self.on(ML, "return await J('%s?classId=%s&courseId=%s&page=1&pageSize=1000&parentFolderId=0&DB_STRATEGY=COURSEID&STRATEGY_PARA=courseId%s');"
+                    % (url, _safe_id(cls), _safe_id(c.id), extra))
+        lst = ((r or {}).get("data") or {}).get("list") if isinstance(r, dict) else None
+        if not isinstance(lst, list):
+            raise XxtError(f"{kind}列表读取失败。")
+        return lst
+
+    def plan_items(self, course: str, kind: str) -> dict:
+        if kind not in ("课件", "教案"):
+            raise XxtError("kind 只能是 课件 或 教案。")
+        c = self.ctx(course)
+        rows = self._plan_list(c, c.clazz_id, kind)
+        return {"kind": kind, "items": [{"id": str(x.get("aid")), "title": x.get("title"), "type": x.get("typeTitle"),
+                                         "updated": x.get("updateTime")} for x in rows]}
+
+    def create_courseware(self, course: str, material: str) -> dict:
+        """课件库 <- one course 资料 cloud file (ppt/pptx/pdf/doc/docx): what 添加课件 -> 本地课件 posts (widget/teachingPlan/createPPT)."""
+        c = self.ctx(course)
+        it = self._course_resource(c, material)
+        content = it.get("content")
+        try:
+            content = json.loads(content) if isinstance(content, str) else (content or {})
+        except ValueError:
+            content = {}
+        name = str(it.get("dataName") or "")
+        suffix = str((content or {}).get("suffix") or (name.rsplit(".", 1)[1] if "." in name else "")).lower().lstrip(".")
+        if not isinstance(content, dict) or not content.get("objectId") or suffix not in self._COURSEWARE_SUFFIX:
+            raise XxtError(f"课件只能是 {'/'.join(self._COURSEWARE_SUFFIX)} 云盘文件（「{name[:40]}」不是）。")
+        title = name.rsplit(".", 1)[0] if "." in name else name
+        rows = self._plan_list(c, c.clazz_id, "课件")
+        if any(x.get("title") == title for x in rows):
+            raise XxtError(f"课件库里已有同名课件「{title[:40]}」；没有重复添加。")
+        before = {str(x.get("aid")) for x in rows}
+        data = [{"suffix": suffix, "objectId": content["objectId"], "name": title, "size": content.get("size") or 0}]
+        r = self.on(ML, "return await J('/widget/teachingPlan/createPPT',POST(%s));" % json.dumps(
+            {"courseId": _safe_id(c.id), "parentFolderId": "0", "pptData": json.dumps(data, ensure_ascii=False)}, ensure_ascii=False), retry_safe=False)
+        new = [x for x in self._plan_list(c, c.clazz_id, "课件") if str(x.get("aid")) not in before]
+        ok = isinstance(r, dict) and r.get("result") == 1 and len(new) == 1
+        out = {"ok": ok, "courseware": {"id": str(new[0].get("aid")), "title": new[0].get("title"), "type": new[0].get("typeTitle")} if new else None}
+        if not ok:
+            refused = isinstance(r, dict) and r.get("result") == 0 and not new
+            out.update(write_outcome="not_written" if refused else "unknown",
+                       error=f"服务端拒绝：{str(r.get('errorMsg'))[:120]}" if refused else "课件库里没有核实到唯一的新课件；请用 list_coursewares 查看。")
+        return out
+
+    def create_teaching_plan(self, course: str, title: str, sections: list[dict]) -> dict:
+        """教案: activePlan/addTeachingPlan (blank template) then addPlanContent per section; read back with getPlanInfo."""
+        from .questions import p as _p
+        c = self.ctx(course)
+        title = (title or "").strip()
+        if not title or len(title) > 100:
+            raise XxtError("教案名称需为 1–100 字。")
+        secs = []
+        for i, x in enumerate(sections or [], 1):
+            if not isinstance(x, dict) or not str(x.get("name") or "").strip() or len(str(x.get("name"))) > 50:
+                raise XxtError(f"第 {i} 段需要 name（1–50 字）和 content。")
+            secs.append([str(x["name"]).strip(), _p(str(x.get("content") or ""))])
+        if len(secs) > 30:
+            raise XxtError("教案最多 30 段。")
+        if any(x.get("title") == title for x in self._plan_list(c, c.clazz_id, "教案")):
+            raise XxtError(f"教案库里已有同名教案「{title[:40]}」；没有新建。")
+        r = self.on(ML, "return await J('/v2/apis/activePlan/addTeachingPlan?'+new URLSearchParams(%s));" % json.dumps(
+            {"DB_STRATEGY": "COURSEID", "STRATEGY_PARA": "courseId", "courseId": _safe_id(c.id), "planMouldId": "-1", "parentFolderId": "0",
+             "title": title}, ensure_ascii=False), retry_safe=False)
+        pid = str(((r or {}).get("data") or {}).get("id") or "") if isinstance(r, dict) else ""
+        if not re.fullmatch(r"\d{5,20}", pid):
+            raise XxtError(f"新建教案失败：{str((r or {}).get('errorMsg') if isinstance(r, dict) else '无结果')[:100]}；没有新建。")
+        added = self.on(ML, """
+            let n=0;
+            const secs=%s, pid=%s;
+            if(secs.length){   // the blank template starts with one empty section; replace it with ours
+              const pre=await J('/v2/apis/activePlan/getPlanInfo?DB_STRATEGY=PRIMARY_KEY&STRATEGY_PARA=planId&planId='+pid+'&courseId='+%s);
+              for(const x of ((pre&&pre.data&&pre.data.planContents)||[]).filter(x=>!x.groupName&&!x.content))
+                await J('/v2/apis/activePlan/delPlanContent?'+new URLSearchParams({DB_STRATEGY:'PRIMARY_KEY',STRATEGY_PARA:'planId',planId:pid,contentId:String(x.id),courseId:%s}));
+            }
+            for(const [g,t] of secs){
+              const a=await J('/v2/apis/activePlan/addPlanContent',POST({DB_STRATEGY:'PRIMARY_KEY',STRATEGY_PARA:'planId',planId:pid,groupName:g,groupContent:t}));
+              if(!a||a.result!=1) return {n,err:String((a&&a.errorMsg)||'').slice(0,80)};
+              n++;
+            }
+            return {n};
+        """ % (json.dumps(secs, ensure_ascii=False), json.dumps(pid), json.dumps(_safe_id(c.id)), json.dumps(_safe_id(c.id))), retry_safe=False)
+        info = self.on(ML, "return await J('/v2/apis/activePlan/getPlanInfo?DB_STRATEGY=PRIMARY_KEY&STRATEGY_PARA=planId&planId=%s&courseId=%s');"
+                       % (pid, _safe_id(c.id)))
+        d = ((info or {}).get("data") or {}) if isinstance(info, dict) else {}
+        got = [x.get("groupName") for x in d.get("planContents") or []]
+        ok = (d.get("classroomPlan") or {}).get("name") == title and got == [n for n, _ in secs]
+        return {"ok": ok, "teaching_plan": {"id": pid, "title": title, "sections": got},
+                **({} if ok else {"write_outcome": "unknown",
+                                  "error": f"教案已建，但读回的段落和请求不一致（写入 {(added or {}).get('n')} 段）；请打开教案核查。"})}
+
+    def push_plan_activity(self, course: str, class_id: str, kind: str, item: str) -> dict:
+        """发起活动 -> 课件 / 教案: POST /v2/apis/active/createTeachPlanActive {classId, courseId, teachPlanData:[list row]}."""
+        if kind not in ("课件", "教案"):
+            raise XxtError("kind 只能是 课件 或 教案。")
         c = self.ctx(course)
         cls = self._class_of(c, class_id)
-        form = group_task_form(_safe_id(c.id), cls, _safe_id(c.cpi), title, content, minutes, start, dict(settings or {}))
+        rows = self._plan_list(c, cls, kind)
+        hits = [x for x in rows if str(x.get("aid")) == str(item)] or [x for x in rows if x.get("title") == item]
+        if len(hits) != 1:
+            raise XxtError(f"{kind}库里没有唯一的「{str(item)[:40]}」。可选：{[x.get('title') for x in rows][:30]}")
+        before = {a["activity_id"] for a in self.activities(c.id, limit=1000, class_id=cls)}
+        r = self.on(ML, "const j=await J('/v2/apis/active/createTeachPlanActive',POST(%s));return {j};" % json.dumps(
+            {"classId": cls, "courseId": _safe_id(c.id), "teachPlanData": json.dumps(hits, ensure_ascii=False)}, ensure_ascii=False), retry_safe=False)
+        return self._activity_result(c, cls, before, r, kind=kind, item=hits[0].get("title"))
+
+    def create_group_task(self, course: str, class_id: str, title: str, content: str, start: bool,
+                          minutes: float | None = 1440, settings: dict | None = None) -> dict:
+        """分组任务: post what the task editor's 保存 / 立即开始 post (个人任务, or grouped on a 分组方案)."""
+        c = self.ctx(course)
+        cls = self._class_of(c, class_id)
+        s = dict(settings or {})
+        group = None
+        if s.get("grouped"):
+            plan = self._plan_of(self.group_plans(c, cls), str(s.get("group_plan") or ""))
+            groups = [g for g in self._plan_groups(cls, plan["plan_id"]) if g["group_id"] not in ("-1", "0")]
+            if not groups or not any(g["members"] for g in groups):
+                raise XxtError(f"分组方案「{plan['name']}」里还没有有成员的小组；先用 create_class_group / assign_class_group 分组。")
+            group = {"plan_id": plan["plan_id"], "groups": len(groups), "max": max(g["members"] for g in groups)}
+        form = group_task_form(_safe_id(c.id), cls, _safe_id(c.cpi), title, content, minutes, start, s, group)
+        if group and start:
+            chk = self.on(ML, "return await J('/widget/renwu/checkgroup?'+new URLSearchParams(%s));" % json.dumps({
+                "fid": self._cookie_fid(), "courseId": _safe_id(c.id), "groupnum": str(group["groups"]), "classId": cls, "grouptype": "1",
+                "maxStuNumOneGroup": str(group["max"]), "moocGroupPlanId": str(group["plan_id"]), "ifOpenPartialAttend": "0",
+                "otherClassIds": "", "selectClassStudentIdListStr": "[]"}))
+            if not isinstance(chk, dict) or chk.get("status") != 1:
+                raise XxtError(f"分组检查没通过（status={chk.get('status') if isinstance(chk, dict) else '?'}）；没有发起。")
         before = {a["activity_id"] for a in self.activities(c.id, limit=1000, class_id=cls)}
         r = self.on(ML, _TASK_JS % {"form": json.dumps({k: str(v) for k, v in form.items()}, ensure_ascii=False)}, retry_safe=False)
-        return self._activity_result(c, cls, before, r, kind="分组任务", started=bool(start), mode="个人任务")
+        return self._activity_result(c, cls, before, r, kind="分组任务", started=bool(start),
+                                     mode=f"小组任务（{group['groups']} 组）" if group else "个人任务")

@@ -160,13 +160,13 @@ def test_quiz_needs_class_of_course(client, monkeypatch):
 
 # ---------------------------------------------------------------- task points
 def test_every_point_kind_builds_an_item():
-    row = {"name": "n", "title": "n", "activeName": "n", "cover": "c", "describe": "d", "id": 7, "courseId": 1, "exist": True,
+    row = {"name": "n", "title": "n", "activeName": "n", "bookName": "n", "cover": "c", "describe": "d", "id": 7, "courseId": 1, "exist": True,
            **{k: "X" for k in ("workLibraryId", "paperId", "knowledgePointsId", "uuid", "activeId", "relationUuid", "taskId", "videoId",
                                 "documentId", "audioId", "questionnaireId", "examineAndApproveId", "categoryId", "offlineClassroomId",
-                                "onlineClassroomId", "simulationId")}}
+                                "onlineClassroomId", "simulationId", "dxid")}}
     for kind, spec in POINT_KINDS.items():
         it = task_point_item(kind, row)
-        assert it["name"] == "n" and it["externalDataId"] == "X" or (kind == "章节" and it["externalDataId"] == 7), kind
+        assert it["name"] == "n" and it["externalDataId"] == "X" or (kind in ("章节", "签到") and it["externalDataId"] == 7), kind
         assert row.get(spec["by"][1]) is not None
 
 
