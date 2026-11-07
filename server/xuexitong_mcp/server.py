@@ -1004,6 +1004,48 @@ def submit_my_assignment(course: StuCourse_, assignment: Assignment_, answers: A
 
 
 
+@tool(R, "学生端：查看一个活动要我做什么——类型、状态、是否已参与、要回应的题目/选项/评分项（不含答案）、给学生自己打开的链接，以及能否由助手代为提交学生本人的作答。")
+def open_my_activity(course: StuCourse_, activity: Annotated[str, Field(description="list_my_activities 返回的 activity_id")]) -> dict:
+    return client().open_my_activity(course, activity)
+
+
+ActivityResponse_ = Annotated[dict, Field(description="学生本人的作答。随堂练习/问卷：{\"answers\": {\"1\":\"B\",\"2\":\"AC\",\"3\":[\"第1空\",\"第2空\"],\"4\":\"对\",\"5\":\"作答文字\"}}；"
+                                                       "投票：{\"choice\":\"A\"}；评分：{\"score\":8,\"comment\":\"评语\"} 或 {\"scores\":[5,3],\"comment\":\"\"}；"
+                                                       "分组任务/主题讨论：{\"text\":\"学生自己写的内容\"}")]
+
+
+@tool(W, "学生端：提交我在某个活动里的作答（随堂练习、问卷、投票、评分、分组任务、主题讨论回复）。必须先预演并把预览完整展示给学生；只有学生本人回复「确认提交」后，"
+         "才能带 confirm_text=\"确认提交\" 和 plan_id 执行。只接受学生本人的作答，不得替学生作答；签到、抢答等需要学生本人在页面上完成。")
+def submit_my_activity(course: StuCourse_, activity: Annotated[str, Field(description="list_my_activities 返回的 activity_id")],
+                       response: ActivityResponse_, confirm: Confirm = False,
+                       confirm_text: Annotated[str, Field(description="学生本人回复的确认语，必须是「确认提交」；预演时留空")] = "") -> dict:
+    allowed = _state.get("allowed")
+    resp = dict(response or {})
+    body = resp.get("answers") if isinstance(resp.get("answers"), dict) else resp
+    if not confirm:
+        if confirm_text:
+            raise XxtError("预演时 confirm_text 必须留空。")
+        prev = client().submit_my_activity(course, activity, body, True)
+        if prev.get("type") == "主题讨论" and allowed is not None and "reply_my_discussion" not in allowed:
+            raise XxtError("当前配置没有开放讨论回复。")
+        return {"ok": True, "dry_run": True, "action": f"提交{prev.get('type')}「{prev.get('title')}」", "preview": prev.get("will_submit"),
+                "next": f"把以上预览完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": {}}
+    if confirm_text.strip() != SUBMIT_PHRASE:
+        raise XxtError(f"未收到学生的「{SUBMIT_PHRASE}」，没有提交。")
+    _check_student_write(course)
+    return client().submit_my_activity(course, activity, body, False)
+
+
+@tool(R, "学生端：列出我在某门课里的教学任务（名称、学习时间、完成进度）。")
+def list_my_tasks(course: StuCourse_) -> dict:
+    return client().my_tasks(course)
+
+
+@tool(R, "学生端：列出一个教学任务的任务点（类型、学习时间、是否完成、要求）和任务页链接。只读：不会打开任务点，也不会改变完成进度；学习和作答由学生本人在任务页完成。")
+def list_my_task_points(course: StuCourse_, task: Annotated[str, Field(description="list_my_tasks 返回的 task")]) -> dict:
+    return client().my_task_points(course, task)
+
+
 @tool(R, "学生端：列出我在某门课里的考试（标题、状态、剩余时间、截止时间）。只读：考试由学生本人在学习通里作答，本服务不代答。")
 def list_my_exams(course: StuCourse_) -> dict:
     return client().my_exams(course)

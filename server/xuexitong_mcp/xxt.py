@@ -409,8 +409,10 @@ def make_client(cfg: Config):
     from .ops_review import ReviewOps
     from .ops_active import ActiveOps
     from .ops_class import ClassOps
+    from .ops_stu_active import StudentActiveOps
 
-    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, ReviewOps, ActiveOps, ClassOps, WriteOps, V3Ops, ContentOps, CourseOps,
+    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, StudentActiveOps, ReviewOps, ActiveOps, ClassOps, WriteOps, V3Ops, ContentOps,
+              CourseOps,
               ActivityOps):
         pass
     return Xxt(cfg)

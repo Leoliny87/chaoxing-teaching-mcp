@@ -6,24 +6,24 @@
 
 ## 0. 当前完成度（2026-11-07）
 
-通过真实 MCP stdio 连接实测：教师配置注册 79 个工具、学生配置 11 个、预审配置 33 个，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+通过真实 MCP stdio 连接实测：教师配置注册 87 个工具、学生配置 15 个、预审配置 35 个，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
-- 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级。
+- 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。
 - 章节：读内容、改名、写正文（格式白名单）、插入链接/注释/讨论/扩展阅读/章节测验，以及文档、音频、视频、图片、附件五种文件。
 - 作业：23 种题型新建、答题卡作业、发放（含常用设置）、提交情况、逐题读学生作答、批阅给分（含批语、部分批阅）、打回。
 - 试卷与考试：22 种题型（含选做题）建卷、发布考试（含常用防作弊和查看设置）、考试批阅页人数。
 - 题库：24 种题型新增、列表（不返回答案）。
 - 通知：发送、删除、按 UUID 补记；讨论：发帖、列表；课程资料：上传、列表；成绩：读取。
-- 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务模式）、学生反馈、白板、抽签、推送课程资料；结束活动、活动结果。
-- 教学任务：新建、发布；任务点已实测 9 类：作业、考试、章节、主题讨论、分组任务、任务、仿真、文档、音频（文档/音频可直接引用课程资料里的云盘文件）。
-- 学生端：我的课程/作业/考试/活动/资料/讨论，作业 22 种题型作答（暂存、确认提交），下载资料，回复讨论。
+- 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务，或按分组方案分小组，可设组内/组间互评权重）、学生反馈、白板、抽签、推送课程资料、推送课件、推送教案；结束活动、活动结果。
+- 课件库与教案：把课程资料里的 ppt/pptx/pdf/doc/docx 加入课件库；新建教案（可带 课前/课中/课后 等段落）。
+- 教学任务：新建、发布；任务点 20 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
+- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务，作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
 - 策略层与打包：三种角色、确认提交、节流、不可信内容标注、中心辅导、预审记录；安装脚本、一键更新和回退；v0.3.0、v0.4.0 已发布。
 
 **还没做（可以继续补）**
-- 教师写：修改已发布作业/试卷、随机组卷和平行试卷、题库编辑删除导入导出和标签文件夹、讨论置顶加精回复、班级设置和学生增删调班、教师团队、成绩权重、资料文件夹和权限、章节新建子目录以外的移动排序。
-- 活动里还没实测的：分组任务的「立即开始」（测试班没有学生，服务端回「班级没有人员，无法发放活动」，保存为未开始已通过）和按分组方案分组的模式；推送课件、教案（测试课没有课件和教案，接口 `createTeachPlanActive` 已记录）。
-- 任务点里已按页面代码移植、但测试课没有数据所以没实测的：视频、知识点、AI课堂、问卷、审批、测验、自定义、线下课堂、线上课堂。还没做：课程（type 0）、电子书（21）、签到（要先发布任务）、3D 资源。
+- 教师写：修改已发布作业/试卷、随机组卷和平行试卷、题库编辑删除导入导出和标签文件夹、讨论置顶加精回复、班级设置和添加/移除学生、教师团队、成绩权重、资料文件夹和权限、章节新建子目录以外的移动排序。
+- 任务点：自测需要课程先在「课程管理 → 学生端配置」开启自测功能（测试课未开启，服务端回「当前课程尚未开启自测功能」），没有替你改课程设置。「课程」(type 0)、「选课」(24) 不在课程任务的添加菜单里，没做。
 - 章节插入：速课、投票问卷、本课资料（格式已记录，未做成工具），云盘选文件、图书、图书内页、动画、全景、文档导入、AI 排版/智能编写/AI 校正。
 - 读取：首页待办和预警、学情统计各子页、AI 助教会话和知识库、教学日历、下载中心、错题集、学习记录、课程图谱。
 - 只能预演、尚不执行：删除作业/考试/试卷/资料/讨论/章节、导出成绩、催交作业（删除后状态或收件人还不能可靠核实）。
@@ -32,6 +32,9 @@
 - 学生考试作答、读取标准答案或测验答案（需求明确禁止；真正的考核在线下）。
 - 刷章节任务点（看视频、读文档计时）这类代替学生学习的操作。
 - 口语测评、录音（要麦克风现场录音）；直播、腾讯会议、超星会议（会真的开一场直播或会议，只记录了接口）。
+- 第三方平台的任务点（3D资源=vr.chaoxing 和 sslibweb、培训班、研修、整书/章节测评、实践作业等 planType 10006–10040）和菜单里的「AI课堂」（planType 10042，棱镜 AI课堂产品，要先在那边生成课堂）：都在别的应用里，只记录了入口。
+- 学生端不代做：签到（含任务里的签到）、抢答、白板、看视频/文档/电子书、AI实践对话、自测、问卷星式的表单（office.chaoxing）——只给链接。
+- **重要发现**：学生任务页取任务点链接的接口 `/userStudyPlan/getToStudyUrl` 对没有链接的任务点（如自定义）会直接记为完成。所以学生工具只对「作业」任务点取链接（作业要提交才算完成），其他任务点一律只给任务页让学生自己点。
 - 滑块验证码、短信、协议同意、登录：一律由本人处理。资源库（另一套登录）、3D 资源和智雅资源库（弹窗一直加载）、课程图谱（课程里没有知识点）暂时无法探查。
 
 ## 1. 新版教师端结构（实测）
@@ -52,7 +55,7 @@
 | 资源中心 | `stat2-ans.chaoxing.com/stat2-vue/resource` | `stat2/base-data/v3/{coursewareInfo,resInfo,knowledgeInfo,workInfo,examInfo,activityLibraryInfo}`、`mooc2-ans/coursemanagev3/resource-info` | get_resource_overview、list_coursewares、list_practices、list_chapters、list_materials、upload_material、list_assignment_library、list_bank_questions、list_exams(试卷库) | 课件、题库、资料上传已覆盖；知识点、活动库待做 |
 | AI助教 | `robot-lc.chaoxing.com/courseCozeV3/web` | `v1/front/conversationList`、`msgList`、`robot/info/*`、`knowledge/getAiKbSetting`… | — | 待做（读会话与知识库设置；写=对话/配置） |
 | 学情统计 | `stat2-ans.chaoxing.com/stat2-vue/statistics` | `stat2/stat-nav/teach`（子菜单） | get_grades | 部分覆盖；待做：逐项统计子页 |
-| 课程管理 | `mooc2-ans.chaoxing.com/mooc2-ans/tcm/course-manage` | `tcm/clazz-manage`、`tcm/clazz-student` | open_course、list_students | 读已验证；待做：添加学生、分组、导出名单、移除、班级设置 |
+| 课程管理 | `mooc2-ans.chaoxing.com/mooc2-ans/tcm/course-manage` | `tcm/clazz-manage`、`tcm/clazz-student`、`tcm/change-clazz`、`tcm/getclazzgroup`、`addclazzgroup`、`changepersongroup` | open_course、list_students、create_class、move_students_class、list_class_groups、create_class_group、assign_class_group | 调班、分组已实测；待做：添加/移除学生、导出名单、班级设置 |
 | 通知 | `notice.chaoxing.com/pc/course/notice/myNoticeList` | `pc/course/notice/getNoticeList` | list_notices、list_notice_inventory、publish_notice、delete_notice、reconcile_notices | 读写已实测 |
 | 讨论 | `groupweb.chaoxing.com/course/topic/topicList?…bbsid` | `course/topic/{bbsid}/getTopicList`、`addTopic`、`pc/invitation/<话题>/addReplys` | list_discussions、create_discussion、delete_discussion(仅预演)、学生端 list_my_discussions / reply_my_discussion | 已修复（bbsid 取自 base-info）并实测 |
 | 作业/考试（旧接口） | `mooc2-ans/work/*`、`mooc2-ans/exam/*` | — | list_assignments、submissions、list_exams、exam_marklist… | 读已验证；与"教学任务"的关系待确认 |
@@ -163,18 +166,32 @@
    | 分组任务 | 18 | `/groupTask/getData` | activeId（名称字段 activeName） | ✅ |
    | 任务 | 16 | `/taskTypeTaskPoints/getData` | taskId | ✅ |
    | 仿真 | 19 | `/simulation/getData` | simulationId，另带 simulationUrl | ✅ |
-   | 文档 / 视频 / 音频 | 11 / 10 / 22 | `/document/getData`、`/video/getData`、`/audio/getData` | documentId / videoId / audioId | 文档、音频 ✅ |
-   | 知识点 | 1 | `/knowledgePoints/getMoocData` | knowledgePointsId | 无数据 |
-   | AI课堂 | 15 | `/aiCoach/getMoocData` | relationUuid | 无数据 |
-   | 问卷 / 审批 | 6 / 7 | `/questionnaire/getData`、`/examineAndApprove/getData` | questionnaireId / examineAndApproveId | 无数据 |
-   | 测验 | 13 | `/quizTest/getData` | categoryId | 无数据 |
-   | 自定义 | 9 | `/customizeTaskPoints/getData` | uuid | 无数据 |
-   | 线下 / 线上课堂 | 2 / 3 | `/offlineClassroom/getData`、`/onlineClassroom/getData` | offlineClassroomId / onlineClassroomId | 无数据 |
+   | 文档 / 视频 / 音频 | 11 / 10 / 22 | `/document/getData`、`/video/getData`、`/audio/getData` | documentId / videoId / audioId | ✅ |
+   | 知识点 | 1 | `/knowledgePoints/getMoocData`，库 `/knowledgePoints/getData` | knowledgePointsId | ✅（新建） |
+   | AI实践 | 15 | `/aiCoach/getMoocData`，库 `/aiCoach/getData` | relationUuid | ✅（新建并写好要求） |
+   | 问卷 / 审批 | 6 / 7 | `/questionnaire/getData`、`/examineAndApprove/getData` | questionnaireId / examineAndApproveId | ✅（新建） |
+   | 测验 | 13 | `/quizTest/getData` | categoryId | ✅（新建） |
+   | 自定义 | 9 | `/customizeTaskPoints/getData` | uuid | ✅（新建，含类型） |
+   | 线下 / 线上课堂 | 2 / 3 | `/offlineClassroom/getData`、`/onlineClassroom/getData` | offlineClassroomId / onlineClassroomId | ✅（新建） |
+   | 电子书 | 21 | `/eBook/getData`（按关键词） | dxid | ✅ |
+   | 签到 | 23 | 无库，`/signIn/addOrEdit` 为任务新建 | id | ✅ |
 
    - 列表参数统一为 `{page, pageSize, searchKey, currTaskId:数字任务ID, currentGroupId, moocCourseId}`。
    - 文档/视频/音频可以直接用课程资料里的云盘文件：`POST /document/addOrEdit {name(去扩展名), objectId, suffix, cover, source}` 返回条目（含 documentId），再存任务点。同一个文件再加到同一任务会被去重，服务端回「任务点个数为空」。
-   - 还没做：课程（0，`/course/getData`）、电子书（21，`/eBook/getData` 按 unitid）、签到（`/signIn/getData`，要先发布任务）、3D 资源。
+   - 不在课程任务菜单里：课程（0）、选课（24）。第三方：3D资源（planType 10021）、AI课堂（10042）等走 `/taskPointsThirdPartyDocking/getPageUrl`，打开的是别的平台。自测（17）要课程先开启自测功能。
 7. 接口目录（从页面脚本提取）：`createTask`、`createOrEditTask`、`deleteTaskInfo`、`taskDelete`、`swapTaskOrder`、`taskMoveToFolder`、`addNewFolder`、`reNameFolderConfirm`、`removeFolderConfirm`、`exportTask`、`getCourseImportTasks`/`confirmCourseImport`、`confirmCourseCopyTask`、`tasklabel/getTaskLabelDatas`/`saveOrDeleteTaskLabelData`、`commitPeTaskBaseInfo`、`taskStatistics/index`、`taskReference/getCourseIdClazz`。
+
+### 2026-11-07 班级分组、课件/教案、学生端活动与任务（做成工具，测试课实测）
+
+- **调班**：`GET /mooc2-ans/tcm/change-clazz?courseId&oldClazzId&newClazzId&personIds&cpi`；名单 `tcm/clazz-student`（行里带 personId）。工具 `move_students_class` 预演列出学生，确认后按两个班的名单核实。
+- **分组**：小组列表 `tcm/getclazzgroup`（HTML，`#group_<id>`）、新建 `tcm/addclazzgroup`、分人 `tcm/changepersongroup`；方案 `mobilelearn /v2/apis/task/getMoocGroupPlanList`（id 0 = 班级默认方案）、`getOneMoocGroupPlan`（小组和人数）。分组任务按方案分组时 `groupType=1`、`groupNum`=小组数、`maxStuNumOneGroup`=最大组人数，开始前调 `/widget/renwu/checkgroup`（status 1 才发起）。
+- **课件库**：`/page/ppt/coursewareList`；`POST /widget/teachingPlan/createPPT {courseId, parentFolderId, pptData:[{suffix, objectId, name, size}]}`（云盘文件，接受 ppt/pptx/pdf/doc/docx）。**教案库**：`/page/ppt/teachingPlanList`；`GET /v2/apis/activePlan/addTeachingPlan {courseId, planMouldId(-1 空白/-2 标准), parentFolderId, title}`，段落 `addPlanContent {planId, groupName, groupContent}`、删除 `delPlanContent`，读回 `getPlanInfo`。推送到班级都走 `POST /v2/apis/active/createTeachPlanActive {classId, courseId, teachPlanData:[列表行]}`（教案活动 type 60，PDF 课件 62）。
+- **任务点更正与补全**：type 15 是菜单里的「AI实践」（打开 ai-evaluate 编辑器），不是 AI课堂；新建的 AI实践要在 `/mooc2-ans/ai-evaluate/v2/editor/save {courseid, cpi, libraryUuid, isPublish:false, data:JSON(form)}` 写好 `requirement`、`sceneChat.aiCharacter/userCharacter/chatPrompt/scoreStandards`，否则加任务点会被拒「【要求】不能为空」。
+  电子书 type 21：`/eBook/getData` 按关键词搜，`unitid` 用弹窗的 7719（不能用行里的 null，否则「该书籍暂不支持在线学习」）。签到 type 23：`POST /signIn/addOrEdit {taskId:加密任务ID, courseId, name, cover, describe}`，任务需已发布。
+  问卷/审批/测验/知识点/AI实践/线下课堂/线上课堂/自定义的库条目都用 `/<类型>/addOrEdit {name, cover, describe[, startDate, endDate, courseId]}` 新建；自定义要先有类型（`/customType/addOrEditCheck` + `addOrEdit`，名称≤4字）。
+- **学生端活动**（学生活动列表 `/page/active/stuActiveList` 的打开逻辑）：随堂练习 `quizDetail2` → `POST JSON /v2/apis/studentQuestion/doQuestionAnswering`（questionList 里填 personAnswer：单多选 myoption、判断用选项名 1/2、填空 blankAnswer、简答 content）；问卷 `quizDetail` → `POST /v2/apis/studentQuestion/doQuestion`（`questionId` 每题一个，`answer<题ID>` 多选重复）；投票 `POST /v2/apis/qvote/doQuestion {questionId, answer}`；评分 `POST /v2/apis/score/stuSubmitAnswer {score, scoreList, content}`；分组任务 `getMyGroupInfo` 取 groupId/editVersion → `POST /widget/apis/renwu/studentSaveRenwu`；活动讨论在班级讨论区（`getTopicDiscussInfo.topicV3Url`，话题 uuid 以 `_topicDiscuss` 结尾），回复同普通讨论 `addReplys`。
+  学生端答题数据里没有参考答案（`rightAnswer` 为 null）。活动列表的 `userStatus` 对所有活动都是 1，不能当「已参与」；已提交信号：随堂练习/问卷/投票看 `pptUserAttend` 是否为空，评分看 `getStuScoreStatus.userStatus`，分组任务看 `getMyGroupInfo.commitLogCount`，讨论看话题回复数。
+- **学生端教学任务**：`task.chaoxing.com/api/v1/userStudyApi/getMyTaskUrl` → `POST JSON /userStudyTask/getData {page, pageSize, courseId, moocClassId}`（明文 ID）→ `/userStudyPlan/getGroupData`、`getPlanDataByGroupId`（任务点名称、类型、是否完成、可学条件）；任务页 `/userStudyPlan/myPlanList?encryTaskUserId`。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。

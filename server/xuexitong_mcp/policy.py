@@ -28,7 +28,8 @@ from .xxt import XxtError
 ORDER = ("student", "reviewer", "teacher")          # narrowest -> broadest
 STUDENT_BASE = frozenset({"list_my_courses", "list_my_assignments", "read_my_assignment", "save_my_answers",
                           "submit_my_assignment", "list_my_exams", "list_my_activities", "list_my_materials",
-                          "download_my_material", "ask_tutor", "health_check"})
+                          "download_my_material", "ask_tutor", "health_check", "open_my_activity", "submit_my_activity",
+                          "list_my_tasks", "list_my_task_points"})
 STUDENT_OPTIONAL = frozenset({"list_my_discussions", "reply_my_discussion"})
 STUDENT_ONLY = (STUDENT_BASE | STUDENT_OPTIONAL) - {"health_check"}
 REVIEW_TOOLS = frozenset({"record_review_suggestion", "list_review_suggestions"})
