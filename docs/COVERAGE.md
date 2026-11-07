@@ -4,32 +4,34 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-07）
+## 0. 当前完成度（2026-11-08）
 
-通过真实 MCP stdio 连接实测：教师配置注册 87 个工具、学生配置 15 个、预审配置 35 个，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+注册的工具：教师配置 130 个、学生配置 17 个（可再开讨论两项）、预审配置 49 个。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
-- 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。
-- 章节：读内容、改名、写正文（格式白名单）、插入链接/注释/讨论/扩展阅读/章节测验，以及文档、音频、视频、图片、附件五种文件。
-- 作业：23 种题型新建、答题卡作业、发放（含常用设置）、提交情况、逐题读学生作答、批阅给分（含批语、部分批阅）、打回。
-- 试卷与考试：22 种题型（含选做题）建卷、发布考试（含常用防作弊和查看设置）、考试批阅页人数。
-- 题库：24 种题型新增、列表（不返回答案）。
-- 通知：发送、删除、按 UUID 补记；讨论：发帖、列表；课程资料：上传、列表；成绩：读取。
+- 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。课程设置（学生端配置和课程设置里 20 项开关/选项/文字，含允许学生自测、视频水印、承诺书、课程通知、试读、资源下载、评价、AI 功能、课程说明）；班级设置（允许加入、加入需同意、允许退课、忽略视频拖拽、对学生隐藏、结课/取消结课、人数上限）和班级改名；把学生移出班级、从退课日志恢复、从本课另一个班添加学生；教师团队、成绩权重（经典模式读写）、加班/退课日志。
+- 章节：读内容、改名、写正文（格式白名单）、插入链接/注释/讨论/扩展阅读/章节测验，以及文档、音频、视频、图片、附件五种文件（本机上传或直接引用课程资料，即「本课资料」）；移到另一章节下、调整顺序、按大纲快速导入目录、删除（锁定子章节）。
+- 作业：23 种题型新建、答题卡作业、发放（含常用设置）、修改已发布作业的起止时间、提交情况、逐题读学生作答、批阅给分（含批语、部分批阅）、打回、按学生催交（收件人在预演时锁定）、删除到回收站/还原。
+- 试卷与考试：22 种题型（含选做题）建卷、自动随机组卷（按题型从题库抽题）、发布考试（含常用防作弊和查看设置）、修改已发布考试的时间和时长、考试批阅页人数；考试和试卷删除到回收站、还原、试卷彻底删除（被考试引用的试卷平台不允许彻底删除，工具会拒绝）。
+- 题库：24 种题型新增、列表（不返回答案）、修改题目、文件夹（新建、把题移进去）、删除到回收站/还原、难度、标签（新建、打标签）。
+- 通知：发送、删除、按 UUID 补记；讨论：发帖、列表、置顶/加精及取消、教师回复、删除；课程资料：上传、列表、文件夹、移进文件夹、下载权限、删除/还原/彻底删除；成绩：读取、导出 Excel 到本机。
 - 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务，或按分组方案分小组，可设组内/组间互评权重）、学生反馈、白板、抽签、推送课程资料、推送课件、推送教案；结束活动、活动结果。
 - 课件库与教案：把课程资料里的 ppt/pptx/pdf/doc/docx 加入课件库；新建教案（可带 课前/课中/课后 等段落）。
-- 教学任务：新建、发布；任务点 20 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
-- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务，作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
+- 教学任务：新建、发布；任务点 21 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到、自测（新建自测模板：模拟测验或刷题，随机或按题型抽题）。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
+- 读取：课程首页（待办、作业/考试/AI实践预警、学情看板、高风险学生）、学情统计（基础数据、学情统计、学习监控、课堂报告）、教学日历、下载中心、AI 助教（是否开启、知识库设置、会话列表）。
+- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务/学习记录/错题集（错题只给题目和本人作答，不给正确答案），作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
 - 策略层与打包：三种角色、确认提交、节流、不可信内容标注、中心辅导、预审记录；安装脚本、一键更新和回退；v0.3.0、v0.4.0、v0.5.0 已发布。
 
 **还没做（可以继续补）**
-- 教师写：修改已发布作业/试卷、随机组卷和平行试卷、题库编辑删除导入导出和标签文件夹、讨论置顶加精回复、班级设置和添加/移除学生、教师团队、成绩权重、资料文件夹和权限、章节新建子目录以外的移动排序。
-- 任务点：自测需要课程先在「课程管理 → 学生端配置」开启自测功能（测试课未开启，服务端回「当前课程尚未开启自测功能」），没有替你改课程设置。「课程」(type 0)、「选课」(24) 不在课程任务的添加菜单里，没做。
-- 章节插入：速课、投票问卷、本课资料（格式已记录，未做成工具），云盘选文件、图书、图书内页、动画、全景、文档导入、AI 排版/智能编写/AI 校正。
-- 读取：首页待办和预警、学情统计各子页、AI 助教会话和知识库、教学日历、下载中心、错题集、学习记录、课程图谱。
-- 只能预演、尚不执行：删除作业/考试/试卷/资料/讨论/章节、导出成绩、催交作业（删除后状态或收件人还不能可靠核实）。
+- 教师写：平行试卷（A/B 卷）、题库导入（模板文件）和导出（走下载中心的异步任务）、教师团队增删成员和权限（涉及其他真实教师，只做了读取）。
+- 章节插入：速课、投票问卷、图书、图书内页、动画、全景、文档导入、AI 排版/智能编写/AI 校正（格式或入口已记录，未做成工具）。
+- AI 助教对话（只读取了设置和会话列表）、课程图谱（测试课没有知识点，接口已记录）。
+- 错题集：读取路径已实测（返回空列表），但测试课里还没有产生错题（作业截止几分钟后仍为空），有错题时的返回格式未核实；工具按「只给题目和本人作答」处理。
+- 「课程」(type 0)、「选课」(24) 不在课程任务的添加菜单里，没做。
 
 **按需求不做或做不了**
 - 学生考试作答、读取标准答案或测验答案（需求明确禁止；真正的考核在线下）。
+- 课程设置里不开放修改：学习监控/人脸识别/抓拍（对学生的生物识别）、学生端 AI 助教机器人（开启要在弹窗里同意协议）、知识共享协议、克隆/映射/重新开课（会把课程复制给其他账号）、课程密码、课程名称（写入白名单可能按名称匹配）；班级设置里不开放：开放班级报名（会公开课程内容）。
 - 刷章节任务点（看视频、读文档计时）这类代替学生学习的操作。
 - 口语测评、录音（要麦克风现场录音）；直播、腾讯会议、超星会议（会真的开一场直播或会议，只记录了接口）。
 - 第三方平台的任务点（3D资源=vr.chaoxing 和 sslibweb、培训班、研修、整书/章节测评、实践作业等 planType 10006–10040）和菜单里的「AI课堂」（planType 10042，棱镜 AI课堂产品，要先在那边生成课堂）：都在别的应用里，只记录了入口。
@@ -192,6 +194,25 @@
 - **学生端活动**（学生活动列表 `/page/active/stuActiveList` 的打开逻辑）：随堂练习 `quizDetail2` → `POST JSON /v2/apis/studentQuestion/doQuestionAnswering`（questionList 里填 personAnswer：单多选 myoption、判断用选项名 1/2、填空 blankAnswer、简答 content）；问卷 `quizDetail` → `POST /v2/apis/studentQuestion/doQuestion`（`questionId` 每题一个，`answer<题ID>` 多选重复）；投票 `POST /v2/apis/qvote/doQuestion {questionId, answer}`；评分 `POST /v2/apis/score/stuSubmitAnswer {score, scoreList, content}`；分组任务 `getMyGroupInfo` 取 groupId/editVersion → `POST /widget/apis/renwu/studentSaveRenwu`；活动讨论在班级讨论区（`getTopicDiscussInfo.topicV3Url`，话题 uuid 以 `_topicDiscuss` 结尾），回复同普通讨论 `addReplys`。
   学生端答题数据里没有参考答案（`rightAnswer` 为 null）。活动列表的 `userStatus` 对所有活动都是 1，不能当「已参与」；已提交信号：随堂练习/问卷/投票看 `pptUserAttend` 是否为空，评分看 `getStuScoreStatus.userStatus`，分组任务看 `getMyGroupInfo.commitLogCount`，讨论看话题回复数。
 - **学生端教学任务**：`task.chaoxing.com/api/v1/userStudyApi/getMyTaskUrl` → `POST JSON /userStudyTask/getData {page, pageSize, courseId, moocClassId}`（明文 ID）→ `/userStudyPlan/getGroupData`、`getPlanDataByGroupId`（任务点名称、类型、是否完成、可学条件）；任务页 `/userStudyPlan/myPlanList?encryTaskUserId`。
+
+### 2026-11-08 课程与班级管理、回收站、题库管理、读取页面（做成工具，测试课实测）
+
+- **课程设置**：读 `GET mooc2-ans /tcm/getcoursesetting?courseid&cpi`（HTML，每个开关的 `checked` 就是已保存状态）。每个开关单独保存（GET，courseSet.js）：`updatecourseselftest{selftest}`、`updatevideowatermark`、`updatecoursecommitment`、`coursemanage/setsynactivestate`（读 `getsynactivestate`）、`visit/updatesmarkcourse{state}`、`updateQueImportAllowCreateTopic`、`updateAiQuestionExplain`、`setaivideointerpret`、`updateaiassistant{2|-1}`、`updateportalShowAiAssistant`、`updateallowdownload`、`updateHiddenResourcesName`、`updateteacherreview`、`updateisprivately{0 试读全部,1 关闭,3 第一章,2 前三章}`、`updateportaldefaultcolumn{1,2,3}`、`updatecoursestar{1 关闭,0 所有人,2 本课学生}`、`updatesendnoticetype`（五个字段一起发）、`savecoursecommitment`、`POST updatecoursedata`（课程说明、英文名称，其余字段按原值回填）。实测每项改了再改回，读回一致。
+- **自测任务点**：任务引擎 `/selfTest/isOpenSelfTest`、`/selfTest/addSelfTestUrl` 给出 mooc2-ans 弹窗 `self-test/template/create-pop?courseid&clazzid=0&type=2`；`POST /mooc2-ans/self-test/template/save {title, type(0 模拟测验/1 刷题), templateType:2, limitTime, randomNum, questionFrom(0 题库/1 错题集), randomType(0 随机/2 按题型), randomTypeSet}` 返回 `{id,title}`；读回用 `create-pop?…&templateid=<id>` 的隐藏字段；任务点 `{type:17, name:title, externalDataId:id, courseId}`。题量来自 `template/question-count`、`template/type-question`。
+- **回收站**：作业 `work/delete?…&recycle=1`（0 还原），回收站 `work/list?…&recycle=1`；考试 `exam/test/delete-test?…&recyle=1`（0 还原），回收站 `exam/test?…&recyle=1`；试卷 `POST exam/deletepaper?…&status=2`（0 还原，1 彻底删除；回收站行里没有 `.removeBtn` 时平台不允许彻底删除，服务端却仍回「操作成功」），回收站 `paperlist?…&type=1`；资料 `POST coursedata/batchDelete`，回收站 `coursedata/recycle-data-list`，还原 `recycle-data`，彻底删除 `delete-recycle-data`。删除只有在「目标离开列表、其他条目都还在、回收站里有它」时才算成功。
+- **考试列表只显示 clazzid 指定的那个班**：读考试（含回收站）要逐班读，否则会漏掉其他班的考试。
+- **修改已发布作业/考试**：作业「修改设置」页 `work/rePublishSetting?courseid&classid=0&cpi&id`，页面自己的 `rePublicWork()` 收集四十多项设置后 `POST work/library/update-publish`；考试 `exam/test/topublishsettings?clazzid&courseid&cpi&id`，`updatepublish(true)`（true 跳过页面内「时间已改」确认）→ `POST exam/test/update-publishsettings`。工具打开页面、改时间字段、调用页面函数并截获响应，屏蔽它保存后的 `window.close()`。**时间字段必须带秒（yyyy-MM-dd HH:mm:ss）**，不带秒时截止时间被存成空。
+- **催交**：批阅页 `work/mark` 的「督促」是 `GET work/urge {courseid, clazzid, cpi, workid, studentIds}`，可以只发给指定学生（另有 `whole=true` 全体）。工具在预演时锁定收件人，确认时名单变了就不发。实测只发给本人，收件箱收到「作业督促通知」。
+- **讨论**：置顶 `/pc/topic/{uuid}/{set|cancel}/top`、加精 `/pc/topic/{uuid}/{set|cancel}/choice`，置顶状态读 `getTopTopicList`，加精读 `getTopicList` 的 `choice`；教师回复同 `addReplys`，`urlToken` 从回复页 HTML 里取（回复页会重绘，不能在上面执行脚本），话题回复数要过几秒才更新，以服务端回显的回复内容为准。
+- **资料**：新建文件夹 `GET coursedata/add-folder`（名称里的 `[]` 等特殊字符被去掉），下载权限 `POST update-isDownload`，移动 `POST coursedata/move {dataId:"id--", folderId}`，文件夹内容 `coursedata?…&dataId=<文件夹>`。
+- **成绩导出**：`POST stat2 /stat2/score-data/getEnc` 取 `exportEnc`，再把页面的表单提交到 `fystat-ans /api/export {courseId, classId, exportEnc, createId, seltables:6}`，用 `bsk download` 接住下载，文件以 `PK` 开头（xlsx）。超过 2000 人走下载中心，工具不处理。
+- **班级**：设置读 `tcm/getclazzsetting`（按 onclick 函数名认开关），写 `update-enableinvitecode`、`coursemanage/intoclazzvalidation`、`update-clazzretire`、`update-videoctrl`、`updatehideclazz`、`update-clazzstate`、`update-stunumlimit`，改名 `update-clazzname`；移出学生 `delete-clazzstu{personIds}`，退课日志 `tcm/drop-clazz-log`（必须按班读，「全部班级」返回空；记录 ID 在「恢复」按钮的 data 上），恢复 `tcm/recoverystudy{personDropIds}`；从本课另一班添加 `addstubyclazz{addClazzId}`；加班日志 `coursemanage/stuaddclazzlog`（表格）。实测只用了教师本人加进测试课的测试账号和教师自己的学生身份，学生在其他班的身份不受影响。
+- **成绩权重**：`tcm/scoreweightdata?courseId&clazzId&cpi` 里的 `#weightForm`（字段 video、ceyan、work、test、aiEvaluate、pbl、attend、active、bbs…），保存 `POST /mooc2-ans/tcm/setWeights?<表单> {customWeightJson, classIdStr}`，另带 `attendAttendance`、`bbsLimit/bbsReplyLimit/bbsPraiseLimit`、`aiEvaluateType`。
+- **题库管理**：列表 `POST qbank/search`（每页最多 100 行；文件夹自己的列表只含本层，按关键词搜索才跨文件夹）；回收站是另一个接口 `POST qbank/recycle-search`（行在 `list`）；新建文件夹 `GET insertdir`；移动 `POST update-pid {operateId, type:1, newPid}`；删除/还原 `POST batch-updatestatus {questionIds, status:2|0}`；难度 `POST update-difficulty {qids, difficulty:0.8/0.5/0.2}`；标签 `question-label/add|list|delete`，`list?qid` 的 `checkedIds` 是这道题已打的标签，打标签 `POST update-label?…&labelIds=a,b, {qids}`；修改题目 = 新建表单带 `questionBankId=<id>`、`isEdit=true`。
+- **章节**：`POST mooc-ans/edit/chaptermove {courseid, nodeid, pnodeid}`（移到某章下），`POST movechapter/drag {courseid, nodeid, destid, position:before|after|append}`（排序；非一级不能变一级），`POST importdirForText {courseId, text}`（每级缩进**两个空格**），删除 `deletechapter`。
+- **随机组卷**：`POST exam/reVersionToSetPaperStructureV2`（`autoPaperParamData` 的字段：每种题型 `<t>_radio=0`（从题库选题）、`<t>_score`、`<t>_totalNum`、`<t>_libraryInputQuestionNum` 等，`typeOrders`、`pageNum`、`title`、`score`）返回 `taskId`，轮询 `exam/autopapertask-status` 到 `taskStatus=ok` 得到 `paperId`。试卷库对随机卷的题量显示「---」。
+- **读取页面**：首页待办 `fanya3/t/todoList`、作业预警 `work/teaching-alert`、考试提醒 `exam/test/exam-progress-reminder`、AI实践预警 `teaching-alert/stat/ai-evaluate`、学情看板 `stat2/ai-study-alert/v3/board|high-risk`；学情统计 `stat2/base-data/v3/*`、`stat2/teach-data/*`、`stat2/study-monitor/v2/studyList`、课堂报告 `mobilelearn v2/apis/course/getReportData`；教学日历 `course/calendar/list` + `schedule/list`；AI 助教入口 `goWorkbench` 返回的页面里有 `courseRobotId`，`robot-lc /v1/front/robot/info/<id>`、`knowledge/getAiKbSetting`、`conversationList` 不签名也能读。
+- **学生端**：学习记录 `stat2 /study-data/index`（隐藏字段 `pEnc`）→ `/stat2/study-data/{job,sign,point,score,work,test,nearTask,behindTask,self-exam}`，**这些接口没有学习记录页作为 Referer 时回 403**；错题集 `POST mooc2-ans /wrongque/data`（HTML）。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
