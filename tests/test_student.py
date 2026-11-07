@@ -79,3 +79,52 @@ def test_submit_requires_phrase_and_plan_ignores_it(monkeypatch):
     p = T["submit_my_assignment"](course="助手", assignment="1", answers={"1": "A"})
     ok = T["submit_my_assignment"](course="助手", assignment="1", answers={"1": "A"}, confirm=True, plan_id=p["plan_id"], confirm_text="确认提交")
     assert ok["ok"] is True and calls == [{"submit": True}]
+
+
+def test_every_student_write_needs_the_students_phrase():
+    import inspect
+    from xuexitong_mcp import server as srv
+    from xuexitong_mcp.policy import STUDENT_ONLY
+    writes = [(n, fn) for n, k, _, fn in srv.TOOLS if n in STUDENT_ONLY and k in ("write", "destructive")]
+    assert {n for n, _ in writes} >= {"save_my_answers", "submit_my_assignment", "submit_my_activity", "reply_my_discussion"}
+    for n, fn in writes:
+        assert "confirm_text" in inspect.signature(fn).parameters, n
+
+    def no_phrase(confirm=False):
+        return {"ok": True, "dry_run": True}
+    no_phrase.__name__ = "reply_my_discussion"
+    with pytest.raises(ValueError):
+        srv._wrap(no_phrase, "write")
+
+
+@pytest.mark.parametrize("tool,kw", [
+    ("save_my_answers", dict(assignment="1", answers={"1": "A"})),
+    ("reply_my_discussion", dict(topic_id="t1", content="我的回复")),
+])
+def test_save_and_reply_need_phrase(monkeypatch, tool, kw):
+    from xuexitong_mcp import server as srv
+    T = {n: srv._wrap(fn, k) for n, k, _, fn in srv.TOOLS}
+    monkeypatch.setattr(srv, "_answer_preview", lambda *a, **k: {"assignment": "作业", "status": "未交", "answers": [], "unanswered": []})
+    monkeypatch.setattr(srv, "_check_student_write", lambda c: None)
+    calls = []
+
+    class FakeClient:
+        def answer_my_assignment(self, *a, **k):
+            calls.append(k)
+            return {"ok": True}
+
+        def my_discussions(self, c):
+            return {"topics": [{"topic_id": "t1", "title": "话题"}]}
+
+        def reply_my_discussion(self, *a):
+            calls.append(a)
+            return {"ok": True}
+    monkeypatch.setattr(srv, "client", lambda: FakeClient())
+    p = T[tool](course="助手", **kw)
+    assert p["dry_run"] and "确认提交" in p["next"]
+    assert T[tool](course="助手", **kw, confirm_text="确认提交")["ok"] is False      # phrase during preview
+    for bad in ("", "好的", "确认"):
+        r = T[tool](course="助手", **kw, confirm=True, plan_id=p["plan_id"], confirm_text=bad)
+        assert r["ok"] is False and not calls
+        p = T[tool](course="助手", **kw)            # a wrong phrase spends the plan
+    assert T[tool](course="助手", **kw, confirm=True, plan_id=p["plan_id"], confirm_text="确认提交")["ok"] is True and len(calls) == 1

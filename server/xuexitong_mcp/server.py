@@ -154,6 +154,10 @@ def _wrap(fn: Callable, kind: str = "read") -> Callable:
     gated = kind in ("write", "destructive") and "confirm" in sig.parameters
     if kind in ("write", "destructive") and not gated:
         raise ValueError(f"写操作 {fn.__name__} 缺少 confirm 参数，拒绝注册。")
+    from .policy import STUDENT_ONLY
+    student_write = gated and fn.__name__ in STUDENT_ONLY
+    if student_write and "confirm_text" not in sig.parameters:
+        raise ValueError(f"学生端写操作 {fn.__name__} 缺少 confirm_text（学生本人的「确认提交」），拒绝注册。")
 
     @functools.wraps(fn)
     def inner(*a, **k):
@@ -176,6 +180,9 @@ def _wrap(fn: Callable, kind: str = "read") -> Callable:
                         if fn.__name__ in _PREVIEW_ONLY_TOOLS:
                             raise XxtError("该操作暂仅支持预演，不生成可执行计划，也不会提交。")
                         bind = _consume_plan(fn.__name__, args, plan_id)
+                        if student_write and str(ba.arguments.get("confirm_text") or "").strip() != SUBMIT_PHRASE:
+                            # the plan is spent: a wrong phrase means preview again and ask the student again
+                            raise XxtError(f"未收到学生本人的「{SUBMIT_PHRASE}」，没有写入；请重新预演并让学生本人确认。")
                         # execute with the targets resolved during the dry run (ids, frozen times)
                         call = dict(ba.arguments)
                         call.update(bind)
@@ -1092,11 +1099,26 @@ def _answer_preview(c_name: str, assignment: str, answers: dict, submit: bool) -
     return {"assignment": r["title"], "status": r["status"], "answers": rows, "unanswered": missing}
 
 
-@tool(W, "学生端：暂存我的作答（不提交，之后还能改）。先预演，确认后保存并读回核对。")
-def save_my_answers(course: StuCourse_, assignment: Assignment_, answers: Answers_, confirm: Confirm = False) -> dict:
+ConfirmText_ = Annotated[str, Field(description="学生本人回复的确认语，必须是「确认提交」；预演时留空")]
+
+
+def _student_phrase(confirm: bool, confirm_text: str) -> None:
+    """Every student-side write needs the student's own 「确认提交」, not just the agent's confirm=true."""
+    if not confirm and confirm_text:
+        raise XxtError("预演时 confirm_text 必须留空。")
+    if confirm and confirm_text.strip() != SUBMIT_PHRASE:
+        raise XxtError(f"未收到学生的「{SUBMIT_PHRASE}」，没有写入。")
+
+
+@tool(W, "学生端：暂存我的作答（不提交，之后还能改）。必须先预演并把预览完整展示给学生；只有学生本人回复「确认提交」后，"
+         "才能带 confirm_text=\"确认提交\" 和 plan_id 保存，并读回核对。只接受学生本人的作答。")
+def save_my_answers(course: StuCourse_, assignment: Assignment_, answers: Answers_, confirm: Confirm = False,
+                    confirm_text: ConfirmText_ = "") -> dict:
+    _student_phrase(confirm, confirm_text)
     if not confirm:
         prev = _answer_preview(course, assignment, answers, False)
-        return {"ok": True, "dry_run": True, "action": "暂存作答（不提交）", **prev, "_bind": {}}
+        return {"ok": True, "dry_run": True, "action": "暂存作答（不提交，之后还能改）", **prev,
+                "next": f"把以上预览完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": {}}
     _check_student_write(course)
     return client().answer_my_assignment(course, assignment, answers, submit=False)
 
@@ -1104,15 +1126,12 @@ def save_my_answers(course: StuCourse_, assignment: Assignment_, answers: Answer
 @tool(W, "学生端：提交我的作业（提交后通常不能再改）。必须先预演并把预览完整展示给学生；只有学生本人回复「确认提交」后，"
          "才能带 confirm_text=\"确认提交\" 和 plan_id 执行。只接受学生本人的作答。")
 def submit_my_assignment(course: StuCourse_, assignment: Assignment_, answers: Answers_, confirm: Confirm = False,
-                         confirm_text: Annotated[str, Field(description="学生本人回复的确认语，必须是「确认提交」；预演时留空")] = "") -> dict:
+                         confirm_text: ConfirmText_ = "") -> dict:
+    _student_phrase(confirm, confirm_text)
     if not confirm:
-        if confirm_text:
-            raise XxtError("预演时 confirm_text 必须留空。")
         prev = _answer_preview(course, assignment, answers, True)
         return {"ok": True, "dry_run": True, "action": "提交作业（提交后通常不能修改）", **prev,
                 "next": f"把以上预览完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": {}}
-    if confirm_text.strip() != SUBMIT_PHRASE:
-        raise XxtError(f"未收到学生的「{SUBMIT_PHRASE}」，没有提交。")
     _check_student_write(course)
     return client().answer_my_assignment(course, assignment, answers, submit=True)
 
@@ -1132,20 +1151,17 @@ ActivityResponse_ = Annotated[dict, Field(description="学生本人的作答。�
          "才能带 confirm_text=\"确认提交\" 和 plan_id 执行。只接受学生本人的作答，不得替学生作答；签到、抢答等需要学生本人在页面上完成。")
 def submit_my_activity(course: StuCourse_, activity: Annotated[str, Field(description="list_my_activities 返回的 activity_id")],
                        response: ActivityResponse_, confirm: Confirm = False,
-                       confirm_text: Annotated[str, Field(description="学生本人回复的确认语，必须是「确认提交」；预演时留空")] = "") -> dict:
+                       confirm_text: ConfirmText_ = "") -> dict:
+    _student_phrase(confirm, confirm_text)
     allowed = _state.get("allowed")
     resp = dict(response or {})
     body = resp.get("answers") if isinstance(resp.get("answers"), dict) else resp
     if not confirm:
-        if confirm_text:
-            raise XxtError("预演时 confirm_text 必须留空。")
         prev = client().submit_my_activity(course, activity, body, True)
         if prev.get("type") == "主题讨论" and allowed is not None and "reply_my_discussion" not in allowed:
             raise XxtError("当前配置没有开放讨论回复。")
         return {"ok": True, "dry_run": True, "action": f"提交{prev.get('type')}「{prev.get('title')}」", "preview": prev.get("will_submit"),
                 "next": f"把以上预览完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": {}}
-    if confirm_text.strip() != SUBMIT_PHRASE:
-        raise XxtError(f"未收到学生的「{SUBMIT_PHRASE}」，没有提交。")
     _check_student_write(course)
     return client().submit_my_activity(course, activity, body, False)
 
@@ -1195,16 +1211,20 @@ def list_my_discussions(course: StuCourse_) -> dict:
     return client().my_discussions(course)
 
 
-@tool(W, "学生端：在讨论话题下回复（以学生本人身份发布，其他同学可见）。先预演并把回复内容给学生看，确认后发布并核对。")
+@tool(W, "学生端：在讨论话题下回复（以学生本人身份发布，其他同学立刻可见）。必须先预演并把回复内容完整展示给学生；"
+         "只有学生本人回复「确认提交」后，才能带 confirm_text=\"确认提交\" 和 plan_id 发布并核对。只发布学生本人写的内容。")
 def reply_my_discussion(course: StuCourse_, topic_id: Annotated[str, Field(description="话题ID（list_my_discussions 返回的 topic_id）")],
-                        content: Annotated[str, Field(description="回复内容（学生本人的文字），1–5000 字")], confirm: Confirm = False) -> dict:
+                        content: Annotated[str, Field(description="回复内容（学生本人的文字），1–5000 字")], confirm: Confirm = False,
+                        confirm_text: ConfirmText_ = "") -> dict:
+    _student_phrase(confirm, confirm_text)
     _check_student_write(course)
     if not confirm:
         topics = {t["topic_id"]: t for t in client().my_discussions(course)["topics"]}
         if topic_id not in topics:
             raise XxtError("讨论列表里没有这个话题。")
-        return {"ok": True, "dry_run": True, "action": "回复讨论（其他同学可见）", "topic": topics[topic_id]["title"],
-                "content": content, "_bind": {}}
+        return {"ok": True, "dry_run": True, "action": "回复讨论（其他同学立刻可见）", "topic": topics[topic_id]["title"],
+                "content": content, "next": f"把以上回复内容完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。",
+                "_bind": {}}
     return client().reply_my_discussion(course, topic_id, content)
 
 
