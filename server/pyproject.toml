@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xuexitong-mcp"
-version = "0.2.0rc6+publiccore.1"
-description = "Research MCP adapter for Chaoxing teacher web through local BrowserSkill"
+dynamic = ["version"]
+description = "MCP server for Chaoxing 学习通 (teacher and student web) through a local BrowserSkill browser"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["mcp>=1.9", "tomli>=2.0; python_version < '3.11'"]
@@ -15,6 +15,9 @@ xuexitong-mcp = "xuexitong_mcp.__main__:main"
 
 [tool.setuptools]
 packages = ["xuexitong_mcp"]
+
+[tool.setuptools.dynamic]
+version = {attr = "xuexitong_mcp.__version__"}
 
 [tool.setuptools.package-data]
 xuexitong_mcp = ["*.toml"]

@@ -41,6 +41,7 @@ class Config:
     tutor_url: str = ""
     tutor_token: str = ""
     tutor_timeout: float = 60
+    update: dict = field(default_factory=dict)   # [update]: remote, channel, require_signed_tags, allowed_signers
     path: Path | None = None
 
     def bsk(self) -> str:
@@ -93,6 +94,7 @@ def load(path: str | os.PathLike | None = None) -> Config:
         cfg.tutor_url = str(tu.get("url", "") or "")
         cfg.tutor_token = str(tu.get("token", "") or "")
         cfg.tutor_timeout = float(tu.get("timeout", cfg.tutor_timeout))
+        cfg.update = dict(d.get("update", {}) or {})
     # The environment can narrow the explicitly configured allowlist, never
     # create or broaden authority.  An explicitly empty variable denies all.
     if "XUEXITONG_MCP_WRITE_ALLOW" in os.environ:
