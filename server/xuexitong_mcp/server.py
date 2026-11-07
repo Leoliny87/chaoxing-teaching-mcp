@@ -1737,6 +1737,33 @@ def move_students_class(course: Course_, from_class: Annotated[str, Field(descri
     return client().move_students(c.id, from_class, to_class, list(students))
 
 
+@tool(R, "课程首页：待办（任务、作业、考试等）、作业/考试/AI实践的预警、学情看板（活跃人数、平均分）和高风险学生。")
+def get_course_home(course: Course_, class_name: Class_ = "") -> dict:
+    return client().course_home(course, class_name)
+
+
+@tool(R, "学情统计的一个板块：基础数据 / 学情统计（任务点、作业、考试、签到、积分、讨论等汇总）/ 学习监控 / 课堂报告。学生成绩用 get_grades。")
+def get_learning_stats(course: Course_, section: Annotated[str, Field(description="基础数据 / 学情统计 / 学习监控 / 课堂报告")] = "学情统计",
+                       class_name: Class_ = "") -> dict:
+    return client().learning_stats(course, class_name, section)
+
+
+@tool(R, "教学日历：课程的日历和这段时间的课表安排（默认前 7 天到后 30 天）。")
+def get_teaching_calendar(course: Course_, start: Annotated[str, Field(description="开始日期 YYYY-MM-DD，可留空")] = "",
+                          end: Annotated[str, Field(description="结束日期 YYYY-MM-DD，可留空")] = "") -> dict:
+    return client().teaching_calendar(course, start, end)
+
+
+@tool(R, "下载中心：导出任务列表（文件名、创建时间、状态）。")
+def list_download_center(course: Course_) -> dict:
+    return {"items": client().download_center(course)}
+
+
+@tool(R, "AI助教：课程 AI 助教是否开启、知识库设置和老师自己的会话列表（只读，不发起对话）。")
+def get_ai_assistant(course: Course_) -> dict:
+    return client().ai_assistant(course)
+
+
 @tool(R, "读取一个班的班级设置：允许学生加入、加入需教师同意、允许退课、忽略视频拖拽、对学生隐藏班级、是否已结课、人数上限。")
 def get_class_settings(course: Course_, class_name: Class_ = "") -> dict:
     c = client().ctx(course)

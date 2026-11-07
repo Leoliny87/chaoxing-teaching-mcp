@@ -414,8 +414,9 @@ def make_client(cfg: Config):
     from .ops_manage import ManageOps
     from .ops_classadmin import ClassAdminOps
     from .ops_bank import BankOps
+    from .ops_reads import ReadOps
 
-    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, StudentActiveOps, ReviewOps, ActiveOps, ClassOps, ClassAdminOps, BankOps, SettingsOps, ManageOps,
+    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, StudentActiveOps, ReviewOps, ActiveOps, ClassOps, ClassAdminOps, BankOps, ReadOps, SettingsOps, ManageOps,
               WriteOps, V3Ops,
               ContentOps,
               CourseOps,
