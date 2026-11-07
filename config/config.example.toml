@@ -1,5 +1,8 @@
 # Copy outside the repository to ~/.config/xuexitong-mcp/config.toml.
 # No username, password, cookie or token belongs in this file.
+# 角色：teacher（教师）/ reviewer（只读预审）/ student（学生）。
+# 学生服务器上由教师设为 student；环境变量 XUEXITONG_MCP_PROFILE 只能收窄角色，不能放宽。
+profile = "teacher"
 write_allow_courses = []
 upload_allow_dirs = []
 cpi = ""
@@ -21,3 +24,19 @@ level = "INFO"
 
 [downloads]
 dir = "~/Downloads/xuexitong-mcp"
+
+[policy]
+# 学生角色只能额外开放 list_my_discussions、reply_my_discussion；删除、发布、改他人内容、群发永远不会开放给学生。
+extra_tools = []
+deny_tools = []
+# 不写时用角色默认值：student 每天 300 次、导航间隔 2 秒；reviewer 2000 次、1 秒；teacher 不限。
+# daily_call_budget = 300
+# min_nav_interval = 2.0
+# 预审：除「拿不准」一律交教师外，其余结论随机抽查的比例
+spot_check_rate = 0.2
+
+[tutor]
+# 教师部署的中心辅导服务（https）。token 是教师发给每个学生的辅导令牌，不是学习通密码。
+url = ""
+token = ""
+timeout = 60

@@ -31,6 +31,16 @@ class Config:
     download_dir: Path = Path("~/Downloads/xuexitong-mcp").expanduser()
     # upload_material may only read files below these dirs (a prompt-injected agent must not upload ~/.ssh etc.)
     upload_allow_dirs: list[str] = field(default_factory=list)
+    # policy layer (see policy.py): teacher | reviewer | student
+    profile: str = "teacher"
+    extra_tools: list[str] = field(default_factory=list)
+    deny_tools: list[str] = field(default_factory=list)
+    daily_call_budget: int | None = None      # None = the profile default
+    min_nav_interval: float | None = None     # seconds between page navigations; None = profile default
+    spot_check_rate: float = 0.2
+    tutor_url: str = ""
+    tutor_token: str = ""
+    tutor_timeout: float = 60
     path: Path | None = None
 
     def bsk(self) -> str:
@@ -67,6 +77,22 @@ def load(path: str | os.PathLike | None = None) -> Config:
         cfg.download_dir = Path(dl.get("dir", str(cfg.download_dir))).expanduser()
         if "upload_allow_dirs" in d:
             cfg.upload_allow_dirs = [str(x) for x in d.get("upload_allow_dirs") or []]
+        prof = str(d.get("profile", "teacher") or "teacher")
+        if prof not in ("teacher", "reviewer", "student"):
+            raise ValueError("profile 只能是 teacher、reviewer 或 student。")
+        cfg.profile = prof
+        pol = d.get("policy", {}) or {}
+        cfg.extra_tools = [str(x) for x in pol.get("extra_tools") or []]
+        cfg.deny_tools = [str(x) for x in pol.get("deny_tools") or []]
+        if "daily_call_budget" in pol:
+            cfg.daily_call_budget = int(pol["daily_call_budget"])
+        if "min_nav_interval" in pol:
+            cfg.min_nav_interval = float(pol["min_nav_interval"])
+        cfg.spot_check_rate = float(pol.get("spot_check_rate", cfg.spot_check_rate))
+        tu = d.get("tutor", {}) or {}
+        cfg.tutor_url = str(tu.get("url", "") or "")
+        cfg.tutor_token = str(tu.get("token", "") or "")
+        cfg.tutor_timeout = float(tu.get("timeout", cfg.tutor_timeout))
     # The environment can narrow the explicitly configured allowlist, never
     # create or broaden authority.  An explicitly empty variable denies all.
     if "XUEXITONG_MCP_WRITE_ALLOW" in os.environ:

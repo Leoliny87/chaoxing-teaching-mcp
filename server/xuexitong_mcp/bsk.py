@@ -534,6 +534,11 @@ class Bsk:
         def b(ctx, obs):
             return ["navigate", url, "--context", ctx, "--observation", obs, "--wait-until", wait,
                     "--timeout", f"{int(self.cfg.t_navigate)}s"]
+        gap = float(getattr(self.cfg, "min_nav_interval", 0) or 0)   # policy throttle (risk control)
+        wait_s = getattr(self, "_last_nav", 0.0) + gap - time.time()
+        if wait_s > 0:
+            time.sleep(wait_s)
+        self._last_nav = time.time()
         try:
             d = self._act(b, retry_safe=True, need_obs=True, timeout=self.cfg.t_navigate + 10)
         except BskError as e:
