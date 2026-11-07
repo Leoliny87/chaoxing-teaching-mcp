@@ -903,6 +903,32 @@ def publish_teaching_task(course: Course_, task_id: Annotated[str, Field(descrip
     return client().publish_task(course, task_id, [class_name])
 
 
+TaskPointKind_ = Annotated[str, Field(description="作业 / 考试 / 章节 / 知识点 / 主题讨论 / 分组任务 / AI课堂 / 任务 / 视频 / 文档 / 音频 / 问卷 / 审批 / 测验 / 自定义 / 线下课堂 / 线上课堂 / 仿真")]
+TaskId_ = Annotated[str, Field(description="任务ID（list_teaching_tasks 返回的加密ID）")]
+
+
+@tool(R, "查看某类任务点可以添加哪些条目（教学任务「添加任务点」弹窗里的列表），只返回名称和ID。")
+def list_task_point_options(course: Course_, task_id: TaskId_, kind: TaskPointKind_,
+                            keyword: Annotated[str, Field(description="按名称搜索，可留空")] = "") -> dict:
+    return client().task_point_options(course, task_id, kind, keyword)
+
+
+@tool(W, "给教学任务添加任意类型的任务点（作业、考试、章节、主题讨论、分组任务、视频、文档等）；items 按名称或ID从该类列表里选，视频/文档/音频也可用 materials 直接引用课程资料。先预演，确认后添加并核对任务点数量。")
+def add_task_points(course: Course_, task_id: TaskId_, kind: TaskPointKind_,
+                    items: Annotated[list[str], Field(description="要添加的条目名称或ID（list_task_point_options 可查）")] = [],  # noqa: B006
+                    materials: Annotated[list[str], Field(description="仅视频/文档/音频：课程资料的完整名称或资料ID")] = [],  # noqa: B006
+                    confirm: Confirm = False) -> dict:
+    from .ops_task import POINT_KINDS
+    c = _check_write(course)
+    if kind not in POINT_KINDS:
+        raise XxtError(f"任务点类型只能是：{'、'.join(POINT_KINDS)}。")
+    if not items and not materials:
+        raise XxtError("至少给出一个要添加的条目（items）或课程资料（materials）。")
+    if not confirm:
+        return _dry(c, f"给教学任务添加{kind}任务点（已发布的任务学生会看到）", task_id=task_id, kind=kind, items=list(items), materials=list(materials))
+    return client().add_task_points(course, task_id, kind, list(items), list(materials))
+
+
 # ------------------------------------------------------------------ 学生端（我学的课）
 StuCourse_ = Annotated[str, Field(description="「我学的课」里的课程名或课程ID")]
 Assignment_ = Annotated[str, Field(description="作业ID（list_my_assignments 返回的 assignment_id）")]
@@ -1215,6 +1241,94 @@ def delete_activity(course: Course_, activity: Annotated[str, Field(description=
     return client().delete_linked_activity(c.id,activity,class_name,deletion_id)
 
 
+ActivitySettings = Annotated[dict, Field(description="按类型可选：选人/抽签 count（抽签另有 show_result、points）；投票 options（赞同/反对|正确/错误|选A/选B|选A/选B/选C/选D）、points、"
+                                                     "show_result、anonymous；主题讨论 min_words、reply_times、points、anonymous、hide_others；"
+                                                     "评分 criteria [{name,score}]、score、anonymous、show_result、average；计时器 countdown、minutes、seconds；"
+                                                     "通用 minutes（活动时长，-1=手动结束）")]
+
+
+@tool(W, "在一个明确的班级发起或保存课堂活动：选人、抢答、投票、主题讨论、评分、计时器、学生反馈、白板、抽签（随堂练习、问卷、分组任务各有专门工具）。start=true 立即开始（学生会收到），false 只保存为未开始。先预演，确认后创建并在活动列表核实。")
+def create_activity(course: Course_, kind: Annotated[str, Field(description="选人 / 抢答 / 投票 / 主题讨论 / 评分 / 计时器 / 学生反馈 / 白板 / 抽签")],
+                    title: Annotated[str, Field(description="标题或内容（计时器、白板、学生反馈可留空）")] = "", class_name: Class_ = "",
+                    start: Annotated[bool, Field(description="true=立即开始；false=保存为未开始")] = True,
+                    settings: ActivitySettings = {}, confirm: Confirm = False) -> dict:  # noqa: B006
+    from .ops_active import build_request
+    c = _check_write(course)
+    build_request(kind, "1", "1", title, start, dict(settings or {}))   # validate before previewing
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, f"{'发起' if start else '保存'}{kind}{'（学生会收到）' if start else '（未开始）'}", bind={"class_name": target["id"]},
+                    kind=kind, title=title, start=start, settings=settings or {}, classes=[target])
+    return client().create_activity(c.id, class_name, kind, title, start, settings)
+
+
+@tool(W, "在一个明确的班级发起或保存随堂练习（题型：单选、多选、填空、判断、简答；题目格式同 create_assignment）。start=true 立即开始（学生会收到），false 保存为未开始。先预演，确认后创建并在活动列表核实。")
+def create_quiz_activity(course: Course_, title: Annotated[str, Field(description="练习标题")], questions: Questions,
+                         class_name: Class_ = "", start: Annotated[bool, Field(description="true=立即开始；false=保存为未开始")] = False,
+                         minutes: Annotated[int, Field(description="活动时长（分钟），-1=手动结束")] = 60,
+                         settings: Annotated[dict, Field(description="可选：show_answer（学生交后可看答案，默认是）、save_to_bank（题目存入题库，默认是）、allow_edit（允许改答案，默认是）、auto_submit（到时自动提交，默认是）、blank_ignore_case、no_paste")] = {},  # noqa: B006
+                         confirm: Confirm = False) -> dict:
+    from .ops_active import quiz_form
+    from .questions import normalize_list, summary
+    c = _check_write(course)
+    quiz_form("1", "1", title, questions, minutes, dict(settings or {}))   # validate before previewing
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, f"{'发起' if start else '保存'}随堂练习{'（学生会收到）' if start else '（未开始）'}", bind={"class_name": target["id"]},
+                    title=title, start=start, minutes=minutes, settings=settings or {},
+                    questions=[summary(q) for q in normalize_list(questions, "quiz")], classes=[target])
+    return client().create_quiz(c.id, class_name, title, questions, start, minutes, settings)
+
+
+@tool(W, "在一个明确的班级发起或保存问卷（题型：单选、多选、简答、判断；问卷没有标准答案）。start=true 立即开始（学生会收到），false 保存为未开始。先预演，确认后创建并在活动列表核实。")
+def create_questionnaire(course: Course_, title: Annotated[str, Field(description="问卷标题")],
+                         questions: Annotated[list[dict], Field(description="[{type: 单选|多选|简答|判断, stem: 题干, options: [选项…]（单选/多选）, required: 是否必答}]")],
+                         class_name: Class_ = "", start: Annotated[bool, Field(description="true=立即开始；false=保存为未开始")] = False,
+                         minutes: Annotated[int, Field(description="活动时长（分钟），-1=手动结束")] = 60,
+                         settings: Annotated[dict, Field(description="可选：description（问卷说明）、anonymous、show_result（学生可看结果）、points（积分，默认 5）、save_to_library（存入问卷库，默认是）")] = {},  # noqa: B006
+                         confirm: Confirm = False) -> dict:
+    from .ops_active import questionnaire_form
+    c = _check_write(course)
+    questionnaire_form("1", "1", title, questions, minutes, start, dict(settings or {}))   # validate before previewing
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, f"{'发起' if start else '保存'}问卷{'（学生会收到）' if start else '（未开始）'}", bind={"class_name": target["id"]},
+                    title=title, start=start, minutes=minutes, settings=settings or {},
+                    questions=[{"type": q.get("type"), "stem": str(q.get("stem") or "")[:200], "options": len(q.get("options") or [])} for q in questions],
+                    classes=[target])
+    return client().create_questionnaire(c.id, class_name, title, questions, start, minutes, settings)
+
+
+@tool(W, "在一个明确的班级发起或保存分组任务（不分组的个人任务模式，教师评价）。start=true 立即开始（学生会收到），false 保存为未开始。先预演，确认后创建并在活动列表核实。")
+def create_group_task(course: Course_, title: Annotated[str, Field(description="任务标题")],
+                      content: Annotated[str, Field(description="任务说明（纯文本，换行分段）")] = "",
+                      class_name: Class_ = "", start: Annotated[bool, Field(description="true=立即开始；false=保存为未开始")] = False,
+                      minutes: Annotated[int, Field(description="任务时长（分钟），默认 1 天，-1=手动结束")] = 1440,
+                      settings: Annotated[dict, Field(description="可选：star（星级评价，不计分）、view_others（允许互看作品）")] = {},  # noqa: B006
+                      confirm: Confirm = False) -> dict:
+    from .ops_active import group_task_form
+    c = _check_write(course)
+    group_task_form("1", "1", "1", title, content, minutes, start, dict(settings or {}))   # validate before previewing
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, f"{'发起' if start else '保存'}分组任务（个人任务）{'（学生会收到）' if start else '（未开始）'}", bind={"class_name": target["id"]},
+                    title=title, content=content[:300], start=start, minutes=minutes, settings=settings or {}, classes=[target])
+    return client().create_group_task(c.id, class_name, title, content, start, minutes, settings)
+
+
+@tool(W, "把一份课程资料作为活动推送到一个明确的班级（学生在活动列表里看到并可打开）。先预演，确认后推送并在活动列表核实。")
+def push_material_activity(course: Course_, material: Annotated[str, Field(description="课程资料的完整名称或资料 ID（list_materials 可查）")],
+                           class_name: Class_ = "", folder_id: Annotated[str, Field(description="资料所在文件夹 ID，根目录留 0")] = "0",
+                           confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        target = _preview_publish_class(c.id, class_name)
+        item = client()._course_resource(c, material, folder_id)
+        return _dry(c, "推送资料到班级活动（学生可见）", bind={"class_name": target["id"], "material": str(item.get("dataId"))},
+                    material=str(item.get("dataName") or "")[:100], classes=[target])
+    return client().push_material(c.id, class_name, material, folder_id)
+
+
 @tool(W, "课堂随机选人：必须明确指定一个班级，预演并确认后创建活动。")
 def pick_student(course: Course_, title: Annotated[str, Field(description="选人事由，如“回答第2题”")] = "随机选人",
                  count: Annotated[int, Field(description="选几个人")] = 1, class_name: Class_ = "", confirm: Confirm = False) -> dict:
@@ -1224,7 +1338,7 @@ def pick_student(course: Course_, title: Annotated[str, Field(description="选�
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
         return _dry(c, "随机选人（学生端可见）", bind={"class_name": target["id"]}, title=title, count=count, classes=[target])
-    return client().pick_student(c.id, title, count, class_name)
+    return client().create_activity(c.id, class_name, "选人", title, True, {"count": count})
 
 
 @tool(W, "发起抢答（学生会收到）；必须明确指定一个班级。")
@@ -1233,7 +1347,7 @@ def start_quick_answer(course: Course_, content: Annotated[str, Field(descriptio
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
         return _dry(c, "发起抢答", bind={"class_name": target["id"]}, content=content, classes=[target])
-    return client().start_quick_answer(c.id, content, class_name)
+    return client().create_activity(c.id, class_name, "抢答", content, True, {})
 
 
 @tool(W, "发起投票（学生会收到）；必须明确指定班级并使用预设选项。")
@@ -1246,7 +1360,7 @@ def start_vote(course: Course_, content: Annotated[str, Field(description="投�
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
         return _dry(c, "发起投票", bind={"class_name": target["id"]}, content=content, options=options, classes=[target])
-    return client().start_vote(c.id, content, options, class_name)
+    return client().create_activity(c.id, class_name, "投票", content, True, {"options": options})
 
 
 # ------------------------------------------------------------------ 消息 / 页面

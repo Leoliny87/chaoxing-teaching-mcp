@@ -29,7 +29,8 @@ LABEL = {0: "单选题", 1: "多选题", 2: "填空题", 3: "判断题", 4: "简
          26: "写作题"}
 _ALIASES = {"其他": "其它", "完形填空": "完型填空", "共用选项题": "共用选项", "选做题": "选做"}
 # Which editor offers which type (from each editor's type menu).
-SURFACES = {"work": set(TYPES.values()) - {25}, "exam": set(TYPES.values()) - {22, 23}, "bank": set(TYPES.values())}
+SURFACES = {"work": set(TYPES.values()) - {25}, "exam": set(TYPES.values()) - {22, 23}, "bank": set(TYPES.values()),
+            "quiz": {0, 1, 2, 3, 4}}   # 随堂练习 editor: 单选 多选 填空 判断 简答
 SUBJECTIVE = {4, 5, 6, 7, 8, 18}
 BLANKS = {2, 9}
 COMPOSITE = {14, 15, 19, 25}
@@ -151,7 +152,7 @@ def normalize(raw: dict, surface: str, where: str = "", child_of: int | None = N
         if t not in allowed:
             raise XxtError(f"{where}小题只能是：{'、'.join(LABEL[x] for x in sorted(allowed))}。")
     elif t not in SURFACES[surface]:
-        raise XxtError(f"{where}「{LABEL[t]}」在{ {'work': '作业', 'exam': '试卷', 'bank': '题库'}[surface] }编辑器里不可用。")
+        raise XxtError(f"{where}「{LABEL[t]}」在{ {'work': '作业', 'exam': '试卷', 'bank': '题库', 'quiz': '随堂练习'}[surface] }编辑器里不可用。")
     stem = str(q.get("stem") or "").strip()
     if not stem and t != 23 and not (child_of == 14):
         raise XxtError(f"{where}题干为空。")

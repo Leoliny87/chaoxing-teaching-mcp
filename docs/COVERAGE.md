@@ -4,9 +4,9 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-07，v0.3.0）
+## 0. 当前完成度（2026-11-07）
 
-通过真实 MCP stdio 连接实测：教师配置注册 70 个工具、学生配置 11 个，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+通过真实 MCP stdio 连接实测：教师配置注册 79 个工具、学生配置 11 个、预审配置 33 个，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
 - 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级。
@@ -14,12 +14,16 @@
 - 作业：23 种题型新建、答题卡作业、发放（含常用设置）、提交情况、逐题读学生作答、批阅给分（含批语、部分批阅）、打回。
 - 试卷与考试：22 种题型（含选做题）建卷、发布考试（含常用防作弊和查看设置）、考试批阅页人数。
 - 题库：24 种题型新增、列表（不返回答案）。
-- 通知：发送、删除、按 UUID 补记；讨论：发帖、列表；活动：发起普通/签到码签到、结束活动、活动结果；教学任务：新建（作业任务点）、发布；课程资料：上传、列表；成绩：读取。
+- 通知：发送、删除、按 UUID 补记；讨论：发帖、列表；课程资料：上传、列表；成绩：读取。
+- 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务模式）、学生反馈、白板、抽签、推送课程资料；结束活动、活动结果。
+- 教学任务：新建、发布；任务点已实测 9 类：作业、考试、章节、主题讨论、分组任务、任务、仿真、文档、音频（文档/音频可直接引用课程资料里的云盘文件）。
 - 学生端：我的课程/作业/考试/活动/资料/讨论，作业 22 种题型作答（暂存、确认提交），下载资料，回复讨论。
 - 策略层与打包：三种角色、确认提交、节流、不可信内容标注、中心辅导、预审记录；安装脚本、一键更新和回退，v0.3.0 已发布。
 
 **还没做（可以继续补）**
-- 教师写：修改已发布作业/试卷、随机组卷和平行试卷、题库编辑删除导入导出和标签文件夹、讨论置顶加精回复、问卷/评分/分组任务/随堂练习/抢答选人投票等其余活动的完整验证、教学任务的视频/文档/讨论等其余 18 类任务点、班级设置和学生增删调班、教师团队、成绩权重、资料文件夹和权限、章节新建子目录以外的移动排序。
+- 教师写：修改已发布作业/试卷、随机组卷和平行试卷、题库编辑删除导入导出和标签文件夹、讨论置顶加精回复、班级设置和学生增删调班、教师团队、成绩权重、资料文件夹和权限、章节新建子目录以外的移动排序。
+- 活动里还没实测的：分组任务的「立即开始」（测试班没有学生，服务端回「班级没有人员，无法发放活动」，保存为未开始已通过）和按分组方案分组的模式；推送课件、教案（测试课没有课件和教案，接口 `createTeachPlanActive` 已记录）。
+- 任务点里已按页面代码移植、但测试课没有数据所以没实测的：视频、知识点、AI课堂、问卷、审批、测验、自定义、线下课堂、线上课堂。还没做：课程（type 0）、电子书（21）、签到（要先发布任务）、3D 资源。
 - 章节插入：速课、投票问卷、本课资料（格式已记录，未做成工具），云盘选文件、图书、图书内页、动画、全景、文档导入、AI 排版/智能编写/AI 校正。
 - 读取：首页待办和预警、学情统计各子页、AI 助教会话和知识库、教学日历、下载中心、错题集、学习记录、课程图谱。
 - 只能预演、尚不执行：删除作业/考试/试卷/资料/讨论/章节、导出成绩、催交作业（删除后状态或收件人还不能可靠核实）。
@@ -27,7 +31,7 @@
 **按需求不做或做不了**
 - 学生考试作答、读取标准答案或测验答案（需求明确禁止；真正的考核在线下）。
 - 刷章节任务点（看视频、读文档计时）这类代替学生学习的操作。
-- 口语测评、录音（要麦克风现场录音）；直播（会真的开一场直播，只记录了选项）。
+- 口语测评、录音（要麦克风现场录音）；直播、腾讯会议、超星会议（会真的开一场直播或会议，只记录了接口）。
 - 滑块验证码、短信、协议同意、登录：一律由本人处理。资源库（另一套登录）、3D 资源和智雅资源库（弹窗一直加载）、课程图谱（课程里没有知识点）暂时无法探查。
 
 ## 1. 新版教师端结构（实测）
@@ -44,7 +48,7 @@
 |---|---|---|---|---|
 | 首页 | 外壳内（常用应用 / 近期待办 / 教学预警） | `coursemanagev3/base-info` | — | 待做：待办、预警读取 |
 | 教学任务 | `task.chaoxing.com/task/index`（任务引擎） | `task/findTaskFolders`、`task/getTaskDataLists`、`createTask`、`taskCommit`、`saveTaskPoints`、`taskPublish` | list_teaching_tasks、create_teaching_task、publish_teaching_task | 新建（作业任务点）和发布已实测；其余 18 类任务点待做 |
-| 教学活动 | `mobilelearn.chaoxing.com/page/active/activeList` | `v2/apis/active/pcActivelist`、`v2/apis/class/getClassList`、`getClassDetail`、`getTeachers`、`active/getActiveLibraryOpen`、`sign/getLastSignForXd`… | list_activities、activity_result、checkin_status、end_activity、pick_student、start_quick_answer、start_vote、start_checkin(仅预演)、delete_activity | 读已验证；写需要在测试课验证；按钮：添加活动、上课、批量编辑、新建班级 |
+| 教学活动 | `mobilelearn.chaoxing.com/page/active/activeList` | `v2/apis/active/pcActivelist`、`v2/apis/class/getClassList`、`getClassDetail`、`getTeachers`、`active/getActiveLibraryOpen`、`sign/getLastSignForXd`… | list_activities、activity_result、checkin_status、end_activity、create_activity、create_quiz_activity、create_questionnaire、create_group_task、push_material_activity、pick_student、start_quick_answer、start_vote、start_checkin、delete_activity(仅预演) | 读写已在测试班实测（见 1.2「教学活动」） |
 | 资源中心 | `stat2-ans.chaoxing.com/stat2-vue/resource` | `stat2/base-data/v3/{coursewareInfo,resInfo,knowledgeInfo,workInfo,examInfo,activityLibraryInfo}`、`mooc2-ans/coursemanagev3/resource-info` | get_resource_overview、list_coursewares、list_practices、list_chapters、list_materials、upload_material、list_assignment_library、list_bank_questions、list_exams(试卷库) | 课件、题库、资料上传已覆盖；知识点、活动库待做 |
 | AI助教 | `robot-lc.chaoxing.com/courseCozeV3/web` | `v1/front/conversationList`、`msgList`、`robot/info/*`、`knowledge/getAiKbSetting`… | — | 待做（读会话与知识库设置；写=对话/配置） |
 | 学情统计 | `stat2-ans.chaoxing.com/stat2-vue/statistics` | `stat2/stat-nav/teach`（子菜单） | get_grades | 部分覆盖；待做：逐项统计子页 |
@@ -148,6 +152,28 @@
    - `POST /task/taskCommit` 是 JSON，最少 `{taskId, name}` 就能保存；**`startDate`、`endDate` 必须是毫秒时间戳**，传「2026-11-07 08:00」这类字符串会 400（Failed to read request）。
    - 作业任务点：`POST /homework/getMoocData {page,pageSize,searchKey,moocCourseId,isCheckedExist:"1"}`（本课作业）→ `POST /homework/checkAddition [{name,courseId,workLibraryId}]` → `POST /taskPoint/saveTaskPoints {taskPoints:[{imageUrl,name,exist,externalDataId:workLibraryId,workType,localDataId:id,desc,courseId,fkGroupId,type:4,fkTaskId,shareType:0}]}`。只有跨课复制才需要 `cloneCourseHomework`。
    - 发布：`GET /peTaskPlan/taskPointCheckPublish?encryptedTaskId` → `POST /taskReference/coursePublishAuthentication {encryTaskId,courseId}` 返回选班插件地址 `mooc2-ans/exam/test/publish-plugin?courseid&cpi`；插件页每个 `.classitem` 带 `data=班级ID`、`data-token`（32 位）→ `POST /taskReference/taskPublish {encryTaskId, coursePublishParam:[{classId:数字,className,publishtype:0,token}], taskPublishParam:null}`（课程任务 taskPublishParam 为 null）。`couresPublishInitData` 只返回已选对象，新任务是空数组。
+6.6 **2026-11-07 全部任务点类型（做成工具 `list_task_point_options` / `add_task_points`）**：每类任务点的「添加」弹窗各自拉一个列表，选中后按 `addTaskPointsSubmit` 里的规则拼成条目，统一 `POST /taskPoint/saveTaskPoints {taskPoints:[…, fkGroupId, type, fkTaskId, shareType:0]}`；工具用任务的 `taskPointsNumber` 前后对比核实。
+
+   | 类型 | type | 列表接口（POST JSON） | 取哪个 ID | 实测 |
+   |---|---|---|---|---|
+   | 作业 | 4 | `/homework/getMoocData`（先 `/homework/checkAddition`） | workLibraryId | ✅ |
+   | 考试 | 5 | `/exam/getMoocData`（先 `/exam/checkAddition`） | paperId，另带 paperType | ✅ |
+   | 章节 | 8 | `/taskChapter/getData`（树） | id | ✅ |
+   | 主题讨论 | 14 | `/discuss/getData` | uuid（名称字段 title） | ✅ |
+   | 分组任务 | 18 | `/groupTask/getData` | activeId（名称字段 activeName） | ✅ |
+   | 任务 | 16 | `/taskTypeTaskPoints/getData` | taskId | ✅ |
+   | 仿真 | 19 | `/simulation/getData` | simulationId，另带 simulationUrl | ✅ |
+   | 文档 / 视频 / 音频 | 11 / 10 / 22 | `/document/getData`、`/video/getData`、`/audio/getData` | documentId / videoId / audioId | 文档、音频 ✅ |
+   | 知识点 | 1 | `/knowledgePoints/getMoocData` | knowledgePointsId | 无数据 |
+   | AI课堂 | 15 | `/aiCoach/getMoocData` | relationUuid | 无数据 |
+   | 问卷 / 审批 | 6 / 7 | `/questionnaire/getData`、`/examineAndApprove/getData` | questionnaireId / examineAndApproveId | 无数据 |
+   | 测验 | 13 | `/quizTest/getData` | categoryId | 无数据 |
+   | 自定义 | 9 | `/customizeTaskPoints/getData` | uuid | 无数据 |
+   | 线下 / 线上课堂 | 2 / 3 | `/offlineClassroom/getData`、`/onlineClassroom/getData` | offlineClassroomId / onlineClassroomId | 无数据 |
+
+   - 列表参数统一为 `{page, pageSize, searchKey, currTaskId:数字任务ID, currentGroupId, moocCourseId}`。
+   - 文档/视频/音频可以直接用课程资料里的云盘文件：`POST /document/addOrEdit {name(去扩展名), objectId, suffix, cover, source}` 返回条目（含 documentId），再存任务点。同一个文件再加到同一任务会被去重，服务端回「任务点个数为空」。
+   - 还没做：课程（0，`/course/getData`）、电子书（21，`/eBook/getData` 按 unitid）、签到（`/signIn/getData`，要先发布任务）、3D 资源。
 7. 接口目录（从页面脚本提取）：`createTask`、`createOrEditTask`、`deleteTaskInfo`、`taskDelete`、`swapTaskOrder`、`taskMoveToFolder`、`addNewFolder`、`reNameFolderConfirm`、`removeFolderConfirm`、`exportTask`、`getCourseImportTasks`/`confirmCourseImport`、`confirmCourseCopyTask`、`tasklabel/getTaskLabelDatas`/`saveOrDeleteTaskLabelData`、`commitPeTaskBaseInfo`、`taskStatistics/index`、`taskReference/getCourseIdClazz`。
 
 ### 讨论（groupweb）
@@ -170,6 +196,14 @@
 - 签到表单字段：`signTitle`；类型 `typebar0/3/4/2/5`（普通、手势、位置、二维码、签到码）；`signIfphoto`（拍照）；`numberCode`（签到码）；`ifopenAddress`和`sign-select-distant`（位置和距离，默认 500）；`signIfrefreshewm`和`select-frequency`（二维码刷新，默认 10 秒）；签到时长；迟到 `late-minute`；签退 `signOutSwitch`、`signOutTime` 和时长；防作弊 `ifNeedVCodeSwitch`、`openCheckFaceSwitch`、`openCheckWeChatSwitch`；定时发放 `openTimer`（一次性 `disposable_publishtime` 或每周重复，有效期，跳过周末）；`onlyAttendForCurrentClass`；`ifSendToOtherClass`；关联知识点。各活动的开始按钮：`#signin_begin`、`#quickAnswer_begin`、`#qvote_begin`、`#timer_begin`、`#selectPerson_begin`、`#grade_begin`、`#discuss_begin`、`#board_begin`。
 - 建立签到：`POST /v2/apis/sign/saveOrBegin`。query 参数：`now=1`（立即开始）、`courseId`、`classId`、`timeLong`（毫秒，默认 1800000）、`ifphoto`、`ifrefreshewm`、`ewmRefreshTime`、`ifopenAddress`、`locationLatitude`/`locationLongitude`/`locationRange`、`lateMinute`、`ifNeedVCode`、`openCheckFaceFlag`、`openCheckWeChatFlag`、`openSignOutFlag`、`signOutRelativeTime`/`signOutAbsoluteTime`/`signOutDuration`、`timerCron`/`dateCron`、`disposable_publishtime`、`validity_begintime`/`validity_endtime`、`ifSkipWeek`、`ifSendToOtherClass`、`onlyAttendForCurrentClass`。表单正文：`title`、`signCode`、`locationText`、`sendToOtherClassList`、`knowledgePoints`。开始后页面跳到 `/page/sign/endSign?activeId=…`。
 - 用 MCP 自身工具验证：`end_activity`（预演 → 确认 → 已结束）、`activity_result`、`checkin_status` 均通过。
+- **2026-11-07 其余活动（做成工具，测试班里保存和开始都实测）**。全部从 mobilelearn 的静态页发请求，不打开编辑器（随堂练习编辑器一直重绘，停在上面时下一次导航会被 BrowserSkill 以 observation_changed 拒绝）。活动类型号：选人 11、抢答 4、主题讨论 5、问卷 14、评分 23、随堂练习 42、资料 44、学生反馈 46、计时器 47、白板 49、投票 43、抽签 80、分组任务 35。
+  - 选人 `POST /v2/apis/selectperson/{saveSelectPerson|beginSelectPerson}`；抢答 `POST /v2/apis/answer/{saveAnswer|beginAnswer}`（短字段在 query，标题在正文）；投票 `GET /widget/quickvote/{saveQVote|publishActive}`，`question_options_<预设号>=A…` 重复参数；主题讨论 `POST /v2/apis/discuss/{saveDiscuss|startDiscuss}`，**activeId 要传空**，传 0 会回「未查询到活动信息」；评分 `POST /v2/apis/score/saveOrStartScore`（type 0/1）；计时器 `GET /widget/renwu/{sa|st}`。
+  - 学生反馈 `POST /widget/CWareDataController/{saveFeedback|beginFeedback}`，要 `uid`（取 `_uid` cookie）和 `fid`；白板 `POST /widget/whiteboard/{savewb|startwb}`；抽签 `POST /v2/apis/drawLots/{saveDrawLots|beginDrawLots}?DB_STRATEGY=COURSEID&STRATEGY_PARA=courseId`，`activeType=80`、`signatureList="[]"`。
+  - 随堂练习 `POST /v2/apis/quiz/{saveOrUpdate2|publish2}?DB_STRATEGY=COURSEID&STRATEGY_PARA=courseId`，`questions` 是编辑器 `vm.questionList` 的 JSON（题型 单选0 多选1 填空2 判断16 简答4；多选 rightAnswer 如 `ACD`，`amin/amax` 是可选数量；判断 rightAnswer 对/错；填空答案在 `answer[].content`；简答在 `answer[0].answer`）。保存必须带活动分组 `planId`（`GET /v2/apis/active/groupPlanList` 第一个，页面弹「保存到」让人选），开始不需要。编辑器默认：存入题库、学生交后可看答案、可改答案、到时自动提交。读回：重新打开草稿的编辑器，5 种题型的题干、选项、答案、分值都对。
+  - 问卷 `POST /v2/apis/question/{saveOrUpdate|publish}`，正文就是编辑器 `#formId` 的序列化：`content`(标题)、`questioncount`、每题 `question_type_N`(0/1/4/16)、`questionId=0`、`question_content_N`、`question_options_N`(重复)、`question_option_N_i`、`knowledgePoint_N`、`question_ismust_N`，以及 `credit`、`isanony`、`isscanresult`、`isSaveToReservoir`、`isSaveAct`（保存=1 不进问卷库，开始=0）。
+  - 分组任务 `POST /v2/apis/task/saveOrBeginTask?…`，`beginOrSave` 0/1；「不分组（个人任务）」是 `groupType=3`、`isSpecialPersonalTask=1`；评价默认教师 100%。开始时班级没有学生会被拒绝（「班级没有人员，无法发放活动」），工具把这种拒绝报告为 not_written。
+  - 推送资料 `GET /v2/apis/resource/getCourseResourceList?courseId&rootId` → 用页面 `dealResourceData` 的规则（按 cataid 和后缀定 resourceType）→ `POST /v2/apis/resource/newRsourceActive?DB_STRATEGY=RANDOM {courseId, classId, resourceData}`。课件、教案走 `POST /v2/apis/active/createTeachPlanActive {classId, courseId, teachPlanData}`，列表分别是 `/v2/apis/activePlan/getCourseWareList`、`getTeachingPlanList`（测试课为空，未实测）。
+  - 不做：腾讯会议（`saveOrBeginWeMeet`）、超星会议（`/v2/apis/cxmeet/saveOrBegin…`）、直播，都会真的开会或开播。
 
 ### 作业（mooc2-ans/work）
 - 作业库：`work/library`。新建方式：手动创建、分组作业、教学资源库。还有导入作业、导出全部作业、草稿箱、新建文件夹、回收站。每份作业的操作：发布（`checkQuestion(workid)`）、编辑、移动到（`showMove`）、复制（`copyWork(workid)`）、删除（`workOperate`）。

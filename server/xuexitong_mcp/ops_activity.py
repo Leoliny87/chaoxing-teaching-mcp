@@ -14,7 +14,8 @@ from .privacy import safe_browser_error_details, safe_error_text
 from .xxt import (ACTIVE_STATUS, BASE_PAGE, ML, NOTICE, SIGN_TYPES, _G, Course, XxtBase, XxtError, _best, _safe_id)
 
 
-_ATYPE = {2: "签到", 4: "抢答", 11: "选人", 14: "测验", 42: "随堂练习", 43: "投票", 45: "通知", 5: "主题讨论", 23: "评分", 35: "分组任务", 17: "直播"}
+_ATYPE = {2: "签到", 4: "抢答", 11: "选人", 14: "问卷", 42: "随堂练习", 43: "投票", 45: "通知", 5: "主题讨论", 23: "评分", 35: "分组任务", 17: "直播",
+          44: "资料", 46: "学生反馈", 47: "计时器", 49: "白板", 64: "AI实践", 80: "抽签"}
 
 
 class ActivityOps(XxtBase):
