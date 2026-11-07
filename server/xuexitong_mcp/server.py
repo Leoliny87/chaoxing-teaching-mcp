@@ -495,6 +495,7 @@ QUESTION_DOC = ("每题一个对象：type 题型、stem 题干（纯文本）�
                 "测评 options+option_scores+select_num；口语测评 read_text+language（英语等）；钟表 mode 认读/拨针+clocks [{period 上午/下午,hour,minute}]；"
                 "写作 answer（范文）+min_words。")
 Questions = Annotated[list[dict], Field(description="题目列表。" + QUESTION_DOC)]
+FileSha_ = Annotated[str, Field(description="由预演绑定，调用时保持默认空值")]
 
 
 @tool(W, "新建作业并存入作业库（23 种题型均已实测；测评题需 grading=自定义）；先预演，确认后创建并在作业库核对题数。发放请再用 publish_assignment。")
@@ -1451,16 +1452,78 @@ def label_bank_questions(course: Course_, question_ids: QIds_, labels: Annotated
     return client().label_bank_questions(course, ids, list(labels))
 
 
-@tool(W, "把题库题目导出成 Excel 保存到本机下载目录（question_ids 留空=全部；默认含答案和解析，仅供教师）。先预演，确认后导出并核对文件。")
+@tool(W, "把题库题目导出到本机下载目录（Excel / Word / PDF / Ti 格式；question_ids 留空=全部；默认含答案和解析，仅供教师）。先预演，确认后导出并核对文件格式。")
 def export_bank_questions(course: Course_, question_ids: Annotated[list[str], Field(description="题目ID列表，留空=全部题目")] = [],  # noqa: B006
-                          with_answers: Annotated[bool, Field(description="是否包含答案和解析")] = True, confirm: Confirm = False) -> dict:
+                          with_answers: Annotated[bool, Field(description="是否包含答案和解析")] = True,
+                          format: Annotated[str, Field(description="Excel / Word / PDF / Ti（Ti 文件可用 import_bank_file 导入其他课程）")] = "Excel",
+                          confirm: Confirm = False) -> dict:
     c = _check_write(course)
     if not confirm:
         n = len(question_ids) if question_ids else len(client()._all_questions(client().course(c.id)))
         cfg = _state["cfg"] or _config.load()
-        return _dry(c, "导出题库到本机 Excel" + ("（含答案和解析，不要转给学生）" if with_answers else ""), questions=n,
-                    with_answers=with_answers, output_directory=str(cfg.download_dir))
-    return client().export_bank_questions(course, list(question_ids), with_answers)
+        from .ops_bank import EXPORT_FORMATS
+        if format not in EXPORT_FORMATS:
+            raise XxtError(f"导出格式只能是：{'、'.join(EXPORT_FORMATS)}。")
+        return _dry(c, f"导出题库到本机 {format}" + ("（含答案和解析，不要转给学生）" if with_answers else ""), questions=n,
+                    with_answers=with_answers, format=format, output_directory=str(cfg.download_dir))
+    return client().export_bank_questions(course, list(question_ids), with_answers, format)
+
+
+@tool(W, "批量导入题目到题库（平台的 Excel 模板导入）：按题目数据生成模板格式的 Excel，以纯文本导入。支持单选、多选、填空、判断、简答、"
+         "名词解释、论述、分录、连线、排序、完型填空、阅读理解、共用选项、选做；每题可加 difficulty（易/中/难）、knowledge（知识点）、tags（标签列表）。"
+         "folder 写「/一级/二级」，不存在会自动新建。先预演，确认后导入并逐题核对题型和题干。")
+def import_bank_questions(course: Course_, questions: Questions,
+                          folder: Annotated[str, Field(description="导入到的题库目录，如 /第一章；留空=根目录")] = "",
+                          update_same: Annotated[bool, Field(description="题库已有相同题目时更新它（默认跳过）")] = False,
+                          confirm: Confirm = False) -> dict:
+    from .ops_import import excel_rows, folder_path
+    c = _check_write(course)
+    if not confirm:
+        rows, expect = excel_rows(questions, folder)
+        return _dry(c, "批量导入题目到题库", folder=folder_path(folder) or "根目录", questions=len(expect), update_same=update_same or None,
+                    items=[f"{i}. {e['type']}：{e['stem'][:60]}" for i, e in enumerate(expect, 1)][:100])
+    return client().import_bank_questions(course, questions, folder, update_same)
+
+
+@tool(W, "把本机的题库文件导入题库：平台模板格式的 Excel（.xls/.xlsx）或超星题库文件（.ti）。文件必须在 upload_allow_dirs 里，"
+         "预演时记下文件哈希，确认时内容变了就不导入。导入后核对每道新题都在题库里。")
+def import_bank_file(course: Course_, file_path: Annotated[str, Field(description="本机文件的绝对路径（.xls / .xlsx / .ti）")],
+                     update_same: Annotated[bool, Field(description="题库已有相同题目时更新它（默认跳过）")] = False,
+                     plain_text: Annotated[bool, Field(description="按纯文本导入（单元格里的 HTML 不解析）")] = False,
+                     keep_dirs: Annotated[bool, Field(description=".ti 文件：保留文件里的目录结构")] = False,
+                     confirm: Confirm = False, file_sha256: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    p = _check_upload_path(file_path)
+    if p.suffix.lower() not in (".xls", ".xlsx", ".ti"):
+        raise XxtError("只能导入 .xls、.xlsx 或 .ti 文件。")
+    if p.stat().st_size > 20 * 1024 * 1024:
+        raise XxtError("题库文件不能超过 20MB。")
+    if not confirm:
+        if file_sha256:
+            raise XxtError("预演时 file_sha256 必须留空。")
+        fp = _upload_preview_digest(p)
+        return _dry(c, "导入题库文件", bind={"file_path": str(p), "file_sha256": fp["sha256"]}, file=p.name, **fp,
+                    update_same=update_same or None, plain_text=plain_text or None, keep_dirs=keep_dirs if p.suffix.lower() == ".ti" else None)
+    return client().import_bank_file(course, str(p), file_sha256, update_same, plain_text, keep_dirs)
+
+
+@tool(W, "智能导入：把一段普通文本（如「1. 题干 / A. 选项 / 答案：A / 解析：… / 难易度：易」，组合题用 {{ }} 括起，其他题型用【题型名】标出）"
+         "交给平台识别后加入题库。预演返回平台识别出的每道题和没认出的行；确认时重新识别，结果和预演不一致就不导入；导入后核对题库新增的题。")
+def smart_import_bank_text(course: Course_, text: Annotated[str, Field(description="题目文本，1–50000 字")],
+                           folder: Annotated[str, Field(description="导入到题库根目录下的哪个文件夹（名称或ID），留空=根目录")] = "",
+                           confirm: Confirm = False, parsed_sha256: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    if not confirm:
+        if parsed_sha256:
+            raise XxtError("预演时 parsed_sha256 必须留空。")
+        if folder:
+            client()._folder(client().course(c.id), folder)
+        r = client().smart_import_preview(c.id, text)
+        return _dry(c, "智能导入题目到题库", bind={"parsed_sha256": r["digest"]}, folder=folder or "根目录", questions=len(r["items"]),
+                    recognized=[f"{i}. {x.get('alias') or x['type']}：{x['stem'][:60]}" + ("" if x["answered"] else "（没识别到答案）")
+                                + (f"（{x['children']} 道小题）" if x["children"] else "") for i, x in enumerate(r["items"], 1)][:100],
+                    unrecognized_lines=r["unrecognized_lines"])
+    return client().smart_import_bank_text(course, text, parsed_sha256, folder)
 
 
 @tool(W, "修改题库里的一道题（题干、选项、答案等整题重写，格式同 add_question_to_bank）。先预演，确认后保存并读回题干。")
@@ -1501,7 +1564,6 @@ def list_materials(course: Course_) -> list:
     return client().materials(course)
 
 
-FileSha_ = Annotated[str, Field(description="由预演绑定，调用时保持默认空值")]
 
 
 @tool(W, "上传本机文件到课程资料库（学生可见，单个 ≤1GB，只允许 upload_allow_dirs 下的文件）。预演记录文件哈希；确认时内容必须与预演一致，"

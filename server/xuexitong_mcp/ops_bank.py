@@ -16,6 +16,7 @@ import html as _h
 import json
 import re
 
+from .questions import LABEL
 from .xxt import M1, M2, XxtBase, XxtError, _safe_id
 
 _QID = re.compile(r"\d{1,20}|[0-9a-f]{32}")
@@ -27,6 +28,11 @@ def _qids(ids: list[str]) -> list[str]:
     if not out or len(out) > 200 or any(not _QID.fullmatch(x) for x in out):
         raise XxtError("题目 ID 是 list_bank_questions 返回的 question_id，一次 1–200 个。")
     return out
+
+
+# format -> (exportType, file extension, accepted leading bytes)
+EXPORT_FORMATS = {"Excel": ("excel", "xlsx", (b"PK", b"\xd0\xcf\x11\xe0")), "Word": ("word", "doc", (b"\xd0\xcf\x11\xe0", b"PK")),
+                  "PDF": ("pdf", "pdf", (b"%PDF",)), "Ti": ("ti", "ti", (b'{"time"',))}
 
 
 class BankOps(XxtBase):
@@ -60,6 +66,7 @@ class BankOps(XxtBase):
             else:
                 stem = _h.unescape(re.sub(r"<[^>]+>", " ", str(qb.get("content") or "")))
                 out.append({"kind": "question", "id": str(x.get("questionId") or qb.get("id")), "stem": re.sub(r"\s+", " ", stem).strip()[:120],
+                            "type": LABEL.get(qb.get("type"), qb.get("courseQuestionTypeName")),
                             "difficulty": qb.get("difficulty"), "folder_id": str(qb.get("directoryId") or x.get("pid") or "0")})
         return out
 
@@ -209,10 +216,14 @@ class BankOps(XxtBase):
             out.update(write_outcome="unknown", error="读回的标签不一致。", read_back=got, server=r if isinstance(r, dict) else None)
         return out
 
-    def export_bank_questions(self, course: str, qids: list[str] | None, with_answers: bool = True) -> dict:
-        """题库导出 Excel: the list page's form POST to mooc1 /import-export-ans/export-questions (synchronous for Excel),
-        caught with bsk download.  Teachers only; the file holds answers unless with_answers is false."""
+    def export_bank_questions(self, course: str, qids: list[str] | None, with_answers: bool = True, fmt: str = "Excel") -> dict:
+        """题库导出: the list page's form POST to mooc1 /import-export-ans/export-questions?exportType=excel|word|pdf|ti
+        (synchronous for chosen questions), caught with bsk download.  Teachers only; the file holds answers unless
+        with_answers is false.  Excel and Word come back as legacy OLE2 files (.xls/.doc); Ti is the platform's own format."""
         from pathlib import Path
+        if fmt not in EXPORT_FORMATS:
+            raise XxtError(f"导出格式只能是：{'、'.join(EXPORT_FORMATS)}。")
+        etype, ext, magics = EXPORT_FORMATS[fmt]
         c = self.ctx(course)
         allq = self._all_questions(c)
         ids = _qids(qids) if qids else list(allq)
@@ -227,13 +238,13 @@ class BankOps(XxtBase):
         if not isinstance(info, dict) or info.get("base") != "https://mooc1.chaoxing.com/import-export-ans" or not re.fullmatch(r"[0-9a-f]{32}", info.get("enc") or ""):
             raise XxtError("题库页缺少导出凭据；没有导出。")
         flag = "true" if with_answers else "false"
-        q = {"courseId": c.id, "cpi": c.cpi, "enc": info["enc"], "exportType": "excel", "exportTypeName": "true", "exportEasy": "true",
+        q = {"courseId": c.id, "cpi": c.cpi, "enc": info["enc"], "exportType": etype, "exportTypeName": "true", "exportEasy": "true",
              "exportAnalyse": flag, "exportAnswer": flag, "exportTopic": "false", "excelOnlyText": "1", "exportTarget": "false",
              "version": info["ver"], "microTopicId": "0", "saveAs": "true"}
         action = info["base"] + "/export-questions?" + "&".join(f"{k}={v}" for k, v in q.items())
         d = self.cfg.download_dir
         d.mkdir(parents=True, exist_ok=True)
-        out = Path(d) / re.sub(r'[\\/:*?"<>|\s]+', "_", f"{c.name}-题库-{len(ids)}题.xlsx")
+        out = Path(d) / re.sub(r'[\\/:*?"<>|\s]+', "_", f"{c.name}-题库-{len(ids)}题.{ext}")
         self.on(M1, "return true;")      # any mooc1 page: the export service is same-site there
         self.here("""
             let f=document.getElementById('__xxt_qexp'); if(f) f.remove();
@@ -244,14 +255,15 @@ class BankOps(XxtBase):
         """ % (json.dumps(action), json.dumps(",".join(ids))))
         self.b.download_selector("#__xxt_qexp_btn", str(out))
         head = out.read_bytes()[:8] if out.is_file() else b""
-        if head.startswith(b"\xd0\xcf\x11\xe0"):          # the service answers a legacy .xls (OLE2), not .xlsx
+        if fmt == "Excel" and head.startswith(b"\xd0\xcf\x11\xe0"):   # the service answers a legacy .xls (OLE2), not .xlsx
             xls = out.with_suffix(".xls")
             out.replace(xls)
             out = xls
-        ok = out.is_file() and out.stat().st_size > 0 and (head[:2] == b"PK" or head.startswith(b"\xd0\xcf\x11\xe0"))
-        res = {"ok": ok, "file": str(out), "size": out.stat().st_size if out.is_file() else 0, "questions": len(ids), "with_answers": with_answers}
+        ok = out.is_file() and out.stat().st_size > 0 and any(head.startswith(m) for m in magics)
+        res = {"ok": ok, "file": str(out), "format": fmt, "size": out.stat().st_size if out.is_file() else 0, "questions": len(ids),
+               "with_answers": with_answers}
         if not ok:
-            res.update(write_outcome="unknown", error="下载的文件不是 Excel 或为空。")
+            res.update(write_outcome="unknown", error=f"下载的文件不是 {fmt} 格式或为空。")
         return res
 
     def edit_bank_question(self, course: str, qid: str, question: dict) -> dict:
