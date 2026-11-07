@@ -92,7 +92,8 @@ def split_for_format(desc: str) -> tuple[str, list[tuple[str, str]]]:
     def hold(kind: str):
         def f(m):
             keep.append((f"[{kind}{sum(1 for k, _ in keep if k.startswith('[' + kind)) + 1}]", m.group(0)))
-            return keep[-1][0]
+            return keep[-1][0] + ("" if kind == "链接" else "
+")     # tables and images stand on their own line
         return f
     s = re.sub(r"<table\b.*?</table>", hold("表格"), desc or "", flags=re.S | re.I)
     s = re.sub(r"<img\b[^>]*>", hold("图片"), s, flags=re.I)
