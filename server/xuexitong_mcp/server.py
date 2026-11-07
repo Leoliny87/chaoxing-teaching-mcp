@@ -1147,6 +1147,16 @@ def list_my_task_points(course: StuCourse_, task: Annotated[str, Field(descripti
     return client().my_task_points(course, task)
 
 
+@tool(R, "学生端：我的学习记录（任务点完成数、签到、课程积分、作业和章节测验完成情况、临近截止和已逾期的任务）。")
+def list_my_study_record(course: StuCourse_) -> dict:
+    return client().my_study_record(course)
+
+
+@tool(R, "学生端：我的错题集（题目和我自己的作答）。不提供正确答案和解析——要弄懂错题请自己复习或用 ask_tutor 提问。")
+def list_my_wrong_questions(course: StuCourse_, keyword: Annotated[str, Field(description="按题干搜索，可留空")] = "") -> dict:
+    return client().my_wrong_questions(course, keyword)
+
+
 @tool(R, "学生端：列出我在某门课里的考试（标题、状态、剩余时间、截止时间）。只读：考试由学生本人在学习通里作答，本服务不代答。")
 def list_my_exams(course: StuCourse_) -> dict:
     return client().my_exams(course)
