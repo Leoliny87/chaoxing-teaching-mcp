@@ -78,6 +78,14 @@ def test_weight_changes():
             weight_changes(cur, bad)
 
 
+def test_random_paper_rows():
+    from xuexitong_mcp.ops_manage import random_paper_rows
+    assert random_paper_rows({"单选题": [2, 5], "判断": [3, 2.5]}) == [{"t": 0, "n": 2, "s": 5}, {"t": 3, "n": 3, "s": 2.5}]
+    for bad in ({}, {"阅读理解": [1, 5]}, {"单选": 2}, {"单选": [0, 5]}, {"单选": [1, 0]}, {"单选": [1, 2.25]}, {"单选": [200, 100]}):
+        with pytest.raises(XxtError):
+            random_paper_rows(bad)
+
+
 def test_outline_levels():
     from xuexitong_mcp.ops_manage import outline_levels
     assert outline_levels("一\n  一.一\n\t\t一.一.一\n二\r\n") == [(0, "一"), (1, "一.一"), (2, "一.一.一"), (0, "二")]

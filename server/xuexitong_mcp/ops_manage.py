@@ -31,6 +31,34 @@ BIN_KINDS = ("作业", "考试", "试卷", "资料")
 PURGE_KINDS = ("试卷", "资料")
 
 
+# question types that can be drawn at random as whole questions (compound types need sub-question settings)
+RANDOM_TYPES = {"单选": 0, "多选": 1, "填空": 2, "判断": 3, "简答": 4, "名词解释": 5, "论述": 6, "计算": 7, "其它": 8, "分录": 9,
+                "连线": 11, "排序": 13, "程序": 17, "选词填空": 24, "写作": 26}
+
+
+def random_paper_rows(by_type: dict) -> list[dict]:
+    """{"单选": [count, score_each], …} -> [{t, n, s}] in the given order."""
+    if not isinstance(by_type, dict) or not by_type:
+        raise XxtError(f"by_type 是 {{题型: [题数, 每题分值]}}，题型可选：{'、'.join(RANDOM_TYPES)}。")
+    rows = []
+    for k, v in by_type.items():
+        t = RANDOM_TYPES.get(str(k).removesuffix("题"))
+        if t is None:
+            raise XxtError(f"不能随机抽「{k}」；可选：{'、'.join(RANDOM_TYPES)}（组合题请手动组卷）。")
+        if not isinstance(v, (list, tuple)) or len(v) != 2:
+            raise XxtError(f"「{k}」写成 [题数, 每题分值]。")
+        n, s = v
+        if not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 200:
+            raise XxtError(f"「{k}」题数是 1–200 的整数。")
+        if not isinstance(s, (int, float)) or isinstance(s, bool) or not 0 < s <= 100 or round(s * 10) != s * 10:
+            raise XxtError(f"「{k}」每题分值是 0–100、最多一位小数。")
+        rows.append({"t": t, "n": n, "s": s})
+    total = sum(x["n"] * x["s"] for x in rows)
+    if not 1 <= total <= 1000:
+        raise XxtError("试卷满分要在 1–1000 之间。")
+    return rows
+
+
 def outline_levels(outline: str) -> list[tuple[int, str]]:
     """Outline text -> [(level from 0, title)]; a tab or two spaces is one level; levels may only go one deeper at a time."""
     out: list[tuple[int, str]] = []
@@ -497,6 +525,58 @@ class ManageOps(XxtBase):
             refused = resp.get("status") is False
             out.update(write_outcome="not_written" if refused else "unknown",
                        error=f"服务端拒绝：{str(resp.get('msg') or '')[:80]}" if refused else "考试列表里的时间和新设置不一致；请核查。")
+        return out
+
+    # ------------------------------------------------------------------ random paper (自动随机组卷)
+    def create_random_paper(self, course: str, title: str, by_type: dict, papers: int = 1) -> dict:
+        """Draw questions of each type at random from the whole bank: the page's own POST
+        exam/reVersionToSetPaperStructureV2 (fields of autoPaperParamData with radio 0 = 从题库选题), then poll
+        exam/autopapertask-status until the generation task is done."""
+        rows = random_paper_rows(by_type)
+        if not title.strip() or len(title) > 100:
+            raise XxtError("试卷标题 1–100 字。")
+        if not isinstance(papers, int) or not 1 <= papers <= 5:
+            raise XxtError("一次生成 1–5 份试卷。")
+        c = self.ctx(course)
+        before = {x["paper_id"] for x in self.papers(c.id)}
+        page = (f"/mooc2-ans/exam/toAutoCreatePaperPage?courseid={_safe_id(c.id)}&clazzid={_safe_id(c.clazz_id)}&cpi={_safe_id(c.cpi)}"
+                f"&ut=t&createPaperType=1")
+        r = self.on(M2, """
+            const d=D(await F(%(page)s));
+            const v=id=>{const e=d.getElementById(id); return e?(e.getAttribute('value')||''):''};
+            if(!d.getElementById('courseId')) return {stage:'page'};
+            const rows=%(rows)s, have={};
+            for(const x of rows){ const e=d.getElementById(x.t+'_libraryQuestionNumHidden'); have[x.t]=e?Number(T(e)):null;
+              if(have[x.t]!==null&&x.n>have[x.t]) return {stage:'count',type:x.t,have:have[x.t]}; }
+            const dv={courseid:v('courseId'),clazzid:v('classId'),isOpen:v('isOpen'),position:v('position'),paperId:v('paperId'),chooseType:'0',
+              savePaperTemplate:v('savePaperTemplate'),examsystem:v('examsystem'),isCustomPaper:v('isCustomPaper'),limitNum:v('limitNum'),pid:v('pid'),
+              cpi:v('cpi'),ut:v('ut'),openc:v('openc'),qbanksystem:v('qbanksystem'),qbankbackurl:v('qbankbackurl'),schoolid:v('schoolid'),
+              title:%(title)s,score:String(rows.reduce((s,x)=>s+x.n*x.s,0)),easy:'',repeatRate:'0',serialNumberMode:'0',topicRepetitionRate:'0',
+              groupMode:'0',autoPaperMode:'0',pageNum:String(%(papers)d),typeOrders:rows.map(x=>x.t).join(',')};
+            for(const x of rows) Object.assign(dv,{[x.t+'_radio']:0,[x.t+'_score']:String(x.s),[x.t+'_description']:'',[x.t+'_totalNum']:String(x.n),
+              [x.t+'_smallQuesMode']:0,[x.t+'_libraryQuestionNumHidden']:String(have[x.t]??''),[x.t+'_libraryInputQuestionNum']:String(x.n)});
+            const j=await J('/mooc2-ans/exam/reVersionToSetPaperStructureV2',POST(dv));
+            if(!j||!j.status||!j.taskId) return {stage:'submit',msg:String((j&&j.msg)||'').slice(0,80)};
+            let st=null;
+            for(let i=0;i<40;i++){ await new Promise(r=>setTimeout(r,1500));
+              st=await J('/mooc2-ans/exam/autopapertask-status?courseid='+dv.courseid+'&cpi='+dv.cpi+'&taskid='+j.taskId);
+              if(st&&st.taskStatus&&!/^(doing|wait|waiting|running)$/.test(st.taskStatus)) break; }
+            return {stage:'done',task:st&&st.taskStatus,paper:st&&st.paperId,msg:String((st&&st.msg)||'').slice(0,80)};
+        """ % {"page": json.dumps(page), "rows": json.dumps(rows), "title": json.dumps(title.strip(), ensure_ascii=False), "papers": papers},
+            retry_safe=False, timeout=120)
+        if not isinstance(r, dict):
+            raise XxtError("随机组卷没有响应。")
+        if r.get("stage") == "count":
+            raise XxtError(f"题库里这种题型只有 {r.get('have')} 道，不够抽。")
+        if r.get("stage") in ("page", "submit"):
+            return {"ok": False, "write_outcome": "not_written", "error": f"组卷请求没有被接受（{r.get('msg') or r.get('stage')}）。"}
+        new = [x for x in self.papers(c.id) if x["paper_id"] not in before]
+        # the paper library shows "---" for the question count of random papers: check the task and the new entries
+        ok = r.get("task") == "ok" and len(new) == papers and all(x.get("title", "").startswith(title.strip()) for x in new)
+        out = {"ok": ok, "papers": [{"paper_id": x["paper_id"], "title": x["title"]} for x in new],
+               "questions_each": sum(x["n"] for x in rows), "score_each": sum(x["n"] * x["s"] for x in rows)}
+        if not ok:
+            out.update(write_outcome="unknown", error=f"生成任务状态 {r.get('task')}；试卷库核对不一致，请用 list_exams(include_papers=true) 核查。")
         return out
 
     # ------------------------------------------------------------------ grade export

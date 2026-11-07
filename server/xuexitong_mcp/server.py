@@ -766,6 +766,19 @@ def delete_exam(course: Course_, exam: Annotated[str, Field(description="考试�
     return client().delete_to_bin(course, "考试", exam)
 
 
+@tool(W, "自动随机组卷：按题型从整个题库随机抽题生成试卷（存入试卷库，不发布）。by_type 如 {\"单选\": [5, 2], \"判断\": [5, 2]} 表示 5 道单选每题 2 分。先预演，确认后生成并核对试卷库里的新试卷和题数。")
+def create_random_paper(course: Course_, title: Annotated[str, Field(description="试卷标题")],
+                        by_type: Annotated[dict, Field(description="{题型: [题数, 每题分值]}")],
+                        papers: Annotated[int, Field(description="生成几份（每份独立随机），1–5")] = 1, confirm: Confirm = False) -> dict:
+    from .ops_manage import random_paper_rows
+    c = _check_write(course)
+    rows = random_paper_rows(by_type)
+    if not confirm:
+        return _dry(c, "随机组卷（存入试卷库，不发布）", title=title, by_type=by_type, papers=papers,
+                    total_score=sum(x["n"] * x["s"] for x in rows), questions=sum(x["n"] for x in rows))
+    return client().create_random_paper(course, title, by_type, papers)
+
+
 @tool(D, "删除试卷库中的试卷（移入试卷回收站，可还原或用 purge_deleted 彻底删除）。先预演，确认后删除并核对列表和回收站。")
 def delete_exam_paper(course: Course_, paper: Annotated[str, Field(description="试卷标题或试卷ID")], confirm: Confirm = False) -> dict:
     c = _check_write(course)
