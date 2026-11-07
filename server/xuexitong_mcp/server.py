@@ -1170,7 +1170,7 @@ def list_bank_questions(course: Course_, keyword: Annotated[str, Field(descripti
     return client().bank_questions(course, keyword, page, page_size)
 
 
-@tool(W, "向课程题库新增一道题（24 种题型均已实测）；先预演，确认后提交并返回题目ID。")
+@tool(W, "向课程题库新增一道题（24 种题型均已实测）；先预演，确认后提交并返回题目ID。管理题库还有 create_bank_folder、move_bank_questions、delete_bank_questions、set_bank_difficulty、label_bank_questions、edit_bank_question。")
 def add_question_to_bank(course: Course_, question: Annotated[dict, Field(description="一道题。" + QUESTION_DOC)],
                          confirm: Confirm = False) -> dict:
     from .questions import normalize_list, summary
@@ -1179,6 +1179,116 @@ def add_question_to_bank(course: Course_, question: Annotated[dict, Field(descri
     if not confirm:
         return _dry(c, "新增题库题目", question=summary(q))
     return client().add_bank_question(course, question)
+
+
+QIds_ = Annotated[list[str], Field(description="题目ID列表（list_bank_questions 的 question_id）")]
+
+
+@tool(R, "列出题库某个文件夹里的子文件夹（folder 留空=根目录）。")
+def list_bank_folders(course: Course_, folder: Annotated[str, Field(description="文件夹ID，留空=根目录")] = "") -> dict:
+    return {"items": client().bank_folders(course, folder or "0")}
+
+
+@tool(W, "在题库根目录新建文件夹。先预演，确认后新建并核对。")
+def create_bank_folder(course: Course_, name: Annotated[str, Field(description="文件夹名，1–50 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _dry(c, "新建题库文件夹", name=name)
+    return client().create_bank_folder(course, name)
+
+
+@tool(W, "把题库里的题目移到一个文件夹（folder=根目录下的文件夹名或ID，0=根目录）。先预演，确认后移动并核对文件夹内容。")
+def move_bank_questions(course: Course_, question_ids: QIds_, folder: Annotated[str, Field(description="目标文件夹名或ID，0=根目录")],
+                        confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    from .ops_bank import _qids
+    ids = _qids(question_ids)
+    if not confirm:
+        f = {"id": "0", "name": "根目录"} if str(folder) == "0" else client()._folder(client().course(c.id), folder)
+        return _dry(c, "移动题库题目", bind={"folder": f["id"]}, questions=ids, folder=f["name"])
+    return client().move_bank_questions(course, ids, folder)
+
+
+@tool(D, "把题库题目删除到题库回收站（可用 restore_bank_questions 还原）。先预演，确认后删除并核对题库和回收站。")
+def delete_bank_questions(course: Course_, question_ids: QIds_, confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    from .ops_bank import _qids
+    ids = _qids(question_ids)
+    if not confirm:
+        have = client()._all_questions(client().course(c.id))
+        miss = [i for i in ids if i not in have]
+        if miss:
+            raise XxtError(f"题库里没有这些题：{miss}")
+        return _dry(c, "删除题库题目（移入回收站）", questions=[{"id": i, "stem": have[i]["stem"]} for i in ids])
+    return client().bank_status(course, ids, "delete")
+
+
+@tool(W, "从题库回收站还原题目。先预演，确认后还原并核对。")
+def restore_bank_questions(course: Course_, question_ids: QIds_, confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    from .ops_bank import _qids
+    ids = _qids(question_ids)
+    if not confirm:
+        binned = {x["id"]: x for x in client()._bank_rows(client().course(c.id), status="2") if x["kind"] == "question"}
+        miss = [i for i in ids if i not in binned]
+        if miss:
+            raise XxtError(f"题库回收站里没有这些题：{miss}")
+        return _dry(c, "从回收站还原题目", questions=[{"id": i, "stem": binned[i]["stem"]} for i in ids])
+    return client().bank_status(course, ids, "restore")
+
+
+@tool(W, "设置题库题目的难度（易 / 中 / 难）。先预演，确认后设置并读回。")
+def set_bank_difficulty(course: Course_, question_ids: QIds_, level: Annotated[str, Field(description="易 / 中 / 难")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    from .ops_bank import DIFFICULTY, _qids
+    ids = _qids(question_ids)
+    if level not in DIFFICULTY:
+        raise XxtError("难度只能是 易 / 中 / 难。")
+    if not confirm:
+        return _dry(c, "设置题目难度", questions=ids, level=level)
+    return client().set_bank_difficulty(course, ids, level)
+
+
+@tool(R, "列出题库标签（question_id 给出时标出这道题已打的标签）。")
+def list_bank_labels(course: Course_, question_id: Annotated[str, Field(description="题目ID，可留空")] = "") -> dict:
+    return {"items": client().bank_labels(course, question_id)}
+
+
+@tool(W, "新建题库标签。先预演，确认后新建并核对。")
+def create_bank_label(course: Course_, name: Annotated[str, Field(description="标签名，1–30 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _dry(c, "新建题库标签", name=name)
+    return client().create_bank_label(course, name)
+
+
+@tool(W, "给题库题目打标签（会替换这些题现有的标签）。先预演，确认后保存并逐题读回。")
+def label_bank_questions(course: Course_, question_ids: QIds_, labels: Annotated[list[str], Field(description="标签名或ID")],
+                         confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    from .ops_bank import _qids
+    ids = _qids(question_ids)
+    if not confirm:
+        have = {x["name"]: x["id"] for x in client().bank_labels(c.id)}
+        miss = [x for x in labels if x not in have and x not in have.values()]
+        if miss:
+            raise XxtError(f"没有这些标签：{miss}（先用 create_bank_label 新建）")
+        return _dry(c, "给题目打标签（替换原有标签）", questions=ids, labels=list(labels))
+    return client().label_bank_questions(course, ids, list(labels))
+
+
+@tool(W, "修改题库里的一道题（题干、选项、答案等整题重写，格式同 add_question_to_bank）。先预演，确认后保存并读回题干。")
+def edit_bank_question(course: Course_, question_id: Annotated[str, Field(description="题目ID")],
+                       question: Annotated[dict, Field(description="新的整题内容。" + QUESTION_DOC)], confirm: Confirm = False) -> dict:
+    from .questions import normalize_list, summary
+    c = _check_write(course)
+    q = normalize_list([question], "bank")[0]
+    if not confirm:
+        have = client()._all_questions(client().course(c.id))
+        if question_id not in have:
+            raise XxtError("题库里没有这道题。")
+        return _dry(c, "修改题库题目（作业、试卷里引用它的题不一定同步）", question_id=question_id, old_stem=have[question_id]["stem"], new=summary(q))
+    return client().edit_bank_question(course, question_id, question)
 
 
 @tool(D, "删除章节（连同子章节和其中内容，不可恢复）。预演列出全部子章节并锁定；确认时子章节有任何变化就不删。删除后核对这些章节都不见了、其他章节都还在。")

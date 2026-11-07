@@ -78,6 +78,14 @@ def test_weight_changes():
             weight_changes(cur, bad)
 
 
+def test_bank_question_ids():
+    from xuexitong_mcp.ops_bank import _qids
+    assert _qids(["96c9c9c158034b3281f6fde35ecd201c", " 123 "]) == ["96c9c9c158034b3281f6fde35ecd201c", "123"]
+    for bad in ([], ["x';alert(1)"], ["A" * 32], ["1"] * 201):
+        with pytest.raises(XxtError):
+            _qids(bad)
+
+
 def test_no_preview_only_tools_left():
     assert not srv._PREVIEW_ONLY_TOOLS
     names = {n for n, *_ in srv.TOOLS}
