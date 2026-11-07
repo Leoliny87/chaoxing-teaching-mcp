@@ -8,7 +8,8 @@ param(
     [string]$Ref = "",
     [string]$Venv = "$HOME\.cache\xuexitong-mcp\venv",
     [ValidateSet("student", "reviewer", "teacher")][string]$Profile = "student",
-    [string]$Python = ""
+    [string]$Python = "",
+    [string]$ConfigDir = "$HOME\.config\xuexitong-mcp"
 )
 $ErrorActionPreference = "Stop"
 
@@ -36,7 +37,7 @@ if ($LASTEXITCODE -ne 0) { throw "文件校验失败，已停止。" }
 & $py -m pip install --disable-pip-version-check -q -r "$Dir\requirements-lock-py314-linux.txt"
 if ($LASTEXITCODE -ne 0) { throw "依赖安装失败。" }
 
-$cfgDir = "$HOME\.config\xuexitong-mcp"
+$cfgDir = $ConfigDir
 $cfg = "$cfgDir\config.toml"
 if (-not (Test-Path $cfg)) {
     New-Item -ItemType Directory -Force $cfgDir | Out-Null
@@ -46,7 +47,7 @@ if (-not (Test-Path $cfg)) {
     Write-Host "已生成配置 $cfg（请按需填写 write_allow_courses、[tutor] 等）"
 } else { Write-Host "保留已有配置 $cfg" }
 
-& $py -I "$Dir\scripts\launch_stdio.py" --list-tools | Out-Null
+& $py -I "$Dir\scripts\launch_stdio.py" --config $cfg --list-tools | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "自检失败。" }
 $launch = "$Dir\scripts\launch_stdio.py"
 Write-Host "`n安装完成。MCP 客户端配置示例："

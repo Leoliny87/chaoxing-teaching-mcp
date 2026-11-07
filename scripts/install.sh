@@ -10,10 +10,12 @@ VENV="$HOME/.local/share/xuexitong-mcp/venv"
 REF=""
 PROFILE="student"
 PY="${PYTHON:-python3}"
+CFG_DIR="$HOME/.config/xuexitong-mcp"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo) REPO="$2"; shift 2;; --dir) DIR="$2"; shift 2;; --venv) VENV="$2"; shift 2;;
     --ref) REF="$2"; shift 2;; --profile) PROFILE="$2"; shift 2;; --python) PY="$2"; shift 2;;
+    --config-dir) CFG_DIR="$2"; shift 2;;
     *) echo "未知参数 $1" >&2; exit 2;;
   esac
 done
@@ -36,7 +38,7 @@ P="$VENV/bin/python"
 "$P" -I -c "import sys; sys.path.insert(0, '$DIR/server'); from pathlib import Path; from xuexitong_mcp.updater import check_manifest; p = check_manifest(Path('$DIR')); print('文件校验通过' if not p else '文件校验失败：' + '; '.join(p[:5])); sys.exit(1 if p else 0)"
 "$P" -m pip install --disable-pip-version-check -q -r "$DIR/requirements-lock-py314-linux.txt"
 
-CFG_DIR="$HOME/.config/xuexitong-mcp"; CFG="$CFG_DIR/config.toml"
+CFG="$CFG_DIR/config.toml"
 if [ ! -e "$CFG" ]; then
   mkdir -p "$CFG_DIR"; chmod 700 "$CFG_DIR"
   sed "s/^profile = \"teacher\"/profile = \"$PROFILE\"/" "$DIR/config/config.example.toml" > "$CFG"
@@ -44,7 +46,7 @@ if [ ! -e "$CFG" ]; then
 else
   echo "保留已有配置 $CFG"
 fi
-"$P" -I "$DIR/scripts/launch_stdio.py" --list-tools >/dev/null
+"$P" -I "$DIR/scripts/launch_stdio.py" --config "$CFG" --list-tools >/dev/null
 cat <<EOF
 
 安装完成。MCP 客户端配置示例：
