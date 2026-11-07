@@ -11,24 +11,53 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 from xuexitong_mcp.ops_student import StudentOps  # noqa: E402
 from xuexitong_mcp.xxt import XxtError  # noqa: E402
 
+CH = [{"key": "A", "value": "A"}, {"key": "B", "value": "B"}]
 QS = [
-    {"no": 1, "qid": "11", "type": 0, "type_name": "单选题", "options": [{"key": "A", "value": "A"}, {"key": "B", "value": "B"}]},
+    {"no": 1, "qid": "11", "type": 0, "type_name": "单选题", "options": CH},
     {"no": 2, "qid": "12", "type": 1, "type_name": "多选题", "options": [{"key": k, "value": k} for k in "ABCD"]},
     {"no": 3, "qid": "13", "type": 3, "type_name": "判断题", "options": [{"key": "A", "value": "true"}, {"key": "B", "value": "false"}]},
     {"no": 4, "qid": "14", "type": 4, "type_name": "简答题", "options": []},
-    {"no": 5, "qid": "15", "type": 11, "type_name": "连线题", "options": []},
+    {"no": 5, "qid": "15", "type": 22, "type_name": "口语测评题", "options": []},
+    {"no": 6, "qid": "16", "type": 2, "type_name": "填空题", "options": [], "detail": {"blanks": 2}},
+    {"no": 7, "qid": "17", "type": 11, "type_name": "连线题", "options": [], "detail": {"lefts": ["1", "2"], "rights": ["A", "B"]}},
+    {"no": 8, "qid": "18", "type": 13, "type_name": "排序题", "options": [], "detail": {"slots": 3, "letters": ["A", "B", "C"]}},
+    {"no": 9, "qid": "19", "type": 20, "type_name": "共用选项题", "options": [], "detail": {"items": 2, "letters": ["A", "B", "C"]}},
+    {"no": 10, "qid": "20", "type": 24, "type_name": "选词填空", "options": [], "detail": {"blanks": 2, "words": [{"key": "A"}, {"key": "B"}]}},
+    {"no": 11, "qid": "21", "type": 23, "type_name": "钟表题", "options": [], "detail": {"clocks": 1}},
+    {"no": 12, "qid": "22", "type": 14, "type_name": "完型填空", "options": [], "detail": {"children": [{"no": 1, "item": "u1", "options": ["A", "B"]}]}},
+    {"no": 13, "qid": "23", "type": 15, "type_name": "阅读理解", "options": [], "detail": {"children": [
+        {"no": 1, "qtid": "23u1", "item": "u1", "type": 0, "options": CH, "blanks": 0},
+        {"no": 2, "qtid": "23u2", "item": "u2", "type": 3, "options": [], "blanks": 0},
+        {"no": 3, "qtid": "23u3", "item": "u3", "type": 4, "options": [], "blanks": 0}]}},
+    {"no": 14, "qid": "24", "type": 17, "type_name": "程序题", "options": [], "detail": {"language": "22", "languages": ["22:Python 3.12", "3:Java"]}},
+    {"no": 15, "qid": "25", "type": 21, "type_name": "测评题", "options": CH, "detail": {"max_select": 1}},
 ]
 
 
 def test_build_answers_maps_each_type():
-    out = StudentOps.build_answers(QS, {"1": "b", "2": "C,A", "3": "错", "4": "第一行<b>\n第二行"})
-    assert out == {"11": "B", "12": "AC", "13": "false", "14": "<p>第一行&lt;b&gt;</p><p>第二行</p>"}
+    ops = {o["qid"]: o for o in StudentOps.build_answers(QS, {
+        "1": "b", "2": "C,A", "3": "错", "4": "第一行<b>\n第二行", "6": ["x", "y"], "7": "BA", "8": "CAB", "9": ["B", "C"],
+        "10": "BA", "11": ["9:05"], "12": "B", "13": ["A", "对", "因为"], "14": {"language": "java", "code": "class A{}"}, "15": "A"})}
+    assert ops["11"]["v"] == "B" and ops["12"]["v"] == "AC" and ops["13"]["v"] == "false"
+    assert ops["14"]["v"] == "<p>第一行&lt;b&gt;</p><p>第二行</p>" and ops["16"]["v"] == ["<p>x</p>", "<p>y</p>"]
+    assert ops["17"]["v"] == '[{"name":"1","content":"B"},{"name":"2","content":"A"}]' and ops["18"]["v"] == "CAB"
+    assert ops["19"]["v"] == '[{"name":1,"content":"B"},{"name":2,"content":"C"}]' and ops["21"]["v"] == '[{"hour":"9","minute":"5"}]'
+    assert ops["22"]["v"] == [{"item": "u1", "v": "B"}]
+    assert [c["v"] for c in ops["23"]["v"]] == ["A", True, "<p>因为</p>"] and ops["24"]["lang"] == 3 and ops["25"]["v"] == "A"
 
 
-@pytest.mark.parametrize("bad", [{"1": "C"}, {"2": "Z"}, {"3": "是"}, {"4": " "}, {"5": "x"}, {"9": "A"}, {}])
+@pytest.mark.parametrize("bad", [{"1": "C"}, {"2": "Z"}, {"3": "是"}, {"4": " "}, {"5": "x"}, {"99": "A"}, {}, {"6": ["only one"]},
+                                 {"7": "B"}, {"8": "AAB"}, {"11": ["25:00"]}, {"12": "C"}, {"13": ["A", "对"]}, {"14": {"language": "cobol", "code": "x"}},
+                                 {"15": "AB"}])
 def test_build_answers_refuses(bad):
     with pytest.raises(XxtError):
         StudentOps.build_answers(QS, bad)
+
+
+def test_public_view_hides_internal_ids():
+    v = StudentOps._public(QS[12])
+    assert "qid" not in v and all("qtid" not in c and "item" not in c for c in v["detail"]["children"])
+    assert v["detail"]["children"][0]["options"] == ["A", "B"]
 
 
 def test_submit_requires_phrase_and_plan_ignores_it(monkeypatch):

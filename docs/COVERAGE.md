@@ -43,15 +43,27 @@
 | `list_my_courses` | 读 mooc1 `/visit/courselistdata?courseType=1`，每个 `li.course` 带 courseid、clazzid、personid（学生 cpi）；列出 20 门 |
 | `list_my_assignments` | 打开学生课程外壳（`visit/stucoursemiddle` → `mycourse/stu`），取隐藏字段 enc、workEnc、examEnc、openc、t；作业列表 `mooc1 /mooc2/work/list?courseId&classId&cpi&ut=s&t&stuenc=<enc>&enc=<workEnc>`（跨域，必须从 mooc1 页发起）；列出 2 份作业、状态和剩余时间 |
 | `read_my_assignment` | 作业链接跳到 `mooc-ans/mooc2/work/dowork`；列出题号、题型、题干、选项和已暂存作答，不含参考答案（页面里本来就没有） |
-| `save_my_answers` | 暂存判断题 2 道，服务端「保存成功！」，读回 true/false |
-| `submit_my_assignment` | 预演后必须带 `confirm_text="确认提交"` 和 plan_id；提交后作业列表状态从「未交」变为「已完成」 |
+| `save_my_answers` | 暂存判断题 2 道，服务端「保存成功！」，读回 true/false。2026-11-07 第二轮：在 23 种题型的作业里暂存 22 种（口语测评要现场录音，明确拒绝），逐题读回全部有值 |
+| `submit_my_assignment` | 预演后必须带 `confirm_text="确认提交"` 和 plan_id；提交后作业列表状态从「未交」变为「已完成」；含主观题的全题型作业提交后为「待批阅」 |
+| `list_my_exams` | 考试列表 `mooc1 /exam-ans/mooc2/exam/exam-list?courseid&clazzid&cpi&ut=s&t&stuenc=<enc>&enc=<examEnc>&openc`；每项 `goTest(courseId, examId, …, 截止时间, paperId, …)`。**只读，不代答考试**（按需求「真正的考核在线下」） |
+| `list_my_activities` | `mobilelearn /v2/apis/active/student/activelist?fid&courseId&classId&showNotStartedActive=0`，activeType 2 签到、45 通知等，status 1 进行中、2 已结束，userStatus 1 已参与 |
+| `list_my_materials` / `download_my_material` | 资料 `mooc2-ans /coursedata/stu-datalist?…&stuenc`，每项 `ul.dataBody_td` 带 objectid、isdown（教师是否允许下载）；下载地址来自 `mooc1 /ananas/status/<objectid>` 的 `download`（cldisk 签名链接，不需要登录态）；下载 55 B 测试文件，大小与服务器记录一致 |
+| `list_my_discussions` / `reply_my_discussion` | 学生外壳隐藏字段 `bbsid`；回复是 `POST groupweb /pc/invitation/<话题uuid>/addReplys`（courseId、classId、replyId、uuid、topic_content=encodeURIComponent 一次后再表单编码、anonymous、urlToken=话题页 window.obj.urlToken、bbsid）；回复后话题页显示原文，中文正常 |
 
 - 作答表单 `form#submitForm` 提交到 `/mooc-ans/work/addStudentWorkNewWeb?…`（地址里带页面签名 token）。字段：courseId、classId、cpi、workRelationId、workAnswerId、standardEnc、enc_work、totalQuestionNum、workTimesEnc、`answertype<题目ID>`、`answer<题目ID>`，以及 `answerwqbid`（`#questionIds`）。
 - 作答值：单选是选项的 data（A），多选是拼起来的字母（AC），判断是 true/false，主观题是 HTML。
 - 暂存：地址加 `&pyFlag=1&ua=pc&formType=post&saveStatus=1&version=1`，表单里 pyFlag=1；提交：地址同上但不带 pyFlag，表单 pyFlag 为空。
 - **`answerwqbid` 必须填全部题目 ID 加逗号**（页面自己保存前才填），留空服务端返回「无效的参数：code-1」。
 - 页面只在真实界面改动后才弹「离开页面」提示（`isContentChanged`）；脚本直接写隐藏字段不会触发，保存后也会复位。
-- 已支持作答的题型：单选、多选、判断、简答、名词解释、论述、计算、其它、口语、写作。填空、连线、排序、组合题等暂未支持，会明确拒绝。
+- 各题型的作答字段（2026-11-07 全题型实测）：
+  - 单选、判断：`answer<id>` = 选项的 data（A / true / false）；多选、测评：字母拼接（AC）；排序：`DBAC`。
+  - 填空、分录：每空一个 `answerEditor<id><序号>`（UEditor 的 textarea，HTML）。
+  - 简答、名词解释、论述、计算、其它、口语：`answer<id>` 是 UEditor 的 textarea（HTML）；写作：隐藏的 `name=answer<id>` 是纯文本，`id=answer<id>` 的 textarea 只是编辑器。
+  - 连线：`[{"name":"1","content":"B"},…]`（name 是字符串）；共用选项、选词填空：`[{"name":1,"content":"B"},…]`（name 是数字）；钟表：`[{"hour":"9","minute":"30"}]`。
+  - 完型填空：每空 `answer<id><小题uuid>` = 字母，`answer<id>` = `[{"<uuid>":{"answer":"B"},…}]`。
+  - 阅读理解、听力：`.readingItem<id>` 每项带 data=小题字段名、itemId、qtype；`answer<id>` = `[{"<itemId>":{"type":0,"answer":"A"}, "<itemId>":{"type":3,"answer":true}, …}]`，填空小题的 answer 是 `[{content,name}]`，简答小题是 HTML。
+  - 程序：`answer<id>` = `[{"language":22,"answer":"<pre…><code…>代码</code></pre>","answerTxt":"转义后的代码"}]`，语言在 `languageSelect<id>`。
+  - 口语测评要麦克风现场录音，明确拒绝代答。
 
 ## 1.15 已做成 MCP 工具并在测试课实测通过的写操作（2026-11-06）
 
