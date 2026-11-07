@@ -564,6 +564,45 @@ def read_student_answers(course: Course_, assignment: Annotated[str, Field(descr
     return client().student_answers(course, assignment, student)
 
 
+@tool(W, "教师：给一份已交作业打分并提交批阅（可附批语）。scores 按题号给分，组合题按小题顺序给一个列表；没给的题保留系统已判的分。先预演，确认后提交并在批阅列表核对总分。")
+def grade_submission(course: Course_, assignment: Annotated[str, Field(description="作业标题（可模糊）或作业ID")],
+                     student: Annotated[str, Field(description="学生姓名、学号或 person_id")],
+                     scores: Annotated[dict, Field(description="按题号给分，如 {\"5\": 3, \"6\": 4.5, \"14\": [5, 0]}")],
+                     comment: Annotated[str, Field(description="批语，可留空")] = "", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        r = client().student_answers(c.id, assignment, student)
+        qs = {str(q["no"]): q for q in r["questions"] if q.get("no") is not None}
+        rows = []
+        for k, v in scores.items():
+            q = qs.get(str(k))
+            if q is None:
+                raise XxtError(f"没有第 {k} 题。")
+            kids = q.get("children") or []
+            vals = v if isinstance(v, list) else [v]
+            fulls = [x.get("full_score") for x in kids] if kids else [q.get("full_score")]
+            if len(vals) != len(fulls):
+                raise XxtError(f"第 {k} 题有 {len(fulls)} 个给分项（组合题按小题顺序给列表）。")
+            for val, full in zip(vals, fulls):
+                if not isinstance(val, (int, float)) or val < 0 or (full is not None and val > full):
+                    raise XxtError(f"第 {k} 题的分数必须在 0–{full} 之间。")
+            rows.append({"no": int(k), "type": q.get("type"), "score": v, "full": q.get("full_score")})
+        return _dry(c, "提交批阅（学生会看到分数和批语）", assignment=r["assignment"], student=r["student"], scores=rows,
+                    comment=comment, note="未列出的题保留系统已判的分；总分以提交后批阅列表为准。")
+    return client().grade_submission(course, assignment, student, scores, comment)
+
+
+@tool(W, "教师：把一份已交作业打回让学生重做（必须写理由，学生会看到）。先预演，确认后打回并核对已从已交列表移除。")
+def return_submission(course: Course_, assignment: Annotated[str, Field(description="作业标题（可模糊）或作业ID")],
+                      student: Annotated[str, Field(description="学生姓名、学号或 person_id")],
+                      reason: Annotated[str, Field(description="打回理由，1–500 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        r = client().student_answers(c.id, assignment, student)
+        return _dry(c, "打回作业让学生重做（学生会看到理由）", assignment=r["assignment"], student=r["student"], status=r.get("status"), reason=reason)
+    return client().return_submission(course, assignment, student, reason)
+
+
 @tool(W, "给作业未交学生发催交提醒：当前仅支持预演，收件人可能变化。")
 def remind_assignment(course: Course_, assignment: Annotated[str, Field(description="作业标题或ID")], confirm: Confirm = False) -> dict:
     c = _check_write(course)

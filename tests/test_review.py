@@ -27,3 +27,23 @@ def test_review_reader_is_for_teacher_and_reviewer_only():
     assert "read_student_answers" in P.allowed_tools("reviewer", tools, [], [])
     assert "read_student_answers" in P.allowed_tools("teacher", tools, [], [])
     assert "read_student_answers" not in P.allowed_tools("student", tools, ["read_student_answers"], [])
+
+
+def test_grade_preview_validates_scores(monkeypatch):
+    import pytest
+    from xuexitong_mcp.xxt import XxtError
+    qs = {"assignment": "作业", "student": "张三", "questions": [
+        {"no": 5, "type": "简答题", "full_score": 5.0},
+        {"no": 14, "type": "阅读理解", "full_score": 10.0, "children": [{"full_score": 5.0}, {"full_score": 5.0}]}]}
+
+    class Fake:
+        def student_answers(self, *a):
+            return qs
+    monkeypatch.setattr(srv, "client", lambda: Fake())
+    monkeypatch.setattr(srv, "_check_write", lambda c: type("C", (), {"id": "1", "name": "课"})())
+    monkeypatch.setattr(srv, "_dry", lambda c, action, **d: {"ok": True, "dry_run": True, **d})
+    ok = srv.grade_submission("课", "作业", "张三", {"5": 4.5, "14": [5, 0]})
+    assert ok["dry_run"] and [r["no"] for r in ok["scores"]] == [5, 14]
+    for bad in ({"5": 6}, {"5": -1}, {"14": [5]}, {"14": [6, 0]}, {"9": 1}, {"5": "满分"}):
+        with pytest.raises(XxtError):
+            srv.grade_submission("课", "作业", "张三", bad)
