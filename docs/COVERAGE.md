@@ -4,6 +4,32 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
+## 0. 当前完成度（2026-11-07，v0.3.0）
+
+通过真实 MCP stdio 连接实测：教师配置注册 70 个工具、学生配置 11 个，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+
+**已做成工具并在测试课实测**
+- 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级。
+- 章节：读内容、改名、写正文（格式白名单）、插入链接/注释/讨论/扩展阅读/章节测验，以及文档、音频、视频、图片、附件五种文件。
+- 作业：23 种题型新建、答题卡作业、发放（含常用设置）、提交情况、逐题读学生作答。
+- 试卷与考试：22 种题型（含选做题）建卷、发布考试（含常用防作弊和查看设置）、考试批阅页人数。
+- 题库：24 种题型新增、列表（不返回答案）。
+- 通知：发送、删除、按 UUID 补记；讨论：发帖、列表；活动：发起普通/签到码签到、结束活动、活动结果；教学任务：新建（作业任务点）、发布；课程资料：上传、列表；成绩：读取。
+- 学生端：我的课程/作业/考试/活动/资料/讨论，作业 22 种题型作答（暂存、确认提交），下载资料，回复讨论。
+- 策略层与打包：三种角色、确认提交、节流、不可信内容标注、中心辅导、预审记录；安装脚本、一键更新和回退，v0.3.0 已发布。
+
+**还没做（可以继续补）**
+- 教师写：批阅给分、打回、修改已发布作业/试卷、随机组卷和平行试卷、题库编辑删除导入导出和标签文件夹、讨论置顶加精回复、问卷/评分/分组任务/随堂练习/抢答选人投票等其余活动的完整验证、教学任务的视频/文档/讨论等其余 18 类任务点、班级设置和学生增删调班、教师团队、成绩权重、资料文件夹和权限、章节新建子目录以外的移动排序。
+- 章节插入：速课、投票问卷、本课资料（格式已记录，未做成工具），云盘选文件、图书、图书内页、动画、全景、文档导入、AI 排版/智能编写/AI 校正。
+- 读取：首页待办和预警、学情统计各子页、AI 助教会话和知识库、教学日历、下载中心、错题集、学习记录、课程图谱。
+- 只能预演、尚不执行：删除作业/考试/试卷/资料/讨论/章节、导出成绩、催交作业（删除后状态或收件人还不能可靠核实）。
+
+**按需求不做或做不了**
+- 学生考试作答、读取标准答案或测验答案（需求明确禁止；真正的考核在线下）。
+- 刷章节任务点（看视频、读文档计时）这类代替学生学习的操作。
+- 口语测评、录音（要麦克风现场录音）；直播（会真的开一场直播，只记录了选项）。
+- 滑块验证码、短信、协议同意、登录：一律由本人处理。资源库（另一套登录）、3D 资源和智雅资源库（弹窗一直加载）、课程图谱（课程里没有知识点）暂时无法探查。
+
 ## 1. 新版教师端结构（实测）
 
 - 课程入口 `mooc1.chaoxing.com/course/isNewCourse?...&edit=true` 现在会跳转到 Vue 外壳 `mooc2-ans.chaoxing.com/mooc2-ans-vue/fanyav3/tch`（Vue 2 应用）。
@@ -17,14 +43,14 @@
 | 模块 | 实际应用 | 已观察到的接口（节选） | 现有工具 | 状态 |
 |---|---|---|---|---|
 | 首页 | 外壳内（常用应用 / 近期待办 / 教学预警） | `coursemanagev3/base-info` | — | 待做：待办、预警读取 |
-| 教学任务 | `task.chaoxing.com/task/index`（任务引擎） | `task/findTaskFolders`、`task/getTaskDataLists` | — | 待做：读写全部；测试课为空，需要测试课探查新建流程 |
+| 教学任务 | `task.chaoxing.com/task/index`（任务引擎） | `task/findTaskFolders`、`task/getTaskDataLists`、`createTask`、`taskCommit`、`saveTaskPoints`、`taskPublish` | list_teaching_tasks、create_teaching_task、publish_teaching_task | 新建（作业任务点）和发布已实测；其余 18 类任务点待做 |
 | 教学活动 | `mobilelearn.chaoxing.com/page/active/activeList` | `v2/apis/active/pcActivelist`、`v2/apis/class/getClassList`、`getClassDetail`、`getTeachers`、`active/getActiveLibraryOpen`、`sign/getLastSignForXd`… | list_activities、activity_result、checkin_status、end_activity、pick_student、start_quick_answer、start_vote、start_checkin(仅预演)、delete_activity | 读已验证；写需要在测试课验证；按钮：添加活动、上课、批量编辑、新建班级 |
-| 资源中心 | `stat2-ans.chaoxing.com/stat2-vue/resource` | `stat2/base-data/v3/{coursewareInfo,resInfo,knowledgeInfo,workInfo,examInfo,activityLibraryInfo}`、`mooc2-ans/coursemanagev3/resource-info` | list_chapters、list_materials、list_assignment_library、list_exams(试卷库) | 部分覆盖；待做：课件、题库、知识点、活动库、上传 |
+| 资源中心 | `stat2-ans.chaoxing.com/stat2-vue/resource` | `stat2/base-data/v3/{coursewareInfo,resInfo,knowledgeInfo,workInfo,examInfo,activityLibraryInfo}`、`mooc2-ans/coursemanagev3/resource-info` | get_resource_overview、list_coursewares、list_practices、list_chapters、list_materials、upload_material、list_assignment_library、list_bank_questions、list_exams(试卷库) | 课件、题库、资料上传已覆盖；知识点、活动库待做 |
 | AI助教 | `robot-lc.chaoxing.com/courseCozeV3/web` | `v1/front/conversationList`、`msgList`、`robot/info/*`、`knowledge/getAiKbSetting`… | — | 待做（读会话与知识库设置；写=对话/配置） |
 | 学情统计 | `stat2-ans.chaoxing.com/stat2-vue/statistics` | `stat2/stat-nav/teach`（子菜单） | get_grades | 部分覆盖；待做：逐项统计子页 |
 | 课程管理 | `mooc2-ans.chaoxing.com/mooc2-ans/tcm/course-manage` | `tcm/clazz-manage`、`tcm/clazz-student` | open_course、list_students | 读已验证；待做：添加学生、分组、导出名单、移除、班级设置 |
-| 通知 | `notice.chaoxing.com/pc/course/notice/myNoticeList` | `pc/course/notice/getNoticeList` | list_notices、list_notice_inventory、publish_notice、delete_notice | 读已验证；写需验证 |
-| 讨论 | `groupweb.chaoxing.com/course/topic/topicList?…bbsid` | `course/topic/{bbsid}/getTopicList`、`getTopTopicList`、`pc/topic/topiclist/getLabelList`、`noteyd …/getYunPanUploadUrl` | list_discussions（**当前失败**）、create/delete_discussion(仅预演) | 修复方法：bbsid 改从 `base-info.discussUrl` 取 |
+| 通知 | `notice.chaoxing.com/pc/course/notice/myNoticeList` | `pc/course/notice/getNoticeList` | list_notices、list_notice_inventory、publish_notice、delete_notice、reconcile_notices | 读写已实测 |
+| 讨论 | `groupweb.chaoxing.com/course/topic/topicList?…bbsid` | `course/topic/{bbsid}/getTopicList`、`addTopic`、`pc/invitation/<话题>/addReplys` | list_discussions、create_discussion、delete_discussion(仅预演)、学生端 list_my_discussions / reply_my_discussion | 已修复（bbsid 取自 base-info）并实测 |
 | 作业/考试（旧接口） | `mooc2-ans/work/*`、`mooc2-ans/exam/*` | — | list_assignments、submissions、list_exams、exam_marklist… | 读已验证；与"教学任务"的关系待确认 |
 
 2026-11-06 真实只读验证通过的工具：health_check、list_courses、open_course、list_chapters、list_materials、list_notices、list_assignments、list_assignment_library、list_exams、list_activities、list_students、get_grades、list_inbox。
@@ -161,7 +187,7 @@
   1. `GET work/add-question?type&count&score&optionCount&title&grading`：按题型批量加空题（1 选择、2 填空、3 判断、4 简答；15 组合题走 `add-complex`）。
   2. 点选项设答案，每题即时 `POST work/save-answer`（`answer` 是 JSON，如 `[{"name":"B","content":"","isanswer":true}]`）。
   3. `POST work/save-scantron`（questionids、title、answer{题目ID}）→ `GET work/update-scantron`：从草稿箱转入作业库。只调前一步，作业会留在草稿箱。
-  - 2026-11-07 实测：建 2 道选择题的答题卡作业，作业库显示「答题卡」标记。尚未做成工具。
+  - 2026-11-07 实测：建 2 道选择题的答题卡作业，作业库显示「答题卡」标记。已做成工具 `create_answer_card_assignment`。
 - 分组作业（作业库「新建作业 → 分组作业」）打开的是 `mobilelearn/page/renwuNew/renwuPublishSetting_new.html`，即教学活动里的分组任务，归到活动一类。
 
 ### 题型（作业、试卷、题库共用，2026-11-07 逐个实测）
@@ -356,15 +382,15 @@
       - 扩展阅读：`{"module":"ballchart","keyword","mid"}`；
       - 章节测验：选「创建新测验」后，会在新标签页打开作业编辑器（`work/goToWorkEditor?chapterId&courseid&fromChapter&workid`），出题和保存走与作业相同的链路，`clazzid=0`。章节里登记的是 `{"module":"work","workid","title","worktype":"workA","jobid":"work-<workid>","mid"}`。页面自己弹出的标签页不归 Agent 会话所有，要用 `bsk tab create --url` 打开同一个地址再操作；
       - 投票问卷：点「完成」时服务端就生成了一个投票活动，登记的是 `{"module":"insertvote","id"(活动ID),"title","description","_jobid","mid"}`。
-  - 还没试的插入项：云盘、视频、图片、文档、音频、附件、本课资料、录音、图书、图书内页、动画、3D 资源、智雅资源库、全景资源、资源库、扩展阅读、章节测验、投票问卷、直播、速课、课程图谱、文档导入，以及 3 个 AI 功能。
-  - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。**这些插入项还没有逐个实际添加过。**
+  - 还没实际插入的：云盘选文件、图书、图书内页、动画、全景资源、文档导入，以及 3 个 AI 功能；录音、3D 资源、智雅资源库、资源库、课程图谱做不了（原因见上）；直播只记录了选项。
+  - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。
 
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。
 
 ## 2. 还没探查的范围
 
-- 每个模块的二级页面和全部写操作流程（新建、编辑、发布、删除、批阅、导入导出）。写流程**只在专门的测试课程里探查**，每次写之前确认。
-- 学生端全部功能（`/stu`、`/studentCourse`、任务点、作业提交、考试、签到、讨论、资料下载）：**需要一个学生测试账号**。
+- 第 0 节「还没做」列出的教师端写流程和读取页面。写流程只在测试课程里探查。
+- 学生端已用本人在测试课里的学生身份实测；签到、问卷参与、章节测验作答、错题集、学习记录还没做（签到和刷任务点按需求不做）。
 - 题库、试卷库管理系统（`kaoshi.chaoxing.com`）有滑块验证码，保留人工。
 - 教学日历、下载中心、全部应用、首页的待办和预警。
 
