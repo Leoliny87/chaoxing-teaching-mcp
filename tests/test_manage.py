@@ -69,6 +69,15 @@ def test_moved_check():
     assert moved_check(["2"], [], None, "2") == (True, "")
 
 
+def test_weight_changes():
+    from xuexitong_mcp.ops_classadmin import weight_changes
+    cur = {"video": "40", "ceyan": "20", "work": "25", "test": "15", "aiEvaluate": "0", "visitTime": "0"}
+    assert weight_changes(cur, {"作业": 30, "考试": 10}) == {"work": 30, "test": 10}
+    for bad in ({"作业": 30}, {"作业": "30", "考试": 10}, {"成绩": 1}, {"章节学习次数": 5, "作业": 20}, {}):
+        with pytest.raises(XxtError):
+            weight_changes(cur, bad)
+
+
 def test_no_preview_only_tools_left():
     assert not srv._PREVIEW_ONLY_TOOLS
     names = {n for n, *_ in srv.TOOLS}

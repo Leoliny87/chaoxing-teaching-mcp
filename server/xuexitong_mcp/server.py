@@ -1559,6 +1559,121 @@ def move_students_class(course: Course_, from_class: Annotated[str, Field(descri
     return client().move_students(c.id, from_class, to_class, list(students))
 
 
+@tool(R, "读取一个班的班级设置：允许学生加入、加入需教师同意、允许退课、忽略视频拖拽、对学生隐藏班级、是否已结课、人数上限。")
+def get_class_settings(course: Course_, class_name: Class_ = "") -> dict:
+    c = client().ctx(course)
+    return client().class_settings(c.id, class_name or c.clazz_id)
+
+
+@tool(W, "修改一个班的班级设置（开关用 true/false：允许学生加入、加入班级需教师同意、允许学生退课、忽略视频拖拽及窗口切换、对学生隐藏班级、已结课；人数上限用整数）。先预演，确认后保存并读回。")
+def set_class_setting(course: Course_, class_name: Annotated[str, Field(description="班级名或ID")],
+                      name: Annotated[str, Field(description="设置名")], value: Annotated[bool | int, Field(description="新值")],
+                      confirm: Confirm = False) -> dict:
+    from .ops_classadmin import CLASS_SWITCHES
+    c = _check_write(course)
+    if name not in CLASS_SWITCHES and name not in ("已结课", "人数上限"):
+        raise XxtError(f"可改的班级设置：{'、'.join(list(CLASS_SWITCHES) + ['已结课', '人数上限'])}。")
+    if not confirm:
+        s = client().class_settings(c.id, class_name)
+        cur = s["switches"].get(name) if name in CLASS_SWITCHES else s.get(name)
+        warn = "结课后学生不能再完成任务点、作业和测验，学习数据停止统计" if name == "已结课" and value is True else None
+        return _dry(c, f"修改班级设置「{name}」", bind={"class_name": s["class_id"]}, class_id=s["class_id"], current=cur, new=value, warning=warn)
+    return client().set_class_setting(course, class_name, name, value)
+
+
+@tool(W, "给班级改名。先预演，确认后改名并在班级列表核对。")
+def rename_class(course: Course_, class_name: Annotated[str, Field(description="班级名或ID")],
+                 new_name: Annotated[str, Field(description="新名称，1–100 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        z = client()._cls(client().ctx(c.id), class_name)
+        return _dry(c, "班级改名（学生端也会显示新名称）", bind={"class_name": z}, class_id=z, new_name=new_name)
+    return client().rename_class(course, class_name, new_name)
+
+
+@tool(D, "把学生移出班级（学习记录保留，可用 recover_students 从退课日志恢复）。预演列出并锁定学生；确认后移除并核对名单。")
+def remove_students(course: Course_, class_name: Annotated[str, Field(description="班级名或ID")],
+                    students: Annotated[list[str], Field(description="学生姓名或 person_id")], confirm: Confirm = False,
+                    person_ids: Annotated[list[str], Field(description="由预演绑定，调用时保持默认空值")] = []) -> dict:  # noqa: B006
+    from .ops_class import _pick
+    c = _check_write(course)
+    if not confirm:
+        if person_ids:
+            raise XxtError("预演时 person_ids 必须留空。")
+        cl = client()
+        ctx = cl.ctx(c.id)
+        z = cl._cls(ctx, class_name)
+        picked = _pick(cl._members(ctx, z), list(students), "班级")
+        return _dry(c, "把学生移出班级（学生会失去这门课的入口，记录可恢复）", bind={"class_name": z, "person_ids": [p["person_id"] for p in picked]},
+                    class_id=z, students=[{"name": p["name"], "person_id": p["person_id"]} for p in picked])
+    return client().remove_students(course, class_name, list(person_ids))
+
+
+@tool(R, "读取课程的学生日志：kind=退课（被移出或退课的学生，可恢复）或 加班（学生加入班级的记录）。")
+def list_class_logs(course: Course_, kind: Annotated[str, Field(description="退课 / 加班")] = "退课") -> dict:
+    if kind == "退课":
+        return {"kind": kind, "items": client().drop_log(course)}
+    if kind == "加班":
+        return {"kind": kind, "items": client().join_log(course)}
+    raise XxtError("kind 只能是 退课 或 加班。")
+
+
+@tool(W, "从退课日志恢复学生（回到原班级并恢复学习记录）。先预演列出记录，确认后恢复并核对。")
+def recover_students(course: Course_, drop_ids: Annotated[list[str], Field(description="退课日志里的记录 ID（list_class_logs 可查）")],
+                     confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        log = {str(x.get("drop_id")): x for x in client().drop_log(c.id)}
+        miss = [x for x in drop_ids if str(x) not in log]
+        if miss or not drop_ids:
+            raise XxtError(f"退课日志里没有这些记录：{miss}")
+        return _dry(c, "恢复学生到原班级", records=[{k: log[str(x)].get(k) for k in ("name", "class", "action", "time")} for x in drop_ids])
+    return client().recover_students(course, list(drop_ids))
+
+
+@tool(W, "把本课程另一个班的全部学生加入这个班（「从课程班级添加」）。预演列出来源班级的学生；确认后添加并核对名单。")
+def add_students_from_class(course: Course_, class_name: Annotated[str, Field(description="加入到哪个班（名或ID）")],
+                            from_class: Annotated[str, Field(description="来源班级（名或ID）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        cl = client()
+        ctx = cl.ctx(c.id)
+        z, src = cl._cls(ctx, class_name), cl._cls(ctx, from_class)
+        return _dry(c, "从另一个班添加学生", bind={"class_name": z, "from_class": src}, to_class=z, from_class=src,
+                    students=[{"name": m["name"], "person_id": m["person_id"]} for m in cl._members(ctx, src)])
+    return client().add_students_from_class(course, class_name, from_class)
+
+
+@tool(R, "列出教师团队成员（姓名、角色、工号、院系、加入时间）。添加或移除成员涉及其他真实教师，需老师本人在学习通里操作。")
+def list_teacher_team(course: Course_) -> dict:
+    return {"items": client().teacher_team(course)}
+
+
+@tool(R, "读取一个班的成绩权重（经典模式各项百分比）。")
+def get_score_weights(course: Course_, class_name: Class_ = "") -> dict:
+    c = client().ctx(course)
+    return client().score_weights(c.id, class_name or c.clazz_id)
+
+
+@tool(W, "修改一个班的成绩权重（经典模式），weights 如 {\"作业\": 30, \"考试\": 10}，没给的项保持不变，改完总和必须 100%。先预演，确认后保存并读回。")
+def set_score_weights(course: Course_, class_name: Annotated[str, Field(description="班级名或ID")],
+                      weights: Annotated[dict, Field(description="{项目: 百分比}")], confirm: Confirm = False) -> dict:
+    from .ops_classadmin import weight_changes, WEIGHTS
+    c = _check_write(course)
+    if not confirm:
+        cl = client()
+        ctx = cl.ctx(c.id)
+        z = cl._cls(ctx, class_name)
+        f = cl._weight_form(ctx, z)
+        if str(f.get("weightType")) != "0":
+            raise XxtError("这个班用的不是经典模式权重；请在学习通里调整。")
+        vals = dict(f["pairs"])
+        weight_changes(vals, weights)
+        cur = {k: int(vals.get(v) or 0) for k, v in WEIGHTS.items()}
+        return _dry(c, "修改成绩权重（影响学生综合成绩）", bind={"class_name": z}, class_id=z, current=cur, new={**cur, **weights})
+    return client().set_score_weights(course, class_name, weights)
+
+
 @tool(R, "读取课程设置（课程管理 → 课程管理）：学生端配置的开关（自测、视频水印、承诺书、课程通知）、课程设置（活动同步、AI 功能、试读、资源下载、评价、门户栏目）和课程说明、英文名称、承诺书内容。")
 def get_course_settings(course: Course_) -> dict:
     from .ops_settings import CHOICES, NOTICES, SWITCHES, TEXTS
