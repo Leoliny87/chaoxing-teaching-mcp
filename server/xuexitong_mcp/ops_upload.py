@@ -19,8 +19,10 @@ at preview time, and the page re-hashes the staged bytes before posting.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import random
+import re
 import shutil
 import tempfile
 import time
@@ -174,6 +176,12 @@ class UploadOps(XxtBase):
             shutil.rmtree(tmp, ignore_errors=True)
         oid, size, name = r["objectid"], int(r.get("size") or meta["size"]), meta["name"]
         ext = "." + (suffix or str(r.get("suffix") or ""))
+        return self._insert_object(course, chapter_id, card_id, module, oid, size, name, ext)
+
+    def _insert_object(self, course: str, chapter_id: str, card_id: str, module: str, oid: str, size: int, name: str, ext: str) -> dict:
+        """Insert a cloud object (already uploaded) as a chapter module, the way the editor's insert dialogs do."""
+        if not re.fullmatch(r"[0-9a-f]{32}", oid or ""):
+            raise XxtError("文件缺少云盘对象 ID；没有插入。")
         job = _jobid()
         if module == "insertimage":
             mid, jb = _mid(), f"{_ms()}{random.randint(100000, 999999)}"   # image _jobid: ms + 6 digits
@@ -202,3 +210,23 @@ class UploadOps(XxtBase):
             data["pagenum"] = str(pages or 1)
         out = self.insert_chapter_module(course, chapter_id, card_id, module, data)
         return {**out, "object_id": oid, "file": name, **({"job_id": job} if module != "downloadfile" else {})}
+
+    def insert_chapter_material(self, course: str, chapter_id: str, card_id: str, material: str, kind: str) -> dict:
+        """本课资料 (and course materials as 文档/音频/视频/图片): reuse the cloud object of a course material, no upload."""
+        if kind not in KINDS:
+            raise XxtError(f"插入类型只能是：{'、'.join(KINDS)}。")
+        module, allowed = KINDS[kind]
+        c = self.ctx(course)
+        it = self._course_resource(c, material)
+        content = it.get("content")
+        try:
+            content = json.loads(content) if isinstance(content, str) else (content or {})
+        except ValueError:
+            content = {}
+        oid = str(content.get("objectId") or content.get("objectid") or "")
+        name = str(it.get("dataName") or content.get("name") or "")
+        suffix = str(content.get("suffix") or (name.rsplit(".", 1)[1] if "." in name else "")).lower().lstrip(".")
+        if allowed is not None and suffix not in allowed:
+            raise XxtError(f"「{name[:40]}」是 {suffix or '未知'} 文件，不能作为{kind}插入；可以选「附件」。")
+        size = int(content.get("size") or content.get("filesize") or it.get("dataSize") or 0)
+        return {**self._insert_object(c.id, chapter_id, card_id, module, oid, size, name, "." + suffix), "source": "课程资料"}

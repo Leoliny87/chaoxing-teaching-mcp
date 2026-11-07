@@ -1410,6 +1410,26 @@ def upload_material(course: Course_, file_path: Annotated[str, Field(description
     return client().upload_material_v3(course, str(p), file_sha256)
 
 
+@tool(W, "把已有的课程资料插入章节某一页（「本课资料」；也可作为文档/音频/视频/图片插入，不用重新上传）。先预演，确认后插入并读回核对，保留该页已有插入项。")
+def insert_chapter_material(course: Course_, chapter: Chapter_, card_id: CardId_,
+                            material: Annotated[str, Field(description="课程资料的完整名称或资料ID（list_materials 可查）")],
+                            kind: Annotated[str, Field(description="附件（=本课资料，不带任务点）/ 文档 / 音频 / 视频（带任务点）/ 图片")] = "附件",
+                            confirm: Confirm = False) -> dict:
+    from .ops_upload import KINDS
+    c = _check_write(course)
+    if kind not in KINDS:
+        raise XxtError(f"kind 只能是：{'、'.join(KINDS)}。")
+    if not confirm:
+        it = client()._course_resource(client().ctx(c.id), material)
+        name = str(it.get("dataName") or material)
+        suffix = name.rsplit(".", 1)[1].lower() if "." in name else ""
+        allowed = KINDS[kind][1]
+        if allowed is not None and suffix not in allowed:
+            raise XxtError(f"「{name[:40]}」是 {suffix or '未知'} 文件，不能作为{kind}插入；可以选「附件」。")
+        return _chapter_dry(c, chapter, f"把课程资料作为{kind}插入章节（学生可见）", card_id=card_id, material=name, kind=kind)
+    return client().insert_chapter_material(course, chapter, card_id, material, kind)
+
+
 @tool(W, "把本机文件插入章节某一页：kind=文档（doc/ppt/pdf/xls，带任务点）、音频、视频（带任务点）、图片（正文内）、附件（不带任务点）。"
          "文件存到云盘「课程/<课程名>/章节」。预演记录文件哈希，确认时内容必须一致；插入后读回核对，保留该页已有插入项。")
 def insert_chapter_file(course: Course_, chapter: Chapter_, card_id: CardId_,
