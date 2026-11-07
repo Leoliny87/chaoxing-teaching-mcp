@@ -1368,6 +1368,18 @@ def label_bank_questions(course: Course_, question_ids: QIds_, labels: Annotated
     return client().label_bank_questions(course, ids, list(labels))
 
 
+@tool(W, "把题库题目导出成 Excel 保存到本机下载目录（question_ids 留空=全部；默认含答案和解析，仅供教师）。先预演，确认后导出并核对文件。")
+def export_bank_questions(course: Course_, question_ids: Annotated[list[str], Field(description="题目ID列表，留空=全部题目")] = [],  # noqa: B006
+                          with_answers: Annotated[bool, Field(description="是否包含答案和解析")] = True, confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        n = len(question_ids) if question_ids else len(client()._all_questions(client().course(c.id)))
+        cfg = _state["cfg"] or _config.load()
+        return _dry(c, "导出题库到本机 Excel" + ("（含答案和解析，不要转给学生）" if with_answers else ""), questions=n,
+                    with_answers=with_answers, output_directory=str(cfg.download_dir))
+    return client().export_bank_questions(course, list(question_ids), with_answers)
+
+
 @tool(W, "修改题库里的一道题（题干、选项、答案等整题重写，格式同 add_question_to_bank）。先预演，确认后保存并读回题干。")
 def edit_bank_question(course: Course_, question_id: Annotated[str, Field(description="题目ID")],
                        question: Annotated[dict, Field(description="新的整题内容。" + QUESTION_DOC)], confirm: Confirm = False) -> dict:
