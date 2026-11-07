@@ -214,6 +214,17 @@
 - **读取页面**：首页待办 `fanya3/t/todoList`、作业预警 `work/teaching-alert`、考试提醒 `exam/test/exam-progress-reminder`、AI实践预警 `teaching-alert/stat/ai-evaluate`、学情看板 `stat2/ai-study-alert/v3/board|high-risk`；学情统计 `stat2/base-data/v3/*`、`stat2/teach-data/*`、`stat2/study-monitor/v2/studyList`、课堂报告 `mobilelearn v2/apis/course/getReportData`；教学日历 `course/calendar/list` + `schedule/list`；AI 助教入口 `goWorkbench` 返回的页面里有 `courseRobotId`，`robot-lc /v1/front/robot/info/<id>`、`knowledge/getAiKbSetting`、`conversationList` 不签名也能读。
 - **学生端**：学习记录 `stat2 /study-data/index`（隐藏字段 `pEnc`）→ `/stat2/study-data/{job,sign,point,score,work,test,nearTask,behindTask,self-exam}`，**这些接口没有学习记录页作为 Referer 时回 403**；错题集 `POST mooc2-ans /wrongque/data`（HTML）。
 
+### 2026-11-08（第二轮）平行试卷、学生写操作统一确认
+- **学生端写操作**：暂存作答、回复讨论也改为必须带学生本人的 `confirm_text="确认提交"`。注册时检查：学生端写操作没有 `confirm_text` 参数就拒绝注册；确认语不对时 plan 作废，必须重新预演。
+- **平行试卷**（`get_parallel_paper` / `create_parallel_paper` / `update_parallel_paper`，发布、删除、还原沿用 `publish_exam`、`delete_exam_paper`、`restore_deleted`）：
+  - 新建：`GET exam/createAnEmptyPaper?…&parallelpaper=1` → `POST update-exampaper-title` → `POST exam/complete-choose-paper?courseid&clazzid&cpi&paperid {selectedPaperData:[{pid,cid}]}`（把试卷库里的试卷**复制**成子卷，原卷不变）→ 轮询 `GET exam/choose-paper-status` 到 `taskStatus=success` → `GET exam/create-parallel-paper?…&easy=0|1|2`（易/中/难）。
+  - **复制是后台任务**：任务还在跑时就「完成创建」，服务端照样回「创建成功」，但只包含已经复制好的子卷。所以必须等任务完成。
+  - 子卷结构不一致时，完成创建返回 `status:false`「各子卷类型、题型、题量、分值需保持一致」，但试卷库里仍显示「平行试卷: N套」、没有「未完成」标记。工具在预演时先用 `exam/lookpaper` 的 `.title` 标题（「一、 单选题（共1题，5分）」）逐份比对结构，不一致直接拒绝。
+  - 移除子卷 `GET exam/delete-childpaper?courseid&paperid=<子卷>&cpi`，立即生效。编辑页 `exam/parallel-paper` 的 `.testPrallelBody_td` 行：标题、子卷 ID（`.rename_yes[paperid]`）、结构「单选题 1，题型分值：5.0，…」、题量、分值；隐藏字段 `serialNumberMode`、`questionGroup`、`examPaperOldTitle`，难度在 `#selectBox p span[value]`。
+  - 改标题时 `randomPaperRenameSync=1` 把子卷改名为「标题(1)」「标题(2)」…；序号 `POST update-exampaper-serialnumber {serialnumber:0 连续|1 按题型}`，归类 `POST update-exampaper-questiongroup {questionGroup:0 归类|1 不归类}`（不归类时只能连续编号）。
+  - 试卷库行：`paperLibLookPaper(类型, id, '1')` 的第三个参数为 1 表示平行试卷，`.random`「平行试卷: N套」，`.incomplete`「[未完成]」；`list_exams(include_papers=true)` 现在带 `parallel`、`unfinished`、`published`（发放次数）。
+  - 实测：两份结构相同的测试卷建成平行试卷（难度中）→ 移除一套并改难度、序号 → 加回一套、改标题并同步子卷、改归类 → 发布给测试班（考试列表出现，发放次数 1）→ 删除考试 → 删除平行试卷进回收站 → 还原后两套子卷都在。混入结构不同的试卷在预演就被拒绝。
+
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
 - 发帖页还提供：附件、图片、云盘、笔记、录音、网页链接、公式/LaTeX、表格、思维导图、白板、导入文档、选择讨论区、关联知识点。发帖后页面会整体刷新。

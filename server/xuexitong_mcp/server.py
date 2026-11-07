@@ -795,6 +795,69 @@ def delete_exam_paper(course: Course_, paper: Annotated[str, Field(description="
     return client().delete_to_bin(course, "试卷", paper)
 
 
+Difficulty_ = Annotated[str, Field(description="试卷难度：易 / 中 / 难")]
+Numbering_ = Annotated[str, Field(description="题目序号：连续 / 按题型；留空=不改")]
+GroupByType_ = Annotated[bool | None, Field(description="是否按题型归类；留空=不改（不归类时序号只能连续）")]
+
+
+@tool(R, "查看一份平行试卷：子卷列表（标题、子卷ID、题型结构、题量、分值）、是否已完成、难度、序号和归类方式、结构是否一致。")
+def get_parallel_paper(course: Course_, paper: Annotated[str, Field(description="平行试卷标题或试卷ID")]) -> dict:
+    return client().parallel_paper(course, paper)
+
+
+@tool(W, "新建平行试卷：从试卷库选 1–20 份题型、题量、分值完全一致的试卷复制成子卷，发布时每个学生随机拿到其中一套。"
+         "先预演（逐份读出题型结构，不一致直接拒绝），确认后创建、等复制任务完成、完成创建并在试卷库核对。发布用 publish_exam。")
+def create_parallel_paper(course: Course_, title: Annotated[str, Field(description="平行试卷标题，1–50 字")],
+                          papers: Annotated[list[str], Field(description="试卷库里作子卷的试卷（标题或ID），1–20 份")],
+                          difficulty: Difficulty_ = "易", numbering: Numbering_ = "", group_by_type: GroupByType_ = None,
+                          confirm: Confirm = False) -> dict:
+    from .ops_paper import check_title, plan_subs, show_structure
+    c = _check_write(course)
+    if not confirm:
+        check_title(title)
+        client()._validate_settings(difficulty or "易", numbering, group_by_type)
+        lib = client().library_papers_for_parallel(c.id, papers)
+        plan = plan_subs([], lib, [])
+        return _dry(c, "新建平行试卷（存入试卷库，不发布）", bind={"papers": [x["paper_id"] for x in lib]},
+                    title=title.strip(), sub_papers=[{"paper_id": x["paper_id"], "title": x["title"], "structure": show_structure(x["structure"])} for x in lib],
+                    structure=plan["structure"], difficulty=difficulty or "易", numbering=numbering or "默认（连续）",
+                    group_by_type="默认（归类）" if group_by_type is None else group_by_type)
+    return client().create_parallel_paper(course, title, papers, difficulty, numbering, group_by_type)
+
+
+@tool(W, "修改平行试卷：加入试卷库里的试卷作子卷、移除子卷、改标题（可同步到全部子卷）、难度、序号和归类方式；改完重新完成创建。"
+         "先预演（检查改完后所有子卷结构一致、1–20 套），确认后执行并核对子卷列表。")
+def update_parallel_paper(course: Course_, paper: Annotated[str, Field(description="平行试卷标题或试卷ID")],
+                          add: Annotated[list[str], Field(description="要加入的试卷库试卷（标题或ID）")] = [],  # noqa: B006
+                          remove: Annotated[list[str], Field(description="要移除的子卷（get_parallel_paper 返回的子卷ID或标题）")] = [],  # noqa: B006
+                          title: Annotated[str, Field(description="新标题，留空=不改")] = "",
+                          sync_titles: Annotated[bool, Field(description="把全部子卷改成平行试卷的标题")] = False,
+                          difficulty: Annotated[str, Field(description="新难度 易/中/难，留空=不改")] = "",
+                          numbering: Numbering_ = "", group_by_type: GroupByType_ = None, confirm: Confirm = False) -> dict:
+    from .ops_paper import check_title, plan_subs
+    from .xxt import _best
+    c = _check_write(course)
+    if not confirm:
+        if title:
+            check_title(title)
+        client()._validate_settings(difficulty, numbering, group_by_type)
+        p = client()._parallel(c, paper)
+        subs = client().parallel_subs(c.id, p["paper_id"])
+        rm = [_best(subs, str(x), id_keys=("sub_id",))["sub_id"] for x in remove]
+        if len(set(rm)) != len(rm):
+            raise XxtError("要移除的子卷重复了。")
+        lib = client().library_papers_for_parallel(c.id, add) if add else []
+        plan = plan_subs(subs, lib, rm)
+        if not (rm or lib or title or sync_titles or difficulty or numbering or group_by_type is not None):
+            raise XxtError("没有要修改的内容。")
+        return _dry(c, "修改平行试卷", bind={"paper": p["paper_id"], "add": [x["paper_id"] for x in lib], "remove": rm},
+                    paper=p["title"], paper_id=p["paper_id"], remove=[s["title"] for s in subs if s["sub_id"] in rm],
+                    add=[x["title"] for x in lib], sub_papers_after=plan["after"], structure=plan["structure"], new_title=title,
+                    sync_titles=sync_titles or None, difficulty=difficulty, numbering=numbering,
+                    group_by_type=group_by_type, published_times=p.get("published"))
+    return client().update_parallel_paper(course, paper, add, remove, title, sync_titles, difficulty, numbering, group_by_type)
+
+
 @tool(R, "查看考试批阅页人数和当前可见行；已交、未交名单尚未核实（逐题打分需人工完成）。")
 def exam_marklist(course: Course_, exam: Annotated[str, Field(description="考试标题或考试ID")]) -> dict:
     return client().exam_marklist(course, exam)

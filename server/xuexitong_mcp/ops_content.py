@@ -287,7 +287,10 @@ class ContentOps(XxtBase):
         return self.on(M2, f"""
             const d=D(await F('/mooc2-ans/exam/paperlist?clazzid=-1&courseid={c.id}&ut=t&cpi={c.cpi}&topicid=0'));
             return [...d.querySelectorAll('ul.dataBody_td[data]')].filter(u=>u.getAttribute('type')=='1').map(u=>{{const li=u.querySelectorAll(':scope>li');
-              return {{paper_id:u.getAttribute('data'),title:T(u.querySelector('.rename_title')),questions:T(li[2]),score:T(li[3]),created:(T(u.querySelector('.dataBody_time'))||'').slice(0,11)}}}});
+              const a=u.querySelector('.rename_title'), oc=a?(a.getAttribute('onclick')||''):'';
+              const par=/paperLibLookPaper\\(\\s*\\d+\\s*,\\s*\\d+\\s*,\\s*'1'\\s*\\)/.test(oc), n=(T(u.querySelector('.random')).match(/(\\d+)\\s*套/)||[])[1];
+              return {{paper_id:u.getAttribute('data'),title:T(a),questions:T(li[2]),score:T(li[3]),published:T(li[6]),created:(T(u.querySelector('.dataBody_time'))||'').slice(0,11),
+                parallel:par?Number(n||0):null,unfinished:!!u.querySelector('.incomplete')}}}});
         """)
 
     def create_exam(self, course: str, title: str, questions: list[dict]) -> dict:
