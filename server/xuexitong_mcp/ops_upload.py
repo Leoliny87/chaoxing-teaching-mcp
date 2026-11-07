@@ -37,6 +37,7 @@ KINDS = {  # kind -> (module, allowed suffixes; None = any)
     "视频": ("insertvideo", {"rmvb", "3gp", "mpg", "mpeg", "mov", "wmv", "avi", "mkv", "mp4", "flv", "vob", "f4v"}),
     "图片": ("insertimage", {"gif", "jpeg", "jpg", "png", "svg", "bmp", "tif", "tiff"}),
     "附件": ("downloadfile", None),
+    "动画": ("insertflash", {"swf"}),
 }
 MAX_BYTES = 1024 ** 3
 _BAD_NAME = set('`~!@#$%^&*+<>?:"{},\\;[]/|')
@@ -143,40 +144,44 @@ class UploadOps(XxtBase):
         if allowed is not None and suffix not in allowed:
             raise XxtError(f"「{kind}」只支持：{'、'.join(sorted(allowed))}。")
         c = self.ctx(course)
-        nid = _safe_id(chapter_id)
         tmp, snap, meta = self._snapshot(file_path, expected_sha256)
         try:
-            # Run from the plain mooc1 base page: the chapter editor app blocks leaving the
-            # page (beforeunload), and get-course-info returns the same window.info it uses.
-            self.on(M1, "return true;")
-            self._stage(snap, meta)
-            r = self.here(r"""
-                let info={}; try{info=(await (await fetch('/mooc-ans/edit/get-course-info?courseId=%s&clazzId=%s',{credentials:'include'})).json()).data||{}}catch(e){}
-                const up=info.uploadParam||{}, ui=info.userInfo||{}, CLOUD='https://pan-yz.chaoxing.com';
-                if(!up.uploadEnc) return {stage:'page'};
-                const f=document.getElementById('mcp-file').files[0];
-                let tk=''; try{const t=await (await fetch('/ananas/getTk',{credentials:'include'})).json(); tk=(t.data&&t.data.tk)||''}catch(e){}
-                const m={_token:tk,d:'/Upload-Files/',puid:ui.uid||up.uploadUid,hqsd:1,
-                  destPathArr:JSON.stringify(['课程',(info.courseInfo||{}).courseName||'','章节']),name:f.name,type:f.type,
-                  lastModifiedDate:new Date(f.lastModified).toISOString(),size:f.size};
-                let sg=null; try{sg=await (await fetch('/ananas/generate-sign',{method:'POST',credentials:'include',
-                  headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
-                  body:new URLSearchParams({params:JSON.stringify(m),enc:up.uploadEnc,t:up.uploadTimeStamp})})).json()}catch(e){}
-                if(!sg||!sg.signature) return {stage:'sign'};
-                if(sg.lastModifiedDate) m.lastModifiedDate=sg.lastModifiedDate;
-                const v=new FormData(); Object.keys(m).forEach(k=>v.append(k,m[k])); v.append('file',f,f.name);
-                ['appid','timestamp','nonce','signature','_from'].forEach(k=>{if(sg[k]!=null)v.append(k,sg[k])});
-                let d=null; try{d=await (await fetch(CLOUD+'/upload/v2/uploadfile',{method:'POST',body:v,credentials:'include'})).json()}catch(e){}
-                if(!d||d.result!==true||!d.data||!/^[0-9a-f]{32}$/.test(d.data.objectId||'')) return {stage:'upload'};
-                return {stage:'done',objectid:d.data.objectId,size:d.data.size,suffix:d.data.suffix||''};
-            """ % (_safe_id(c.id), _safe_id(c.clazz_id)), retry_safe=False)
-            if not isinstance(r, dict) or r.get("stage") != "done":
-                raise XxtError(f"上传在「{(r or {}).get('stage', '未知')}」阶段失败；章节没有修改。")
+            r = self._cloud_upload(c, snap, meta)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         oid, size, name = r["objectid"], int(r.get("size") or meta["size"]), meta["name"]
         ext = "." + (suffix or str(r.get("suffix") or ""))
         return self._insert_object(course, chapter_id, card_id, module, oid, size, name, ext)
+
+    def _cloud_upload(self, c, snap: Path, meta: dict) -> dict:
+        """Upload a staged snapshot to the teacher's cloud disk (课程/<课程名>/章节) the way the chapter editor does."""
+        # Run from the plain mooc1 base page: the chapter editor app blocks leaving the
+        # page (beforeunload), and get-course-info returns the same window.info it uses.
+        self.on(M1, "return true;")
+        self._stage(snap, meta)
+        r = self.here(r"""
+            let info={}; try{info=(await (await fetch('/mooc-ans/edit/get-course-info?courseId=%s&clazzId=%s',{credentials:'include'})).json()).data||{}}catch(e){}
+            const up=info.uploadParam||{}, ui=info.userInfo||{}, CLOUD='https://pan-yz.chaoxing.com';
+            if(!up.uploadEnc) return {stage:'page'};
+            const f=document.getElementById('mcp-file').files[0];
+            let tk=''; try{const t=await (await fetch('/ananas/getTk',{credentials:'include'})).json(); tk=(t.data&&t.data.tk)||''}catch(e){}
+            const m={_token:tk,d:'/Upload-Files/',puid:ui.uid||up.uploadUid,hqsd:1,
+              destPathArr:JSON.stringify(['课程',(info.courseInfo||{}).courseName||'','章节']),name:f.name,type:f.type,
+              lastModifiedDate:new Date(f.lastModified).toISOString(),size:f.size};
+            let sg=null; try{sg=await (await fetch('/ananas/generate-sign',{method:'POST',credentials:'include',
+              headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},
+              body:new URLSearchParams({params:JSON.stringify(m),enc:up.uploadEnc,t:up.uploadTimeStamp})})).json()}catch(e){}
+            if(!sg||!sg.signature) return {stage:'sign'};
+            if(sg.lastModifiedDate) m.lastModifiedDate=sg.lastModifiedDate;
+            const v=new FormData(); Object.keys(m).forEach(k=>v.append(k,m[k])); v.append('file',f,f.name);
+            ['appid','timestamp','nonce','signature','_from'].forEach(k=>{if(sg[k]!=null)v.append(k,sg[k])});
+            let d=null; try{d=await (await fetch(CLOUD+'/upload/v2/uploadfile',{method:'POST',body:v,credentials:'include'})).json()}catch(e){}
+            if(!d||d.result!==true||!d.data||!/^[0-9a-f]{32}$/.test(d.data.objectId||'')) return {stage:'upload'};
+            return {stage:'done',objectid:d.data.objectId,size:d.data.size,suffix:d.data.suffix||''};
+        """ % (_safe_id(c.id), _safe_id(c.clazz_id)), retry_safe=False)
+        if not isinstance(r, dict) or r.get("stage") != "done":
+            raise XxtError(f"上传在「{(r or {}).get('stage', '未知')}」阶段失败；章节没有修改。")
+        return r
 
     def _insert_object(self, course: str, chapter_id: str, card_id: str, module: str, oid: str, size: int, name: str, ext: str) -> dict:
         """Insert a cloud object (already uploaded) as a chapter module, the way the editor's insert dialogs do."""
@@ -191,7 +196,7 @@ class UploadOps(XxtBase):
             out = self.insert_chapter_module(course, chapter_id, card_id, module, {}, inline_html=html, inline_attachment=att)
             return {**out, "object_id": oid, "file": name}
         data = {"objectid": oid, "name": name, "type": ext, "size": size, "hsize": hsize(size), "title": name, "mid": _mid()}
-        if module == "downloadfile":
+        if module in ("downloadfile", "insertflash"):     # no task point (the editor's 动画 insert sets only mid)
             u = f"https://p.ananas.chaoxing.com/star3/origin/{oid}{ext}"
             data.update(src=u, _src=u)
         else:
@@ -209,7 +214,7 @@ class UploadOps(XxtBase):
                 time.sleep(3)
             data["pagenum"] = str(pages or 1)
         out = self.insert_chapter_module(course, chapter_id, card_id, module, data)
-        return {**out, "object_id": oid, "file": name, **({"job_id": job} if module != "downloadfile" else {})}
+        return {**out, "object_id": oid, "file": name, **({"job_id": job} if module not in ("downloadfile", "insertflash") else {})}
 
     def insert_chapter_material(self, course: str, chapter_id: str, card_id: str, material: str, kind: str) -> dict:
         """本课资料 (and course materials as 文档/音频/视频/图片): reuse the cloud object of a course material, no upload."""

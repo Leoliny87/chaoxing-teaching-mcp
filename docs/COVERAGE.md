@@ -231,6 +231,17 @@
   - 智能导入（`qbank/smartimport`）：编辑区文本每行包成 `<p>` 后 `POST /sqp/api/parse?courseid&cpi {html, isParseLatexCode, isParseLatexFormula}` 返回 `paper`（每题 `type` QuestionChoice/MultiChoice/QuestionGapFilling/QuestionYesNo/QuestionCommon/QuestionComposite…、`lines[].notMatch`），页面的 `makeupPaper` 转成 `qjson` 后 `POST import-export-ans/import/import-question {courseId, pid, enc, insertQuestion, qjson, …}`。这个页面会不停重绘（BrowserSkill 拒绝在上面执行脚本），所以工具在静态基础页上调接口，`makeupQ` 移植成 Python。页面在客观题缺答案时不允许加入题库，工具在预演时同样拒绝。预演绑定识别结果的哈希，确认时重新识别，不一致就不导入。
 - **题库导出**补全格式：`export-questions?exportType=excel|word|pdf|ti`，选中题目时同步返回文件；Excel、Word 是老格式（OLE2，.xls/.doc），PDF 以 `%PDF` 开头，Ti 以 `{"time"` 开头。
 - `list_bank_questions` 原来的 `folder` 字段其实是题干（`dirName` 对题目行放的是内容），改为 `folder_id`。
+- **章节插入第二轮**（`search_chapter_resources`、`insert_chapter_suke` / `_book` / `_book_page` / `_panorama` / `_vote`、`insert_chapter_file(kind=动画)`、`import_chapter_document`、`ai_format_chapter`）。接口都从章节编辑器的 `ananas2/assets/Home-*.js` 里读出，读接口都在 mooc1 上（编辑器自己的域）：
+  - 速课：`GET /suke/sukeList?lastId&pageSize=20`（`data.list`，按 `lastId` 翻页；pageSize 大了会失败）；模块 `insertmicroCourse {url, title, cover, mid, _jobid, jobid}`。
+  - 图书：`GET /ananas/book/query/<关键词>/<页>`（`result[]` 带 dxid、bookname、author、publisher、publishdate、readurl、pdgurl、coverurl、size、isshidu）；模块 `insertbook {readurl, pdgurl, coverurl, bookname, author, publisher, publishdate, size(试读书为1), mid, _jobid, jobid, ywbf:"1", start:1}`，带任务点。
+  - 图书内页：`GET /ananas/chapter/query/<关键词>/<页>`；插入的是正文里的行内链接（ProseMirror 标记 chapterLink）：`<a id class="chapterLink" type="text" linktype="0" href _href address title target desc data tips>`。
+  - 全景：`mobile3.chaoxing.com/fyportal/threedresourse/panorama/list`（只能同源读，编辑器用 iframe 打开 `threedresourse/panorama/toselect`）；模块 `resourceQj {previewUrl: https://mobile3.chaoxing.com/fyportal/threedresourse/panorama/review/<id>, title, mid}`。上传新全景是同页的 `panorama/upload`（未做）。
+  - 投票问卷：编辑器弹出 `mobilelearn /page/questionnaire/addOrUpdateQues4Chapter?courseId`，「完成」= `POST /v2/apis/chapterquestion/publish?DB_STRATEGY=COURSEID&STRATEGY_PARA=courseId`（`#formId`：content、courseId、questioncount、timelong（-1 手动结束）、question_type_N（0 单选/1 多选/4 简答/16 判断）、question_content_N、question_options_N/question_option_N_j、question_ismust_N、isscanresult、isanony、isUsed=on），返回 `data.message[0].att_chat_course {id, title, subTitle}`；模块 `insertvote {id, title, description=subTitle, mid, _jobid}`。
+  - 动画：和其他上传类一样先传云盘；模块 `insertflash {objectid, name, type:".swf", size, hsize, src, _src, title, mid}`，不带任务点。
+  - 文档导入：文档先传云盘 → `POST /sqp/api/upload-from-yp {objectId, fileName, isParseLatexFormula}`（云盘对象刚上传时回 `httpCode 404`，过几秒重试）→ `crc` → `GET /sqp/api/parseToHtml?file=<crc>` → `{html}`，追加到卡片正文末尾。
+  - AI 排版：`POST /ai-ans/ai/chapter/format`（JSON `{userId, formatText, styleList, t, enc}`，t/enc 是 `get-course-info` 的 `aiInfo.aiWriting.aiTime` / `aiFormatEnc`）→ `text` 是 `[{styleName, content}]`；页面按模板（通用模板1、通用模板2、科技蓝，样式表写在组件里）把每段包成 `<h1/h2/p style class>`，图片、表格、链接先换成「[图片n]」等占位再放回。工具在预演时就调用 AI 并返回排版后的整页正文，确认时保存的正是这份正文；卡片里有插入项时不处理（AI 排版会重写整页）。
+  - 另外记录：智能编写 `POST /ai-ans/ai/chapter/writing`（流式）、AI 校正 `POST /mooc-ans/edit/ai-correction`、文档校正 `ai-doc-correction`，未做成工具。
+  - 实测：测试章节新建一页，依次插入速课、图书、图书内页、全景、投票问卷（3 道题）、动画（自己生成的 30 字节 swf）、文档导入（自己生成的 docx），每次读回都保留之前的插入项；只读预览页（学生看到的）里速课、图书、全景、投票问卷（题目可见）、动画都正常加载。另一页纯文字用「科技蓝」AI 排版后保存，读回一致；有插入项的页被拒绝。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
@@ -472,7 +483,7 @@
       - 扩展阅读：`{"module":"ballchart","keyword","mid"}`；
       - 章节测验：选「创建新测验」后，会在新标签页打开作业编辑器（`work/goToWorkEditor?chapterId&courseid&fromChapter&workid`），出题和保存走与作业相同的链路，`clazzid=0`。章节里登记的是 `{"module":"work","workid","title","worktype":"workA","jobid":"work-<workid>","mid"}`。页面自己弹出的标签页不归 Agent 会话所有，要用 `bsk tab create --url` 打开同一个地址再操作；
       - 投票问卷：点「完成」时服务端就生成了一个投票活动，登记的是 `{"module":"insertvote","id"(活动ID),"title","description","_jobid","mid"}`。
-  - 还没实际插入的：云盘选文件、图书、图书内页、动画、全景资源、文档导入，以及 3 个 AI 功能；录音、3D 资源、智雅资源库、资源库、课程图谱做不了（原因见上）；直播只记录了选项。
+  - 还没实际插入的（2026-11-08 第二轮后）：云盘选文件、智能编写、AI 校正；录音、3D 资源、智雅资源库、资源库、课程图谱做不了（原因见上）；直播只记录了选项。
   - 插入模块在脚本里的名字：`ananas2/html/insert{audio,ballchart,bbs,book,classtask,cxjour,doc,downloadfile,flash,hyperlink,knowledge,live,pblTeaching,resource3d,resourceQj,suke,video,vote,work}`、`ananas/editor-vue/modules/{insertvideo,insertlink,insertnote,insertbbs,insertsubject,insertchapter,richvideo,realplay,questionnaire,work,visuClass,…}`。
 
 测试数据：任务「[MCP测试]任务1」（含作业任务点「[MCP测试] 作业探测」），已发布到「测试」和「默认班级」，留作学生端测试用。

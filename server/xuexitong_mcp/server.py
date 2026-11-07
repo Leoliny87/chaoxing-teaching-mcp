@@ -1580,6 +1580,120 @@ def upload_material(course: Course_, file_path: Annotated[str, Field(description
     return client().upload_material_v3(course, str(p), file_sha256)
 
 
+@tool(R, "查找可以插入章节的资源：速课（我的速课）、图书（按书名/作者搜索在线图书）、图书内页（按内容搜索书页）、全景（我的全景资源）。")
+def search_chapter_resources(course: Course_, kind: Annotated[str, Field(description="速课 / 图书 / 图书内页 / 全景")],
+                             keyword: Annotated[str, Field(description="搜索词；图书和图书内页必填，速课和全景可按标题过滤")] = "",
+                             page: Annotated[int, Field(description="页码（图书、图书内页每页 10 条左右）")] = 1) -> dict:
+    return client().chapter_resources(course, kind, keyword, page)
+
+
+@tool(W, "把一个速课插入章节某一页（带任务点）。先预演，确认后插入并读回核对，保留该页已有插入项。")
+def insert_chapter_suke(course: Course_, chapter: Chapter_, card_id: CardId_,
+                        suke: Annotated[str, Field(description="速课ID或完整标题（search_chapter_resources kind=速课）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        s = client().find_suke(suke)
+        d = _chapter_dry(c, chapter, "在章节中插入速课（学生可见，带任务点）", card_id=card_id, suke=s["title"], suke_id=s["suke_id"])
+        d["_bind"]["suke"] = s["suke_id"]
+        return d
+    return client().insert_chapter_suke(course, chapter, card_id, suke)
+
+
+@tool(W, "把一本在线图书插入章节某一页（带任务点，学生在章节里阅读）。先用 search_chapter_resources(kind=图书) 搜索，记下 dxid；先预演，确认后插入并核对。")
+def insert_chapter_book(course: Course_, chapter: Chapter_, card_id: CardId_,
+                        keyword: Annotated[str, Field(description="搜索时用的词（书名或作者）")],
+                        book_id: Annotated[str, Field(description="图书的 dxid")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        b = client().find_book(keyword, book_id)
+        return _chapter_dry(c, chapter, "在章节中插入图书（学生可见，带任务点）", card_id=card_id, book=b.get("bookname"),
+                            author=b.get("author"), publisher=b.get("publisher"), pages=b.get("size"), trial_only=bool(b.get("isshidu")))
+    return client().insert_chapter_book(course, chapter, card_id, keyword, book_id)
+
+
+@tool(W, "把图书里的某一页作为链接插入章节某一页正文（「图书内页」）。先用 search_chapter_resources(kind=图书内页) 搜索，记下结果序号；先预演，确认后插入并核对。")
+def insert_chapter_book_page(course: Course_, chapter: Chapter_, card_id: CardId_,
+                             keyword: Annotated[str, Field(description="搜索时用的词")],
+                             result_no: Annotated[int, Field(description="搜索结果第一页里的序号（no）")],
+                             confirm: Confirm = False, page_title: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    if not confirm:
+        if page_title:
+            raise XxtError("预演时 page_title 必须留空。")
+        x = client().find_book_page(keyword, result_no, "")
+        d = _chapter_dry(c, chapter, "在章节正文中插入图书内页链接（学生可见）", card_id=card_id, title=x["title"],
+                         book=x.get("bookname"), page=x.get("page"), excerpt=x.get("excerpt"))
+        d["_bind"]["page_title"] = x["title"]
+        return d
+    return client().insert_chapter_book_page(course, chapter, card_id, keyword, result_no, page_title)
+
+
+@tool(W, "把一个全景资源插入章节某一页（学生在章节里 360° 查看）。全景资源先用 search_chapter_resources(kind=全景) 查。先预演，确认后插入并核对。")
+def insert_chapter_panorama(course: Course_, chapter: Chapter_, card_id: CardId_,
+                            panorama: Annotated[str, Field(description="全景资源ID或文件名")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        p = client().find_panorama(panorama)
+        d = _chapter_dry(c, chapter, "在章节中插入全景资源（学生可见）", card_id=card_id, panorama=p["title"], panorama_id=p["panorama_id"])
+        d["_bind"]["panorama"] = p["panorama_id"]
+        return d
+    return client().insert_chapter_panorama(course, chapter, card_id, panorama)
+
+
+@tool(W, "在章节某一页插入投票问卷（单选/多选/简答/判断，不设答案）：先在平台建好问卷，再插入章节。先预演，确认后创建、插入并核对。")
+def insert_chapter_vote(course: Course_, chapter: Chapter_, card_id: CardId_,
+                        title: Annotated[str, Field(description="问卷标题，1–100 字")],
+                        questions: Annotated[list[dict], Field(description="题目：[{type: 单选|多选|简答|判断, stem, options: [...]（单选/多选）, required: bool}]")],
+                        minutes: Annotated[float | None, Field(description="活动时长（分钟）；留空=手动结束")] = None,
+                        show_result: Annotated[bool, Field(description="允许参与者查看统计")] = False,
+                        anonymous: Annotated[bool, Field(description="匿名")] = False, confirm: Confirm = False) -> dict:
+    from .ops_chapter2 import vote_form
+    c = _check_write(course)
+    if not confirm:
+        vote_form(c.id, title, questions, minutes, show_result, anonymous)
+        return _chapter_dry(c, chapter, "在章节中插入投票问卷（会新建一个问卷，学生可见）", card_id=card_id, title=title,
+                            questions=[f"{i}. {q.get('type')}：{str(q.get('stem'))[:60]}" for i, q in enumerate(questions, 1)],
+                            minutes=minutes or "手动结束", show_result=show_result, anonymous=anonymous)
+    return client().insert_chapter_vote(course, chapter, card_id, title, questions, minutes, show_result, anonymous)
+
+
+@tool(W, "文档导入：把本机的 Word（.doc/.docx）或 PDF 转成网页内容，追加到章节某一页正文末尾（保留该页已有插入项）。文件须在 upload_allow_dirs 里；"
+         "预演记下文件哈希，确认时内容变了就不导入。")
+def import_chapter_document(course: Course_, chapter: Chapter_, card_id: CardId_,
+                            file_path: Annotated[str, Field(description="本机 .doc / .docx / .pdf 的绝对路径")],
+                            confirm: Confirm = False, file_sha256: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    p = _check_upload_path(file_path)
+    if p.suffix.lower() not in (".doc", ".docx", ".pdf"):
+        raise XxtError("文档导入只支持 .doc、.docx、.pdf。")
+    if not confirm:
+        if file_sha256:
+            raise XxtError("预演时 file_sha256 必须留空。")
+        fp = _upload_preview_digest(p)
+        d = _chapter_dry(c, chapter, "把文档内容导入章节正文（学生可见）", card_id=card_id, file=p.name, **fp)
+        d["_bind"].update(file_path=str(p), file_sha256=fp["sha256"])
+        return d
+    return client().import_chapter_document(course, chapter, card_id, str(p), file_sha256)
+
+
+@tool(W, "AI 排版：让平台的 AI 按模板（通用模板1 / 通用模板2 / 科技蓝）重新排版章节某一页的正文。预演就调用 AI 并返回排版后的完整正文供老师查看；"
+         "确认时保存的正是预演给出的这份正文。页里有插入的资料或任务点时不处理。")
+def ai_format_chapter(course: Course_, chapter: Chapter_, card_id: CardId_,
+                      template: Annotated[str, Field(description="通用模板1 / 通用模板2 / 科技蓝")] = "通用模板1",
+                      confirm: Confirm = False, formatted_html: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    if not confirm:
+        if formatted_html:
+            raise XxtError("预演时 formatted_html 必须留空。")
+        ch = client().find_chapter(c.id, chapter)
+        r = client().ai_format_preview(c.id, ch["chapter_id"], card_id, template)
+        d = _chapter_dry(c, chapter, "用 AI 排版后的正文替换这一页正文（学生可见）", card_id=card_id, template=template,
+                         paragraphs=r["paragraphs"], kept_items=r["kept"], new_content_html=r["html"][:20000])
+        d["_bind"]["formatted_html"] = r["html"]
+        return d
+    return client().ai_format_apply(course, chapter, card_id, formatted_html)
+
+
 @tool(W, "把已有的课程资料插入章节某一页（「本课资料」；也可作为文档/音频/视频/图片插入，不用重新上传）。先预演，确认后插入并读回核对，保留该页已有插入项。")
 def insert_chapter_material(course: Course_, chapter: Chapter_, card_id: CardId_,
                             material: Annotated[str, Field(description="课程资料的完整名称或资料ID（list_materials 可查）")],
@@ -1604,7 +1718,7 @@ def insert_chapter_material(course: Course_, chapter: Chapter_, card_id: CardId_
          "文件存到云盘「课程/<课程名>/章节」。预演记录文件哈希，确认时内容必须一致；插入后读回核对，保留该页已有插入项。")
 def insert_chapter_file(course: Course_, chapter: Chapter_, card_id: CardId_,
                         file_path: Annotated[str, Field(description="本机文件的绝对路径（须在 upload_allow_dirs 下）")],
-                        kind: Annotated[str, Field(description="文档 / 音频 / 视频 / 图片 / 附件")],
+                        kind: Annotated[str, Field(description="文档 / 音频 / 视频 / 图片 / 附件 / 动画（.swf，不带任务点）")],
                         confirm: Confirm = False, file_sha256: FileSha_ = "") -> dict:
     from .ops_upload import KINDS
     c = _check_write(course)
