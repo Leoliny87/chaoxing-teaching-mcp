@@ -32,7 +32,7 @@ git -C $Dir -c advice.detachedHead=false checkout --quiet --detach $Ref
 Write-Host "创建虚拟环境 $Venv（Windows 上请保持短路径）"
 & cmd /c "$Python -m venv `"$Venv`""
 $py = "$Venv\Scripts\python.exe"
-& $py -I -c "import sys; sys.path.insert(0, r'$Dir\server'); from xuexitong_mcp.updater import check_manifest; from pathlib import Path; p = check_manifest(Path(r'$Dir')); print('文件校验通过' if not p else '文件校验失败：' + '; '.join(p[:5])); sys.exit(1 if p else 0)"
+& $py -X utf8 -I -c "import sys; sys.path.insert(0, r'$Dir\server'); from xuexitong_mcp.updater import check_manifest; from pathlib import Path; p = check_manifest(Path(r'$Dir')); print('文件校验通过' if not p else '文件校验失败：' + '; '.join(p[:5])); sys.exit(1 if p else 0)"
 if ($LASTEXITCODE -ne 0) { throw "文件校验失败，已停止。" }
 & $py -m pip install --disable-pip-version-check -q -r "$Dir\requirements-lock-py314-linux.txt"
 if ($LASTEXITCODE -ne 0) { throw "依赖安装失败。" }
@@ -47,7 +47,7 @@ if (-not (Test-Path $cfg)) {
     Write-Host "已生成配置 $cfg（请按需填写 write_allow_courses、[tutor] 等）"
 } else { Write-Host "保留已有配置 $cfg" }
 
-& $py -I "$Dir\scripts\launch_stdio.py" --config $cfg --list-tools | Out-Null
+& $py -X utf8 -I "$Dir\scripts\launch_stdio.py" --config $cfg --list-tools | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "自检失败。" }
 $launch = "$Dir\scripts\launch_stdio.py"
 Write-Host "`n安装完成。MCP 客户端配置示例："

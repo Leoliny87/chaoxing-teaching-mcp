@@ -44,7 +44,7 @@ def main(argv: list[str] | None = None) -> None:
     from .server import TOOLS, _V2, _state, apply_policy, build_server, shutdown
     if a.list_tools:
         prof = apply_policy(cfg)
-        print(f"# profile: {prof}", file=sys.stderr)
+        print(f"# profile: {prof}")
         for name, kind, desc, _ in TOOLS:
             if name in _state["allowed"]:
                 print(f"{name:26s} [{kind}] {desc}")

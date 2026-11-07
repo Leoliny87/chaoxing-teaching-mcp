@@ -40,3 +40,11 @@ spot_check_rate = 0.2
 url = ""
 token = ""
 timeout = 60
+
+[update]
+# `xuexitong-mcp update` 从这个 git 远端取发布版本（vX.Y.Z 标签）。
+remote = "origin"
+channel = "stable"          # stable：只要正式版；rc：也接受 vX.Y.ZrcN
+# 学生服务器建议打开：只接受教师用 SSH 密钥签名的版本标签。
+require_signed_tags = false
+allowed_signers = ""        # 例如 "~/.config/xuexitong-mcp/allowed_signers"

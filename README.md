@@ -37,6 +37,35 @@ export XUEXITONG_MCP_BROWSER='YOUR_EXISTING_BROWSER_INSTANCE_ID'
 
 推荐入口为 `scripts/launch_stdio.py`，运行 `server/` 中的代码并隔离各进程状态；默认使用 stdio，不开启 HTTP 监听。写工具有预演和显式确认参数，宿主仍需实现权限与审批，`plan_id` 本身不等于人工批准。失败、超时或结果不明时先核查状态，避免重复提交；不要绕过浏览器访问校验。
 
+## 安装与一键更新
+
+当前版本 0.3.0。安装是一份 git 检出（固定在某个发布标签），这样以后可以一条命令更新和回退：
+
+```powershell
+# Windows（PowerShell 5.1+）；默认角色 student，教师加 -Profile teacher
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Profile student
+```
+
+```bash
+# Linux / macOS
+bash scripts/install.sh --profile student
+```
+
+安装脚本会：检出最新发布标签 → 按 `MANIFEST.sha256` 校验每个文件 → 建虚拟环境并安装锁定的依赖 → 生成 `~/.config/xuexitong-mcp/config.toml`（已有就不动）→ 自检 → 打印 MCP 客户端配置。不会询问或保存任何账号、密码、cookie。
+
+更新和回退（用安装时打印的 python 路径）：
+
+```bash
+python -I scripts/launch_stdio.py update --check   # 只看有没有新版本
+python -I scripts/launch_stdio.py update           # 更新到最新发布版
+python -I scripts/launch_stdio.py rollback         # 回到更新前的版本
+python -I scripts/launch_stdio.py schedule         # 打印每日自动更新要登记的 cron / 计划任务命令
+```
+
+`update` 会：拒绝覆盖本地改过的文件 → 取远端标签 → （可选）校验 SSH 签名 → 切换版本 → 按清单校验所有文件 → 依赖有变化才重装 → 自检；任何一步失败都自动回到原版本。清单只能发现发布后被改动或损坏的文件；要防止有人伪造新版本，学生服务器请在 `[update]` 里打开 `require_signed_tags`，教师用 `git tag -s`（`gpg.format=ssh`）给版本签名，并把 `allowed_signers` 文件随安装分发。
+
+发布新版本（教师）：改 `server/xuexitong_mcp/__init__.py` 的版本号 → 重新生成 `MANIFEST.sha256` → 提交 → `git tag -s vX.Y.Z` → `git push --tags`。
+
 ## 角色配置（策略层）
 
 规则放在 MCP 里，不放在提示词里。`config.toml` 的 `profile` 决定这台服务器注册哪些工具，不在角色里的工具不会出现在工具列表中，调用时也会被拒绝：
