@@ -49,7 +49,7 @@ class StudentMoreOps:
         r = self.on(M2, """
             const page=D(await F('/mooc2-ans/wrongque/page?'+new URLSearchParams(%(q)s)));
             const stuId=(page.querySelector('#stuId')||{}).value||'';
-            const h=await F('/mooc2-ans/wrongque/data',POST({clazzid:%(z)s,courseid:%(c)s,cpi:%(cpi)s,keyWord:%(k)s,topicArr:'',type:'',stuId}));
+            const h=await F('/mooc2-ans/wrongque/data',POST({clazzid:%(z)s,courseid:%(c)s,cpi:%(cpi)s,keyWord:%(k)s,topicArr:'',type:'-1',stuId}));
             const d=D(h);
             const items=[...d.querySelectorAll('.wrong-topic-item, .questionLi, li.topic, .wrongQue, .que-item, [data-qid], [qid]')];
             const pick=e=>{ const c=e.cloneNode(true); c.querySelectorAll('.rightAnswer,.right-answer,.correctAnswer,.answerRight,.analysis,.answerAnalysis,.jiexi,[class*=right_answer],[class*=Analysis]').forEach(x=>x.remove());
@@ -65,3 +65,40 @@ class StudentMoreOps:
             x["text"] = re.split(r"(正确答案|参考答案|答案解析|解析[:：])", x["text"])[0].strip()
         return {"course": c.name, "count": len(items), "items": items,
                 "note": "只给出题目和你自己的作答，不提供正确答案；请自己复习或向老师、辅导服务提问。"}
+
+    def my_course_graph(self, course: str) -> dict:
+        """课程图谱 as the student sees it: stat2 /study-knowledge/index, then GET /stat2/study-knowledge/stu-detail/data
+        {clazzid, courseid, cpi, ut:s, pEnc, topicName, personId=cpi, parentId} (with the page as referrer)."""
+        c = self._stu_ctx(course)
+        p = c.params
+        q = {"courseid": p["courseid"], "clazzid": p["clazzid"], "cpi": p["cpi"], "ut": "s", "t": p["t"], "stuenc": p["enc"]}
+        r = self.on(STAT, r"""
+            const page='/study-knowledge/index?'+new URLSearchParams(%s);
+            const d=D(await F(page)); const v=id=>(d.getElementById(id)||{}).value||'';
+            if(!v('enc-courseId')) return {stage:'page'};
+            const base={clazzid:v('enc-clazzId'),courseid:v('enc-courseId'),cpi:v('enc-cpi'),ut:v('enc-ut'),pEnc:v('pEnc')};
+            const j=await J('/stat2/study-knowledge/stu-detail/data?'+new URLSearchParams({...base,topicName:'',personId:base.cpi,parentId:'0'}),
+              {referrer:location.origin+page});
+            return {stage:'ok',data:j&&j.data};
+        """ % json.dumps(q))
+        if not isinstance(r, dict) or r.get("stage") != "ok" or not isinstance(r.get("data"), list):
+            raise XxtError("课程图谱读取失败。")
+        pct = lambda x: round(float(x) * 100, 1) if isinstance(x, (int, float)) and x <= 1 else x   # noqa: E731
+        out: list[dict] = []
+
+        def walk(items, level):
+            for x in items or []:
+                if not isinstance(x, dict):
+                    continue
+                out.append({"name": x.get("topic"), "level": level,
+                            "prerequisites": [y.get("name") for y in x.get("beforeList") or [] if isinstance(y, dict)],
+                            "followups": [y.get("name") for y in x.get("afterList") or [] if isinstance(y, dict)],
+                            "related": [y.get("name") for y in x.get("relationList") or [] if isinstance(y, dict)],
+                            "completion_rate": pct(x.get("completeWeightRate")), "mastery_rate": pct(x.get("graspWeightRate")),
+                            "tasks_done": f"{x.get('completeCount', 0)}/{x.get('publishCount', 0)}" if "publishCount" in x else None,
+                            "materials": x.get("courseDataCount")})
+                walk(x.get("childrenList"), level + 1)
+        walk(r["data"], 1)
+        return {"course": c.name, "count": len(out), "points": out,
+                "outline": "\n".join("  " * (x["level"] - 1) + str(x["name"]) for x in out),
+                "note": "完成率看知识点关联的任务点、作业、考试、章节测验的完成情况；掌握率看这些题目的得分。统计可能延迟 2 小时以内。"}

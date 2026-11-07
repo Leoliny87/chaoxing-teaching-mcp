@@ -1250,6 +1250,11 @@ def list_my_wrong_questions(course: StuCourse_, keyword: Annotated[str, Field(de
     return client().my_wrong_questions(course, keyword)
 
 
+@tool(R, "学生端：我的课程图谱（知识点结构、前置/后置/关联知识点、我的完成率和掌握率）。只读。")
+def list_my_course_graph(course: StuCourse_) -> dict:
+    return client().my_course_graph(course)
+
+
 @tool(R, "学生端：列出我在某门课里的考试（标题、状态、剩余时间、截止时间）。只读：考试由学生本人在学习通里作答，本服务不代答。")
 def list_my_exams(course: StuCourse_) -> dict:
     return client().my_exams(course)
@@ -1578,6 +1583,124 @@ def upload_material(course: Course_, file_path: Annotated[str, Field(description
         fp = _upload_preview_digest(p)
         return _dry(c, "上传课程资料（学生可见）", bind={"file_path": str(p), "file_sha256": fp["sha256"]}, file=p.name, **fp)
     return client().upload_material_v3(course, str(p), file_sha256)
+
+
+# ------------------------------------------------------------------ 课程图谱（资源中心 → 课程图谱）
+Point_ = Annotated[str, Field(description="知识点名称或ID（get_course_graph 可查）")]
+
+
+@tool(R, "读取课程图谱（知识图谱）：全部知识点的层级大纲、每个知识点的前置/后置/关联知识点、标签、在当前班级是否显示，以及图谱回收站。")
+def get_course_graph(course: Course_) -> dict:
+    out = client().course_graph(course)
+    out["recycle_bin"] = client().knowledge_recycle_bin(course)["items"]
+    return out
+
+
+@tool(R, "查看一个知识点：上下级、前置/后置/关联知识点，以及关联的题目（题干和题型）。")
+def get_knowledge_point(course: Course_, point: Point_) -> dict:
+    p = client().find_point(course, point)
+    return {**p, "linked_questions": client().linked_questions(course, p["point_id"])}
+
+
+@tool(W, "往课程图谱里批量添加知识点：outline 每行一个知识点，下一级在行首多缩进两个空格（最多 7 级）；parent 留空=加在最外层末尾，"
+         "填已有知识点=加为它的子级。先预演，确认后逐个添加并核对层级和顺序。")
+def add_knowledge_points(course: Course_, outline: Annotated[str, Field(description="知识点大纲，如 \"A\\n  a1\\n  a2\\nB\"")],
+                         parent: Annotated[str, Field(description="上级知识点（名称或ID），留空=最外层")] = "", confirm: Confirm = False) -> dict:
+    from .ops_graph import graph_outline
+    c = _check_write(course)
+    if not confirm:
+        rows = graph_outline(outline)
+        par = client().find_point(c.id, parent) if parent else None
+        return _dry(c, "在课程图谱中添加知识点（学生可见）", bind={"parent": par["point_id"] if par else ""},
+                    parent=par["name"] if par else "（最外层）", points=len(rows),
+                    outline="\n".join("  " * (lv - 1) + n for lv, n in rows))
+    return client().add_knowledge_points(course, outline, parent)
+
+
+@tool(W, "给课程图谱里的一个知识点改名。先预演，确认后改名并读回核对。")
+def rename_knowledge_point(course: Course_, point: Point_, new_name: Annotated[str, Field(description="新名称，1–100 字")],
+                           confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        p = client().find_point(c.id, point)
+        return _dry(c, "知识点改名", bind={"point": p["point_id"]}, point=p["name"], new_name=new_name)
+    return client().rename_knowledge_point(course, point, new_name)
+
+
+@tool(D, "删除课程图谱里的知识点（子级一起删除，进图谱回收站，可用 restore_knowledge_points 还原）。先预演，确认后删除并核对。")
+def delete_knowledge_points(course: Course_, points: Annotated[list[str], Field(description="知识点名称或ID列表")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        pts = client().knowledge_points(c.id)
+        sel = [client().find_point(c.id, x, pts) for x in points]
+        ids = {p["point_id"] for p in sel}
+        kids = [p["name"] for p in pts if p["parent_id"] in ids and p["point_id"] not in ids]
+        return _dry(c, "删除知识点（进图谱回收站）", bind={"points": sorted(ids)}, points=[p["name"] for p in sel],
+                    children_also_deleted=kids or None)
+    return client().delete_knowledge_points(course, points)
+
+
+@tool(W, "从图谱回收站还原知识点（get_course_graph 的 recycle_bin 里的 log_id）。注意：只还原上级时平台不会把子级一起还原，子级要一并选上。先预演，确认后还原并核对。")
+def restore_knowledge_points(course: Course_, log_ids: Annotated[list[str], Field(description="回收站记录的 log_id")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        items = {x["log_id"]: x for x in client().knowledge_recycle_bin(c.id)["items"]}
+        miss = [x for x in log_ids if str(x) not in items]
+        if miss or not log_ids:
+            raise XxtError(f"回收站里没有这些记录：{miss}。")
+        return _dry(c, "还原知识点", points=[items[str(x)]["name"] for x in log_ids])
+    return client().restore_knowledge_points(course, [str(x) for x in log_ids])
+
+
+@tool(W, "设置一个知识点的前置、后置和关联知识点（会替换它原有的全部关系）。related 每项 {point, desc}。先预演，确认后保存并读回核对。")
+def set_knowledge_relations(course: Course_, point: Point_,
+                            prerequisites: Annotated[list[str], Field(description="前置知识点（名称或ID）")] = [],  # noqa: B006
+                            followups: Annotated[list[str], Field(description="后置知识点（名称或ID）")] = [],  # noqa: B006
+                            related: Annotated[list[dict], Field(description="关联知识点：[{point, desc(关系说明，可空)}]")] = [],  # noqa: B006
+                            confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        pts = client().knowledge_points(c.id)
+        p = client().find_point(c.id, point, pts)
+        nm = lambda xs: [client().find_point(c.id, x, pts)["name"] for x in xs]   # noqa: E731
+        return _dry(c, "设置知识点关系（替换原有关系，学生可见）", bind={"point": p["point_id"]}, point=p["name"],
+                    before={"前置": p["prerequisites"], "后置": p["followups"], "关联": p["related"]},
+                    after={"前置": nm(prerequisites), "后置": nm(followups),
+                           "关联": [f"{client().find_point(c.id, str(x.get('point')), pts)['name']}（{x.get('desc') or ''}）" for x in related]})
+    return client().set_knowledge_relations(course, point, prerequisites, followups, related)
+
+
+@tool(W, "在某个班级的课程图谱里显示或隐藏知识点（隐藏后该班学生看不到、不计入学情统计；切换会触发学情重新计算）。先预演，确认后设置并核对。")
+def set_knowledge_visibility(course: Course_, points: Annotated[list[str], Field(description="知识点名称或ID列表")],
+                             visible: Annotated[bool, Field(description="true=显示，false=隐藏")], class_name: Class_ = "",
+                             confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        pts = client().knowledge_points(c.id)
+        sel = [client().find_point(c.id, x, pts) for x in points]
+        target = _preview_publish_class(c.id, class_name)
+        return _dry(c, ("显示" if visible else "隐藏") + "知识点（只影响这个班）", bind={"points": [p["point_id"] for p in sel], "class_name": target["id"]},
+                    points=[p["name"] for p in sel], class_name=target["name"])
+    return client().set_knowledge_visibility(course, points, visible, class_name)
+
+
+@tool(W, "把题库里的题目关联到一个知识点（保留题目原有的知识点）。关联后，学生在作业、考试、章节测验里做这些题的得分会计入该知识点的掌握率。"
+         "先预演，确认后提交并核对（平台后台处理，可能要几秒）。")
+def link_questions_to_knowledge(course: Course_, point: Point_,
+                                question_ids: Annotated[list[str], Field(description="题库题目ID（list_bank_questions 可查）")],
+                                confirm: Confirm = False) -> dict:
+    from .ops_bank import _qids
+    c = _check_write(course)
+    if not confirm:
+        p = client().find_point(c.id, point)
+        ids = _qids(question_ids)
+        bank = client()._all_questions(client().course(c.id))
+        miss = [q for q in ids if q not in bank]
+        if miss:
+            raise XxtError(f"题库里没有这些题：{miss[:5]}。")
+        return _dry(c, "把题目关联到知识点", bind={"point": p["point_id"]}, point=p["name"],
+                    questions=[bank[q]["stem"][:60] for q in ids])
+    return client().link_questions(course, point, list(question_ids))
 
 
 @tool(R, "查找可以插入章节的资源：速课（我的速课）、图书（按书名/作者搜索在线图书）、图书内页（按内容搜索书页）、全景（我的全景资源）。")
