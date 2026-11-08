@@ -4,31 +4,32 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-08，第二轮后）
+## 0. 当前完成度（2026-11-08，第三轮后）
 
-注册的工具：共 174 个；教师配置 155 个、学生配置 18 个（可再开讨论两项）、预审配置 53 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+注册的工具：共 201 个；教师配置 181 个、学生配置 19 个（可再开讨论两项）、预审配置 58 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
 - 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。课程设置（学生端配置和课程设置里 20 项开关/选项/文字，含允许学生自测、视频水印、承诺书、课程通知、试读、资源下载、评价、AI 功能、课程说明）；班级设置（允许加入、加入需同意、允许退课、忽略视频拖拽、对学生隐藏、结课/取消结课、人数上限）和班级改名；把学生移出班级、从退课日志恢复、从本课另一个班添加学生；教师团队、成绩权重（经典模式读写）、加班/退课日志。
-- 章节：读内容、改名、写正文（格式白名单）、插入链接/注释/讨论/扩展阅读/章节测验/速课/图书/图书内页/全景/投票问卷/课程图谱，以及文档、音频、视频、图片、附件、动画六种文件（本机上传或直接引用课程资料，即「本课资料」）；文档导入（Word/PDF 转成正文）、AI 排版（三种模板，预演即给出排版结果）；移到另一章节下、调整顺序、按大纲快速导入目录、删除（锁定子章节）。
+- 章节：读内容、改名、写正文（格式白名单）、插入链接/注释/讨论/扩展阅读/章节测验/速课/图书/图书内页/全景/投票问卷/课程图谱，以及文档、音频、视频、图片、附件、动画六种文件（本机上传或直接引用课程资料，即「本课资料」）；文档导入（Word/PDF 转成正文）、AI 排版（三种模板，预演即给出排版结果）、智能编写（平台 AI 先写大纲再写正文，追加到页面末尾；自定义文章类型/目录结构/写作风格）、AI 校正（文本和文档检测、把文本修改建议替换进正文）、上传新的全景图片/视频；移到另一章节下、调整顺序、按大纲快速导入目录、删除（锁定子章节）。
 - 作业：23 种题型新建、答题卡作业、发放（含常用设置）、修改已发布作业的起止时间、提交情况、逐题读学生作答、批阅给分（含批语、部分批阅）、打回、按学生催交（收件人在预演时锁定）、删除到回收站/还原。
-- 试卷与考试：22 种题型（含选做题）建卷、自动随机组卷（按题型从题库抽题）、平行试卷（新建、加入/移除子卷、难度、序号、归类、同步子卷标题，结构不一致时拒绝）、发布考试（含常用防作弊和查看设置）、修改已发布考试的时间和时长、考试批阅页人数；考试和试卷删除到回收站、还原、试卷彻底删除（被考试引用的试卷平台不允许彻底删除，工具会拒绝）。
+- 试卷与考试：22 种题型（含选做题）建卷、自动随机组卷（按题型从题库抽题）、平行试卷（新建、加入/移除子卷、难度、序号、归类、同步子卷标题，结构不一致时拒绝）、试卷库「导入试卷」（平台 Word 模板或 .ti 文件，也可导入成平行试卷的子卷）、导出试卷（Word/PDF/Excel/Ti）、发布考试（含常用防作弊和查看设置）、修改已发布考试的时间和时长（平台的校验提示原样返回）、考试批阅页人数；考试和试卷删除到回收站、还原、试卷彻底删除（被考试引用的试卷平台不允许彻底删除，工具会拒绝）。
 - 题库：24 种题型新增、列表（不返回答案）、修改题目、文件夹（新建、把题移进去）、删除到回收站/还原、难度、标签（新建、打标签）、批量导入（按题目数据生成模板 Excel 导入 14 种题型；导入本机 Excel/.ti 文件；智能导入：普通文本交给平台识别）、导出到本机（Excel/Word/PDF/Ti，可选不含答案）。
 - 课程图谱：读取知识点大纲和关系；按缩进大纲批量添加、改名、删除到图谱回收站/还原、前置/后置/关联关系、按班显示隐藏、把题库题目关联到知识点、插入章节。
+- 新版图谱（测试课已切换到新版）：切换到新版、图谱类型列表和问题/能力/课程思政图谱开关、知识点标签（新建标签、打标签）、课程思政图谱读取、问题图谱（层级名称、问题增改、关联下一层问题、删除到回收站/还原）、能力图谱=课程目标（增改删、目标标签、关联知识点）；学生端读取问题图谱、能力图谱、课程思政图谱（不含教师参考）。
 - 通知：发送、删除、按 UUID 补记；讨论：发帖、列表、置顶/加精及取消、教师回复、删除；课程资料：上传、列表、文件夹、移进文件夹、下载权限、删除/还原/彻底删除；成绩：读取、导出 Excel 到本机。
 - 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务，或按分组方案分小组，可设组内/组间互评权重）、学生反馈、白板、抽签、推送课程资料、推送课件、推送教案；结束活动、活动结果。
 - 课件库与教案：把课程资料里的 ppt/pptx/pdf/doc/docx 加入课件库；新建教案（可带 课前/课中/课后 等段落）。
 - 教学任务：新建、发布；任务点 21 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到、自测（新建自测模板：模拟测验或刷题，随机或按题型抽题）。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
 - 读取：课程首页（待办、作业/考试/AI实践预警、学情看板、高风险学生）、学情统计（基础数据、学情统计、学习监控、课堂报告）、教学日历、下载中心、AI 助教（是否开启、知识库设置、会话列表）。
-- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务/学习记录/课程图谱（结构、关系、本人完成率和掌握率）/错题集（错题只给题目和本人作答，不给正确答案），作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
+- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务/学习记录/课程图谱（结构、关系、本人完成率和掌握率）/新版的问题、能力、思政图谱/错题集（错题只给题目和本人作答，不给正确答案），作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
 - 策略层与打包：三种角色、确认提交、节流、不可信内容标注、中心辅导、预审记录；安装脚本、一键更新和回退；v0.3.0、v0.4.0、v0.5.0 已发布。
 
 **还没做（可以继续补）**
-- 教师写：教师团队增删成员和权限（涉及其他真实教师，只做了读取）；试卷库「导入试卷」（Word/Ti 文件，含导入成平行试卷的子卷）。
-- 章节：智能编写、AI 校正（接口已记录）；全景资源的上传（只做了选用已有全景）。
-- 课程图谱：新版图谱里的问题图谱、目标图谱、思政图谱（要先把课程切换到新版，切换会改动图谱结构、页面限制切换 2 次，没切换）；图谱的批量导入/导出、标签、属性。
+- 教师写：教师团队增删成员和权限（涉及其他真实教师，只做了读取）。
+- 章节 AI 校正：检测请求平台都接受了，但测试时文本和文档检测都在「检测中/进行中」停了 45 分钟以上（在编辑器里点「开始检测」也一样），没拿到真实的检测结果；替换逻辑按编辑器源码移植，只用构造的数据验证过。全景「6 张图片」类型：上传接口只收一个文件、不带类型，怎么传 6 张图没弄清。
+- 新版图谱：「知识列表」「学习地图」两种图谱的开关和读取没找到接口；学生在问题图谱里的探索和讨论（属于学生写入，要走「确认提交」）没做；图谱的批量导入/导出。
 - AI 助教对话（只读取了设置和会话列表）。
-- 错题集：读取路径已实测（按页面的参数查询，返回空列表）。学生本人答错并提交的作业 6 小时后错题集仍为空；用考试测试时平台要求学生本人完成滑块验证，还没完成。有错题时的返回格式未核实。
+- 错题集：读取路径已实测（按页面的参数查询，返回空列表）。用本人在测试课里的学生身份，作业答错（0 分）和考试答错（0 分，学生本人完成滑块验证后交卷）都提交了，错题集仍为空。推测平台不给课程创建者本人的学生身份收集错题；要用一个纯学生账号或章节测验再验证。有错题时的返回格式未核实。
 - 「课程」(type 0)、「选课」(24) 不在课程任务的添加菜单里，没做。
 
 **按需求不做或做不了**
@@ -237,12 +238,12 @@
   - 速课：`GET /suke/sukeList?lastId&pageSize=20`（`data.list`，按 `lastId` 翻页；pageSize 大了会失败）；模块 `insertmicroCourse {url, title, cover, mid, _jobid, jobid}`。
   - 图书：`GET /ananas/book/query/<关键词>/<页>`（`result[]` 带 dxid、bookname、author、publisher、publishdate、readurl、pdgurl、coverurl、size、isshidu）；模块 `insertbook {readurl, pdgurl, coverurl, bookname, author, publisher, publishdate, size(试读书为1), mid, _jobid, jobid, ywbf:"1", start:1}`，带任务点。
   - 图书内页：`GET /ananas/chapter/query/<关键词>/<页>`；插入的是正文里的行内链接（ProseMirror 标记 chapterLink）：`<a id class="chapterLink" type="text" linktype="0" href _href address title target desc data tips>`。
-  - 全景：`mobile3.chaoxing.com/fyportal/threedresourse/panorama/list`（只能同源读，编辑器用 iframe 打开 `threedresourse/panorama/toselect`）；模块 `resourceQj {previewUrl: https://mobile3.chaoxing.com/fyportal/threedresourse/panorama/review/<id>, title, mid}`。上传新全景是同页的 `panorama/upload`（未做）。
+  - 全景：`mobile3.chaoxing.com/fyportal/threedresourse/panorama/list`（只能同源读，编辑器用 iframe 打开 `threedresourse/panorama/toselect`）；模块 `resourceQj {previewUrl: https://mobile3.chaoxing.com/fyportal/threedresourse/panorama/review/<id>, title, mid}`。上传新全景是同页的 `panorama/upload`（第三轮已做成 `upload_panorama`）。
   - 投票问卷：编辑器弹出 `mobilelearn /page/questionnaire/addOrUpdateQues4Chapter?courseId`，「完成」= `POST /v2/apis/chapterquestion/publish?DB_STRATEGY=COURSEID&STRATEGY_PARA=courseId`（`#formId`：content、courseId、questioncount、timelong（-1 手动结束）、question_type_N（0 单选/1 多选/4 简答/16 判断）、question_content_N、question_options_N/question_option_N_j、question_ismust_N、isscanresult、isanony、isUsed=on），返回 `data.message[0].att_chat_course {id, title, subTitle}`；模块 `insertvote {id, title, description=subTitle, mid, _jobid}`。
   - 动画：和其他上传类一样先传云盘；模块 `insertflash {objectid, name, type:".swf", size, hsize, src, _src, title, mid}`，不带任务点。
   - 文档导入：文档先传云盘 → `POST /sqp/api/upload-from-yp {objectId, fileName, isParseLatexFormula}`（云盘对象刚上传时回 `httpCode 404`，过几秒重试）→ `crc` → `GET /sqp/api/parseToHtml?file=<crc>` → `{html}`，追加到卡片正文末尾。
   - AI 排版：`POST /ai-ans/ai/chapter/format`（JSON `{userId, formatText, styleList, t, enc}`，t/enc 是 `get-course-info` 的 `aiInfo.aiWriting.aiTime` / `aiFormatEnc`）→ `text` 是 `[{styleName, content}]`；页面按模板（通用模板1、通用模板2、科技蓝，样式表写在组件里）把每段包成 `<h1/h2/p style class>`，图片、表格、链接先换成「[图片n]」等占位再放回。工具在预演时就调用 AI 并返回排版后的整页正文，确认时保存的正是这份正文；卡片里有插入项时不处理（AI 排版会重写整页）。
-  - 另外记录：智能编写 `POST /ai-ans/ai/chapter/writing`（流式）、AI 校正 `POST /mooc-ans/edit/ai-correction`、文档校正 `ai-doc-correction`，未做成工具。
+  - 智能编写、AI 校正、文档校正在第三轮做成了工具（见下一节）。
   - 实测：测试章节新建一页，依次插入速课、图书、图书内页、全景、投票问卷（3 道题）、动画（自己生成的 30 字节 swf）、文档导入（自己生成的 docx），每次读回都保留之前的插入项；只读预览页（学生看到的）里速课、图书、全景、投票问卷（题目可见）、动画都正常加载。另一页纯文字用「科技蓝」AI 排版后保存，读回一致；有插入项的页被拒绝。
 - **课程图谱**（资源中心 → 课程图谱，`mooc2-ans questionBankTopic/knowledgegraphframe`；工具 `get_course_graph`、`get_knowledge_point`、`add_knowledge_points`、`rename_knowledge_point`、`delete_knowledge_points`、`restore_knowledge_points`、`set_knowledge_relations`、`set_knowledge_visibility`、`link_questions_to_knowledge`、`insert_chapter_graph`，学生端 `list_my_course_graph`）：
   - 列表 `GET questionBankTopic/knowledgepointsdata?courseid&clazzid&cpi&ut=t&query&searchType`（HTML：`li.topicList[data][parentId][level]`、`#listtopicname_<id>`、三个 `.tree_tags_box`=关联/前置/后置、`.labelList`、`#showhidestatus_<id>`）。
@@ -255,8 +256,36 @@
   - 学生端：`stat2 /study-knowledge/index`（隐藏字段 `enc-courseId` 等，`pEnc` 为空也能用）→ `GET /stat2/study-knowledge/stu-detail/data {clazzid, courseid, cpi, ut:s, pEnc, topicName, personId=cpi, parentId}`（要带页面作为 Referer），返回树形 `childrenList`、`beforeList/afterList/relationList`、`completeWeightRate`（完成率）、`graspWeightRate`（掌握率）。页面说明：完成率看知识点关联的任务点、作业、考试、章节测验的完成情况，掌握率看这些题目的得分；统计可能延迟 2 小时以内。
   - 其他导入导出（未做成工具）：智能导入 `qbank/import-topic-page`、模板导入 `import-export-ans/import/topicbyobjectid`、xmind 导入 `xmindFileImportTopic`、同步其他课程 `syncothercoursetopic`、课程章节导入 `savetopicbychapterid`；导出 Excel `questionBankTopic/export-knowledge-points`、xmind `exportcoursetopicxmind`。
   - 实测：测试课里建了 A(a1 a2 a3)、B(b1 b2)、C(c2(c22) c1)、D、E(e1(e11)) 一套用字母和数字命名的知识点，关系 B→C、C 前置 B / 后置 D、E / 关联 A，按班隐藏再显示、删除再还原、两道题关联到 A、一题关联到 c1；学生身份读到的结构和关系与教师端一致。
-- **其他图谱（只有新版图谱才有）**：课程图谱页「体验新版」会把课程切换到新版（`coursetopic/switchtopicversion`，页面限制切换 2 次；切换后父级知识点变成「分类」，知识点下不能再有子级，同名节点自动加数字）。新版是 `/topic-ans/knowgraph/index.html` 里的单页应用：问题图谱 `#/questionMap`、目标图谱 `#/targetMapTeacher`（课程目标）、目标图谱模板 `#/targetMapTemp`、思政图谱 `#/ideologyPoliticsMap`，地图模式 `#/map`。旧版的四种视图：大纲模式、思维导图模式、图谱模式（`questionBankTopic/topicnewgraphdiagram`）、地图模式。测试课还没切换，新版的读写没有做。
+- **其他图谱（只有新版图谱才有）**：课程图谱页「体验新版」会把课程切换到新版（`coursetopic/switchtopicversion`，页面限制切换 2 次；切换后父级知识点变成「分类」，知识点下不能再有子级，同名节点自动加数字）。新版是 `/topic-ans/knowgraph/index.html` 里的单页应用：问题图谱 `#/questionMap`、目标图谱 `#/targetMapTeacher`（课程目标）、目标图谱模板 `#/targetMapTemp`、思政图谱 `#/ideologyPoliticsMap`，地图模式 `#/map`。旧版的四种视图：大纲模式、思维导图模式、图谱模式（`questionBankTopic/topicnewgraphdiagram`）、地图模式。第三轮已把测试课切换到新版并做成工具（见下一节）。
 - **错题集排查（2026-11-08）**：学生端错题集页 `wrongque/page`（隐藏字段 `stuId=0`、`queType=-1`，页面自己按 `type=-1` 查 `wrongque/data`；工具已改成同样的参数）。真实测试：作业「[MCP测试]错题集测试」学生本人答错并「确认提交」，作业详情显示 0 分、带「错题练习」按钮（这是按单份作业生成自测：`mooc2/exam/create-self-test {answerId, from:workWrongQuestion, createType:4}`），但错题集 6 小时后仍为空；把这道题事后关联到知识点也没有变化；课程设置里没有错题集相关开关。换成考试测试时，进入考试前平台弹出滑块安全验证，需要学生本人完成。
+
+### 2026-11-08（第三轮）新版图谱、试卷库导入导出、智能编写、AI 校正、全景上传
+- **新版图谱**（`ops_graph2.py`，测试课已用 `upgrade_course_graph` 切换）：
+  - 切换：`GET mooc2-ans coursetopic/switchtopicversion?switchtopicstatus=1`，再轮询 `switchtopicversionstatus`。切换后师生两端的课程图谱入口都打开 `/topic-ans/knowgraph/index.html#/knowledgeMapTempPage`（学生带 `ut=s`）。
+  - 图谱类型：`coursetopic/getmodelheadlist` 的 `topicModelList`：1 知识图谱、6 知识列表、2 学习地图、3 问题图谱、4 能力图谱（就是课程目标）、5 课程思政图谱。开关在旧设置页的 `mapAdvanceSetting.js` 里：`questionBankTopic/updatequestionmap {questionMap}`、`updateabilitymap {abilityMap}`、`updateideologicalmap {ideologicalMap}`。`updatetopicmodel` 改 `isShow` 没有效果。
+  - 知识点：旧的 `questionBankTopic` 接口照样能改；有子级的节点是「分类」，最底层才是「知识点」。标签（重点/难点/考点/课程思政/自定义）：`ideologicaltopiclabel` 列表、`addtopiclable` 新建、`POST updatetopiclablerelation {topicId, batchAddLabel:0, topicIdLabels:"a,b,"}` 打标签。课程思政图谱 `ideologicaltopicdata` 的节点带标签 ID，打了「课程思政」标签的知识点显示成花。
+  - 问题图谱（stat2，`courseid、clazzid（教师 0）、cpi、ut、modelId:0`）：`question-map/questionLevel/list|update`（层级名称和说明）、`question/list`（按层级分组）、`POST question/add`（`questionId=0` 新建，否则修改；修改时平台会清空没传的字段，工具先读原值再补上）、`levelQuestion/editLink {sourceId, targetIds}`（关联下一层问题）、`question/batch-delete` → `recycle/list|recovery`（回收站记录有自己的 ID，和问题 ID 不同）。问题只能关联最底层的知识点，传「分类」平台会静默丢掉，工具在预演时拒绝。学生端用 `question-map-stu/…`，看不到教师参考。
+  - 能力图谱 / 课程目标（stat2）：`course-target/manager/targetList`、`POST addTargetV2 / updateTarget {targetId, name, description, labelIds, topicIds, type:0}`、`POST delete {targetId}`、`labelList` / `POST addLabel {name}`；图 `course-target/knowledge/knowledgeMap`（学生 `study-target/knowledge/knowledgeMap`）。
+  - 实测：给几个知识点打上重点、难点、课程思政标签，课程思政图谱里对应的知识点标成思政点；问题图谱建 Q1–Q3（分层、带标签和知识点），关联下一层，删除后从回收站还原；课程目标新建两个（关联知识点、带「知识目标」标签）、改名一个、删除一个；学生身份读到问题、能力、课程思政三种图谱，和教师端一致（不含教师参考）。
+- **试卷库导入导出**（`import_exam_paper`、`export_exam_papers`）：
+  - 凭据在试卷库页的隐藏字段 `moocImportExportUrl`、`importEnc`、`importExportEnc`、`examExcelExportVersion`。`classId` 必须是 `-1`，否则返回「enc验证失败」。
+  - 导入 `POST import-export-ans/import/paperlibrary-word|ti?courseId&classId=-1&pid=0&cpi&enc`（+`&paperid=<平行试卷>` 导入成子卷），multipart `{file, crc:''}`，返回 `{paperid}`；工具再改标题并在试卷库核对。Word 必须用平台模板 `/mooc2-ans/template/importExamPaper.doc`，平台自己导出的 Word 不能再导入。
+  - 导出 `import-export-ans/export-paperlibrary?courseId&classId=-1&paperIds&exportType=word|pdf|excel|ti&exportAll=false&cpi&enc&version`（不含答案时加 `includeAnswer=false&includeParser=false`），单份普通试卷直接返回文件。
+  - 实测：把一份 2 题的子卷导出成 Ti，再导入成新试卷（2 题、10 分，标题按指定改好）；把平台导出的 Word 再导入，平台拒绝（要用模板），工具返回未写入；导入成平行试卷的子卷也成功。
+- **改已发布考试/作业的时间**：页面校验不通过时只弹提示、不发请求，工具原来会一直等到超时。现在截获页面的 `$.toast`，没发请求就直接返回页面提示（不会写入）。
+- **章节「智能编写」**（`ai_write_chapter`、`get_ai_writing_options`、`add_ai_writing_option`、`delete_ai_writing_option`，`ops_ai.py`）：
+  - t/enc 来自 `get-course-info` 的 `aiInfo.aiWriting`（`aiTime`、`aiEnc`、`aiWritingChapterEnc`、`aiWritingArticleEnc`）。`POST /ai-ans/ai/chapter/writing`（JSON `{userId, content, writingType, t, articleTheme, articleType, hostName, botType, enc}`）返回 SSE 流，每段 `data:{choices[0].message.content}`（豆包模型）。
+  - 先写大纲：`writingType=chapter`，`content` = `<文章主题> 帮我生成一篇 <主题><类型名></文章主题><目录结构>引言;结尾;</目录结构><文章字数>n</文章字数>`；再写正文：`writingType=article`，`content` 带 `<目录结构><大纲></目录结构><年级或对象>…<文章字数>…<写作风格>a;</写作风格>`。联网搜索（`botType=1`）时正文后面是 `[textEnd]` 和来源列表 `[{siteName, title, url}]`。
+  - 9 种文章类型、25 个目录结构（每种类型默认选哪几个照页面）、6 种写作风格；自定义选项 `mooc-ans/ai/chapter-writing/get|save|delete`（`type` 1 文章类型 / 2 目录结构 / 3 写作风格）。
+  - 页面「加入章节」是把渲染后的 Markdown 插到当前页；工具在预演时就生成全文并返回大纲、正文和来源，确认后把这份正文转成 HTML 追加到页面末尾并读回核对。
+  - 实测：大纲 → 正文 → 追加到测试页，读回一致；联网搜索版本返回了 3 条来源；自定义写作风格新增、读回、删除。
+- **章节「AI 校正」**（`ai_check_chapter`、`stop_ai_check`、`apply_ai_corrections`）：
+  - 文本：把这一页正文的纯文字按 1000 字一段 `POST /mooc-ans/edit/ai-correction {courseId, knowledgeId, cardId, cpi, content, batchnum, type:0}`；`GET ai-check-result` 返回 `checkStatus`（-1 没检测过、0 检测中、3 已停止或无结果、其他=完成）和 `data[{type, wrongWord, correctWord}]`，错词在 `<span class="ai-error">`，建议在 `<span class="ai-correct">`；`ai-check-stop` 停止。类型有标点、成语、拼写、语法、搭配、地名、机构名、领导人姓名、时间。
+  - 替换：编辑器在正文的文字节点里找错词，并核对错词前后各一个字和检测片段一致才替换，然后保存这一页。工具照搬这个规则；预演给出每一处修改，确认时正文必须和预演时一样，否则不写。
+  - 文档：t/enc 是 `edit/chapters/<课程>/<章节>?…&newMooc=true&mooc2=1` 页面里的 `#aiDocCheckTime`、`#aiDocCheckEnc`；`POST ai-doc-correction {objectIds}` 开始，`POST ai-doc-correction-result` 查状态（0 未开始、1 通过、2 可优化、3 进行中、4 失败），`GET ai-doc-correction-data` 取检测结果。文档只读，要在原文件里改好再重新上传。
+  - 实测：测试页加了一段带错别字的文字（再接再励、按部就搬、半途而费、的的），文本检测和测试 PDF 的文档检测都被平台接受，但 45 分钟以上一直是「检测中/进行中」；在编辑器里自己点「开始检测」也是一样。所以真实的检测结果和一键替换还没在平台上走通。
+- **全景资源上传**（`upload_panorama`）：全景选择页 `mobile3 /threedresourse/panorama/toselect` 的上传只把文件本身（字段 `file`）`POST /fyportal/threedresourse/panorama/upload`，返回 `{status, msg, data:{id, filename}}`，页面上的「资源类型」下拉框不会发送。实测：上传一张 2048×1024 的 jpg，平台识别为 image，再用 `insert_chapter_panorama` 插入测试页。
+- **测试数据清理**：试卷库里两份导入测试卷已删到回收站。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
