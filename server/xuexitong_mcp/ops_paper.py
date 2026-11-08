@@ -280,3 +280,108 @@ class PaperOps(XxtBase):
             out.update(write_outcome="unknown", error=("服务端没有完成：" + str(f.get("msg") or "")[:80]) if f.get("status") is not True
                        else f"核对不一致（{[k for k, x in v['checks'].items() if not x] or bad}）；请用 get_parallel_paper 核查。")
         return out
+
+    # ------------------------------------------------------------------ 试卷库 导入 / 导出
+    def _paper_page_vals(self, c) -> dict:
+        r = self.on(M2, r"""
+            const d=D(await F('/mooc2-ans/exam/paperlist?clazzid=-1&courseid=%s&ut=t&cpi=%s&topicid=0'));
+            const g=id=>{const e=d.getElementById(id); return e?(e.getAttribute('value')||''):''};
+            return {base:g('moocImportExportUrl'),importEnc:g('importEnc'),exportEnc:g('importExportEnc'),version:g('examExcelExportVersion')||'v2',classId:g('classId')||'-1'};
+        """ % (_safe_id(c.id), _safe_id(c.cpi)))
+        if not isinstance(r, dict) or r.get("base") != "https://mooc1.chaoxing.com/import-export-ans" or not r.get("importEnc"):
+            raise XxtError("试卷库页缺少导入导出凭据。")
+        return r
+
+    def import_paper_file(self, course: str, file_path: str, sha: str, title: str = "", parallel_id: str = "") -> dict:
+        """Ti/Word 模板导入: multipart POST {file, crc:''} to import-export-ans/import/paperlibrary-word|ti?courseId&classId=-1&pid=0&cpi&enc
+        (+ &paperid=<parallel paper> to import a sub-paper).  The new paper is named after the file; `title` renames it."""
+        import shutil
+        import time
+        from pathlib import Path
+        if title:
+            check_title(title)
+        c = self.ctx(course)
+        v = self._paper_page_vals(c)
+        kind = "ti" if Path(file_path).suffix.lower() == ".ti" else "word"
+        before = {x["paper_id"] for x in self.papers(c.id)}
+        subs_before = {s["sub_id"] for s in self.parallel_subs(c.id, parallel_id)} if parallel_id else set()
+        tmp, snap, meta = self._snapshot(file_path, sha)
+        try:
+            self.b.navigate(f"https://mooc2-ans.chaoxing.com/mooc2-ans/exam/paperlist?clazzid=-1&courseid={_safe_id(c.id)}&ut=t&cpi={_safe_id(c.cpi)}&topicid=0",
+                            settle=1.0, readiness=False)
+            self._stage(snap, meta)
+            extra = f"&paperid={_safe_id(parallel_id)}" if parallel_id else ""
+            r = self.here("""
+                const f=document.getElementById('mcp-file').files[0]; if(!f) return {stage:'file'};
+                const fd=new FormData(); fd.append('file',f,f.name); fd.append('crc','');
+                const u=%s+'/import/paperlibrary-%s?courseId=%s&classId=%s&pid=0&cpi=%s&enc=%s'+%s;
+                const r=await fetch(u,{method:'POST',body:fd,credentials:'include'}); let j=null; try{j=await r.json()}catch(e){}
+                return {stage:'done',http:r.status,j};
+            """ % (json.dumps(v["base"]), kind, _safe_id(c.id), _safe_id(v["classId"]), _safe_id(c.cpi), _safe_id(v["importEnc"]),
+                   json.dumps(extra)), retry_safe=False)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        j = (r or {}).get("j") if isinstance(r, dict) else None
+        if not isinstance(r, dict) or r.get("stage") != "done" or not isinstance(j, dict):
+            return {"ok": False, "write_outcome": "unknown", "error": "导入请求没有得到回应；请在试卷库核查。"}
+        if j.get("status") is not True:
+            return {"ok": False, "write_outcome": "not_written", "error": f"平台拒绝导入：{str(j.get('msg') or '')[:80]}（Word 必须用平台的 Word 模板）。"}
+        if parallel_id:
+            for _ in range(15):
+                st = self.on(M2, "return await J('/mooc2-ans/exam/choose-paper-status?%s');" % self._pq(c, parallel_id))
+                if not (isinstance(st, dict) and st.get("taskStatus") == "running"):
+                    break
+                time.sleep(2)
+            new_subs = [s for s in self.parallel_subs(c.id, parallel_id) if s["sub_id"] not in subs_before]
+            ok = len(new_subs) == 1
+            if ok and title:
+                ok = self._set_title(c, new_subs[0]["sub_id"], check_title(title), False).get("status") is True
+                new_subs = [s for s in self.parallel_subs(c.id, parallel_id) if s["sub_id"] == new_subs[0]["sub_id"]] or new_subs
+            return {"ok": ok, "parallel_paper": parallel_id, "sub_paper": new_subs[0] if new_subs else None,
+                    "note": "导入的子卷要和其他子卷结构一致，平行试卷才能完成创建；可用 update_parallel_paper 核对。",
+                    **({} if ok else {"write_outcome": "unknown", "error": "导入后在平行试卷里没核对到新子卷。"})}
+        pid = str(j.get("paperid") or "")
+        if title and pid.isdigit():
+            self._set_title(c, pid, check_title(title), False)
+        hit = [x for x in self.papers(c.id) if x["paper_id"] == pid and pid not in before]
+        ok = len(hit) == 1 and (not title or hit[0]["title"] == title.strip())
+        return {"ok": ok, "paper": hit[0] if hit else None,
+                **({} if ok else {"write_outcome": "unknown", "error": "导入后在试卷库里没核对到新试卷。"})}
+
+    def export_papers(self, course: str, paper_ids: list[str], fmt: str, with_answers: bool = True) -> dict:
+        """export-paperlibrary?courseId&classId=-1&paperIds&exportType&exportAll=false&cpi&enc=<#importExportEnc>&version (+includeAnswer/
+        includeParser=false); one ordinary paper comes back at once (several or random papers go to the download center, not handled)."""
+        import base64
+        from pathlib import Path
+        from .xxt import M1
+        if fmt not in PAPER_EXPORT:
+            raise XxtError(f"导出格式只能是：{'、'.join(PAPER_EXPORT)}。")
+        etype, ext, magics = PAPER_EXPORT[fmt]
+        c = self.ctx(course)
+        v = self._paper_page_vals(c)
+        lib = {x["paper_id"]: x for x in self.papers(c.id)}
+        out_dir = Path(self.cfg.download_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        files = []
+        for pid in paper_ids:
+            if pid not in lib or lib[pid].get("parallel") is not None:
+                raise XxtError(f"试卷 {pid} 不在试卷库或是平行试卷（平行试卷要逐个导出子卷）。")
+            q = (f"/import-export-ans/export-paperlibrary?courseId={_safe_id(c.id)}&classId={_safe_id(v['classId'])}&paperIds={_safe_id(pid)}"
+                 f"&exportType={etype}&exportAll=false&cpi={_safe_id(c.cpi)}&enc={_safe_id(v['exportEnc'])}&version={_safe_id(v['version'])}"
+                 + ("" if with_answers else "&includeAnswer=false&includeParser=false"))
+            r = self.on(M1, """const r=await fetch(%s,{credentials:'include'}); const b=new Uint8Array(await r.arrayBuffer());
+                if(b.length>30*1024*1024) return {big:true}; let s=''; for(let i=0;i<b.length;i+=8192) s+=String.fromCharCode.apply(null,b.subarray(i,i+8192));
+                return {http:r.status,b64:btoa(s)};""" % json.dumps(q), timeout=120)
+            data = base64.b64decode((r or {}).get("b64") or "") if isinstance(r, dict) else b""
+            if not data or not any(data.startswith(m) for m in magics):
+                raise XxtError(f"试卷「{lib[pid]['title']}」导出失败：{data[:120].decode('utf-8', 'ignore')[:80] or '没有内容'}。")
+            name = re.sub(r'[\\/:*?"<>|\s]+', "_", f"{c.name}-{lib[pid]['title']}{'' if with_answers else '-无答案'}.{ext}")
+            path = out_dir / name
+            path.write_bytes(data)
+            files.append({"paper": lib[pid]["title"], "file": str(path), "size": len(data)})
+        return {"ok": True, "format": fmt, "with_answers": with_answers, "files": files}
+
+
+# format -> (exportType, file extension, accepted leading bytes)
+PAPER_EXPORT = {"Word": ("word", "docx", (b"PK",)), "PDF": ("pdf", "pdf", (b"%PDF",)), "Excel": ("excel", "xls", (b"\xd0\xcf\x11\xe0", b"PK")),
+                "Ti": ("ti", "ti", (b'{"type"', b'{"time"'))}

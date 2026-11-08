@@ -859,6 +859,40 @@ def update_parallel_paper(course: Course_, paper: Annotated[str, Field(descripti
     return client().update_parallel_paper(course, paper, add, remove, title, sync_titles, difficulty, numbering, group_by_type)
 
 
+@tool(W, "试卷库「导入试卷」：导入本机的 Word（必须用平台的 Word 模板，/mooc2-ans/template/importExamPaper.doc）或平台导出的 .ti 文件，"
+         "生成一份新试卷（题目同步进题库）；parallel_paper 填平行试卷时导入成它的子卷。文件须在 upload_allow_dirs 里，预演记下哈希。确认后导入并在试卷库核对。")
+def import_exam_paper(course: Course_, file_path: Annotated[str, Field(description="本机 .doc / .docx / .ti 的绝对路径")],
+                      title: Annotated[str, Field(description="导入后的试卷标题，留空=用文件名")] = "",
+                      parallel_paper: Annotated[str, Field(description="导入成哪份平行试卷的子卷（标题或ID），留空=普通试卷")] = "",
+                      confirm: Confirm = False, file_sha256: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    pth = _check_upload_path(file_path)
+    if pth.suffix.lower() not in (".doc", ".docx", ".ti"):
+        raise XxtError("只能导入 .doc、.docx 或 .ti 文件。")
+    if not confirm:
+        if file_sha256:
+            raise XxtError("预演时 file_sha256 必须留空。")
+        par = client()._parallel(c, parallel_paper) if parallel_paper else None
+        fp = _upload_preview_digest(pth)
+        d = _dry(c, "导入试卷" + (f"为平行试卷「{par['title']}」的子卷" if par else "到试卷库"),
+                 bind={"file_path": str(pth), "file_sha256": fp["sha256"], "parallel_paper": par["paper_id"] if par else ""},
+                 file=pth.name, **fp, title=title or pth.stem)
+        return d
+    return client().import_paper_file(course, str(pth), file_sha256, title, parallel_paper)
+
+
+@tool(L, "把试卷库里的试卷导出到本机下载目录：Word / PDF / Excel / Ti（Ti 可再用 import_exam_paper 导入其他课程）；默认含答案和解析，仅供教师。")
+def export_exam_papers(course: Course_, papers: Annotated[list[str], Field(description="试卷（标题或ID），1–10 份")],
+                       format: Annotated[str, Field(description="Word / PDF / Excel / Ti")] = "Word",
+                       with_answers: Annotated[bool, Field(description="是否包含答案和解析")] = True) -> dict:
+    from .xxt import _best
+    if not isinstance(papers, list) or not 1 <= len(papers) <= 10:
+        raise XxtError("一次导出 1–10 份试卷。")
+    lib = client().papers(course)
+    ids = [_best(lib, str(x), id_keys=("paper_id",))["paper_id"] for x in papers]
+    return client().export_papers(course, ids, format, with_answers)
+
+
 @tool(R, "查看考试批阅页人数和当前可见行；已交、未交名单尚未核实（逐题打分需人工完成）。")
 def exam_marklist(course: Course_, exam: Annotated[str, Field(description="考试标题或考试ID")]) -> dict:
     return client().exam_marklist(course, exam)
