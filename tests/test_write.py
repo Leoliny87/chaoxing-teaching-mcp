@@ -159,6 +159,26 @@ def test_checkin_uses_save_or_begin_with_class_and_duration(client, monkeypatch)
     assert r["ok"] is True and r["activity"]["activity_id"] == "9"
 
 
+def test_checkin_qr_enables_refresh_flag(client, monkeypatch):
+    calls = []
+    acts = [[], [{"activity_id": "9", "title": "二维码签到", "status_name": "进行中"}]]
+    monkeypatch.setattr(client, "activities", lambda *a, **k: acts.pop(0))
+    monkeypatch.setattr(client, "_call", lambda host, path, method="GET", form=None: calls.append((host, path, method, form)) or {"http": 200})
+    r = client.start_checkin_v3("1", "2", "二维码签到", 30, "", qr_refresh=15)
+    path = calls[0][1]
+    assert "ifrefreshewm=1" in path and "ewmRefreshTime=15" in path
+    assert r["ok"] is True
+
+
+def test_checkin_normal_keeps_refresh_disabled(client, monkeypatch):
+    calls = []
+    acts = [[], [{"activity_id": "9", "title": "签到A", "status_name": "进行中"}]]
+    monkeypatch.setattr(client, "activities", lambda *a, **k: acts.pop(0))
+    monkeypatch.setattr(client, "_call", lambda host, path, method="GET", form=None: calls.append((host, path, method, form)) or {"http": 200})
+    client.start_checkin_v3("1", "2", "签到A", 30, "")
+    assert "ifrefreshewm=0" in calls[0][1]
+
+
 def test_publish_rejects_unknown_settings_and_builds_publish_obj(client, monkeypatch):
     with pytest.raises(XxtError):
         client.publish_library_work("1", "abc", ["2"], "", "", {"evil": 1})

@@ -85,6 +85,35 @@ class NoticeOps:
         self._linked_activity_deletions[token]={'course':course,'class_id':class_id,'target':matches[0],'created':time.time()}
         return {'deletion_id':token,'target':matches[0],'notice_id':linked[0]['notice_id']}
 
+    def prepare_activity_deletion(self, course, activity_id, class_id):
+        """General prepare for deleting any activity type (check-in, vote, ...).
+
+        The setdel + recycle-bin verification in delete_linked_activity is already
+        type-agnostic; only the notice path additionally demands an ownership ledger.
+        Here the safeguards are the course write whitelist, preview/confirm with a
+        frozen unique target, and the positive recycle-bin proof after deletion.
+        """
+        c=self.ctx(course)
+        if len([x for x in c.classes if x.get('clazz_id')==class_id])!=1:
+            raise XxtError('活动目标班级不属于课程。')
+        journal=self.cfg.log_dir/'notice-outcomes.jsonl'
+        records=[json.loads(line) for line in journal.read_text().splitlines()] if journal.exists() else []
+        outcomes=[r.get('state') for r in records if r.get('activity_id')==activity_id and r.get('state') in
+                  ('activity_delete_attempted','activity_delete_unconfirmed','activity_recycled')]
+        if outcomes and outcomes[-1]!='activity_recycled':
+            raise XxtError('该活动已有结果未明的删除；先核查，禁止重复提交。')
+        matches=[a for a in self.activities(course,limit=1000,class_id=class_id) if a['activity_id']==activity_id]
+        if len(matches)!=1:
+            raise XxtError('活动列表里找不到该 ID 的唯一活动；不删除。')
+        # activities() is queried scoped to class_id but only attaches an explicit
+        # class_id field for notice activities, so verify it only when present.
+        if matches[0].get('class_id') and matches[0]['class_id']!=class_id:
+            raise XxtError('活动班级与目标不符；不删除。')
+        token=secrets.token_urlsafe(18)
+        if not hasattr(self,'_linked_activity_deletions'):self._linked_activity_deletions={}
+        self._linked_activity_deletions[token]={'course':course,'class_id':class_id,'target':matches[0],'created':time.time()}
+        return {'deletion_id':token,'target':matches[0]}
+
     def delete_linked_activity(self,course,activity_id,class_id,deletion_id):
         p=getattr(self,'_linked_activity_deletions',{}).pop(deletion_id,None)
         if not p or time.time()-p['created']>600 or (course,class_id,activity_id)!=(p['course'],p['class_id'],p['target']['activity_id']):

@@ -4,7 +4,7 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-08，第五轮后）
+## 0. 当前完成度（2026-11-08，第六轮后）
 
 注册的工具：共 215 个；教师配置 191 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
@@ -316,6 +316,14 @@
 - **课程列表改静态读取**：`xxt.courses` 原来导航到持续重绘的 `visit/interaction` 页抓 live DOM，间歇被 BrowserSkill 以 `observation_changed` 拒绝（health_check 的 courses 步因此永远失败）。改为从静态基准页同源 fetch `mooc2-ans/visit/courselistdata?courseType=0`，用 DOMParser 解析同一批 `div.course[id^=c_]` 卡片（courseId/curPersonId/role 隐藏字段都在），保留主讲/团队 role 区分。注意 `mooc1/visit/courselistdata?courseType=0` 返回的是不带 role 的 `li.course`，不能用；要用 mooc2-ans 宿主的。实测仍返回 60 门、36 主讲+24 团队、名字/cpi/info 与原版逐条一致。回归测试 `tests/test_courses_fetch.py`。
 - **health_check 步骤重排**：把 courses 和界面语言检测移到 guard 导航之前（此时标签页还在稳定静态页，避免从持续重绘的 mobilelearn 页发起下一次导航被拒）；语言检测改为静态 fetch `visit/interaction` 外壳 HTML 判断"我教的课/我学的课/新建课程"标记，不再读活页 body。实测 health_check 现在 courses=60、ui_language=中文、error=null；ok=false 只剩"未装防 App 跳转扩展"这一个真实环境原因。
 - 全套 233 项测试通过；重启服务后经真实 MCP stdio 链路复核 health_check 与 list_courses 均正常。
+
+### 2026-11-08（第六轮）把"仅预演/尚未核实"的工具补到可执行+已核实
+- **讨论分页**（list_discussions）：`getTopicList` 的 page 号被平台忽略，真实分页是游标式——首页不传 `last_reply_time`，后续页回填上页 `poff.lastValue`（并带 `lastAuxValue=poff.lastAuxValue`），`poff.lastPage==1` 终止。`topics()` 改为沿游标翻页、按 uuid 去重、limit 封顶（页大小常量 TOPIC_PAGE_SIZE）。实测助手课 8 条话题，页大小 2 翻 5 页与单大页结果逐条一致。回归 `tests/test_discussions_pagination.py`。
+- **二维码签到**（start_checkin）：`start_checkin_v3` 加 `qr_refresh` 参数，二维码置 `ifrefreshewm=1`+`ewmRefreshTime`；工具放开 bar=2 为可执行（普通/二维码/签到码）。实测发二维码签到，`getPPTActiveInfo` 读回 `ifrefreshewm=1` 确认平台真建成二维码类型。回归 `tests/test_write.py`。
+- **活动删除泛化**（delete_activity）：新增 `prepare_activity_deletion`（任意类型，班级校验+唯一性+预演冻结+结果未明保护），复用类型无关的 `setdel`+回收站正向核实。注意 `activities()` 只对通知活动附 class_id 字段，普通活动靠查询 classId scoping+回收站核实（有 class_id 才校验）。实测删普通签到/二维码签到，`absent_from_active_list`+`recycle_row_verified` 双通过。回归 `tests/test_activity_delete.py`。
+- **签到名单**（checkin_status）：改读 `/widget/sign/pcTeaSignController/getAttendList`（`yiqianList`/`weiqianList`+`yiqian`/`weiqian`计数+`signRate`），避开重绘的 endSign 页，按计数核对名单长度（lists_verified）。`signRate` 是 0–100 百分比。实测：教师工具按设计不代签，由测试者本人账号驱动学生端 `/v2/apis/sign/signIn` 给林云学生身份造一条已签数据，已签/未签两侧名单+rate=50 全核实。回归 `tests/test_checkin_status.py`。
+- **考试批阅名单**（exam_marklist）：改读 `POST /mooc2-ans/exam/test/markresult-new`，`state:'1'`=已交/`state:'0'`=未交（**不是 perspectiveType**），id 用考试关系 ID（clazzAndRelationId[clazzid]，本例等于考试 ID）、clazzid 用考试实际班级（从 class 名映射），分页按计数核对。实测助手课已交 1/未交 1 的考试，submitted_rows/unsubmitted_rows 全核实。回归 `tests/test_exam_marklist.py`。
+- 全套 249 项测试通过；每项均经真实 MCP stdio 链路在助手课实测。手势/位置签到仍仅预演（手势 API 参数无文档、位置经纬度预演难冻结），留待后续。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。

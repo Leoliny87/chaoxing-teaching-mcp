@@ -184,16 +184,25 @@ class ActivityOps(XxtBase):
     def checkin_status(self, course: str, activity: str) -> dict:
         c = self.ctx(course)
         a = self._find_activity(c, activity)
-        self.b.navigate(f"https://mobilelearn.chaoxing.com/page/sign/endSign?activeId={a['activity_id']}&classId={c.clazz_id}&courseId={c.id}&cpi={c.cpi}&showOnScreenShare=true&returnType=1&fid={self.fid}", settle=2)
-        self.wait_for("return /已签/.test(document.body.innerText)", timeout=12)
-        js = """
-            const tx=document.body.innerText; const m1=tx.match(/已签\\s*\\(?(\\d+)\\)?/), m2=tx.match(/未签\\s*\\(?(\\d+)\\)?/), m3=tx.match(/签到率\\s*([\\d.]+%)/);
-            const i=tx.indexOf('状态筛选'); const tail=i>=0?tx.slice(i+4,i+1500):'';
-            return {signed:m1&&m1[1],unsigned:m2&&m2[1],rate:m3&&m3[1],list:tail.split('\\n').map(s=>s.trim()).filter(Boolean).slice(0,80)};"""
-        s1 = self.here(js)
-        return {"activity": a["title"], "activity_id": a["activity_id"], "status": a["status_name"], "signed": s1.get("signed"),
-                "unsigned": s1.get("unsigned"), "rate": s1.get("rate"), "visible_list": s1.get("list"), "signed_list": None, "unsigned_list": None,
-                "note": "已签及未签名单均未核实；当前可见列表含义及筛选切换尚未验证。"}
+        # getAttendList returns the signed/unsigned rosters and counts directly;
+        # reading it from the static base page avoids the re-rendering endSign UI.
+        data = self.on(ML, f"""
+            const j=await J('/widget/sign/pcTeaSignController/getAttendList?activeId={_safe_id(a['activity_id'])}&appType=15&classId={_safe_id(c.clazz_id)}&courseId={c.id}&fid={self.fid}');
+            if(j?.result!==1||!j.data) return {{valid:false}};
+            const d=j.data;
+            const map=x=>({{name:x.name,username:x.username,uid:String(x.uid),status:x.status,submittime:x.submittime}});
+            return {{valid:true,signed:d.yiqian,unsigned:d.weiqian,rate:d.signRate,
+              signed_list:(d.yiqianList||[]).map(map),unsigned_list:(d.weiqianList||[]).map(map)}};
+        """)
+        if not isinstance(data, dict) or data.get("valid") is not True:
+            raise XxtError("签到名单响应失败或结构不完整；不能视为空名单。")
+        sl = data.get("signed_list") or []
+        ul = data.get("unsigned_list") or []
+        verified = data.get("signed") == len(sl) and data.get("unsigned") == len(ul)
+        return {"activity": a["title"], "activity_id": a["activity_id"], "status": a["status_name"],
+                "signed": data.get("signed"), "unsigned": data.get("unsigned"), "rate": data.get("rate"),
+                "signed_list": sl, "unsigned_list": ul, "lists_verified": verified,
+                "note": "已签/未签名单按接口计数核对一致。" if verified else "名单长度与接口计数不一致，需人工核查。"}
 
     def activity_page(self, course: str, activity: str) -> dict:
         c = self.ctx(course)

@@ -426,12 +426,13 @@ class WriteOps(XxtBase):
 
     # ================================================================ sign-in via API
     def start_checkin_v3(self, course: str, class_id: str, title: str, minutes: int, code: str = "",
-                         late_minutes: int = 10) -> dict:
+                         late_minutes: int = 10, qr_refresh: int = 0) -> dict:
         c = self.ctx(course)
         before = {a["activity_id"] for a in self.activities(c.id, limit=1000, class_id=class_id)}
         q = up.urlencode({"now": 1, "courseId": c.id, "classId": _safe_id(class_id), "otherId": 0, "activeId": "",
                           "planId": "", "timeLong": int(minutes) * 60000, "isresult": 0, "isCourseware": 0,
-                          "ifphoto": 0, "ifrefreshewm": 0, "ewmRefreshTime": 10, "classroomDataId": "",
+                          "ifphoto": 0, "ifrefreshewm": 1 if qr_refresh > 0 else 0,
+                          "ewmRefreshTime": int(qr_refresh) if qr_refresh > 0 else 10, "classroomDataId": "",
                           "classroomPlanId": "", "picId": 0, "pageNum": "", "timerCron": "", "dateCron": "",
                           "isTeachingCalendar": 0, "fromtype": "", "ifopenAddress": 0, "locationLatitude": "",
                           "locationLongitude": "", "locationRange": "", "ifSkipWeek": 0, "validity_begintime": "",

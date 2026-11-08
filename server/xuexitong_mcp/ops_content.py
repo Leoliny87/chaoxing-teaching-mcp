@@ -8,6 +8,8 @@ import urllib.parse as up
 
 from .xxt import (BASE_PAGE, GROUP, M2, NOTICE, Course, XxtBase, XxtError, _best, _html, _safe_id, norm_time)
 
+TOPIC_PAGE_SIZE = 50
+
 
 class ContentOps(XxtBase):
     # ================================================================ students
@@ -379,17 +381,42 @@ class ContentOps(XxtBase):
     def exam_marklist(self, course: str, exam: str) -> dict:
         c = self.ctx(course)
         e = _best(self.exams(c.id), exam, id_keys=("id", "paper_id"))
-        self.b.navigate(f"https://mooc2-ans.chaoxing.com/mooc2-ans/exam/test/marklist?clazzid={c.clazz_id}&courseid={c.id}&ut=&cpi={c.cpi}&id={e['id']}&paperId={e['paper_id']}&reviewclassid=0&prePageNum=1&prePageSize=12&topicid=0&perspectiveType=0")
-        rows_js = """
-            const by={};
-            document.querySelectorAll('.layui-table-box tr[data-index]').forEach(r=>{const i=r.getAttribute('data-index'); const o=by[i]||(by[i]={});
-              r.querySelectorAll('td[data-field]').forEach(td=>{const f=td.getAttribute('data-field'); const v=T(td); if(!/^\\d+$/.test(f)&&!td.classList.contains('layui-hide')&&v&&!o[f]) o[f]=v;});});
-            return Object.keys(by).sort((a,b)=>a-b).map(k=>by[k]).filter(o=>Object.keys(o).length);"""
-        self.wait_for("return /共\\d+名学生/.test(document.body.innerText)", timeout=15)
-        head = self.here("const tx=document.body.innerText; const m=tx.match(/共(\\d+)名学生/); const s=tx.match(/已交\\s*(\\d+)/); const u=tx.match(/未交\\s*(\\d+)/); return {total:m&&m[1],submitted:s&&s[1],unsubmitted:u&&u[1]};")
-        sub = self.here(rows_js)
-        return {"exam": e["title"], "exam_id": e["id"], "paper_id": e["paper_id"], **(head or {}), "visible_rows": sub, "submitted_rows": None, "unsubmitted_rows": None,
-                "grading_note": "已交及未交名单均未核实；当前可见列表含义及筛选切换尚未验证。逐题打分请在批阅页人工完成。"}
+        # markresult-new is scoped by the exam's class (clazzid) and relation id
+        # (the exam id). Resolve the class from the exam's class name when unique.
+        names = [n.strip() for n in re.split(r"[，,]", str(e.get("class", ""))) if n.strip()]
+        clazz = c.clazz_id
+        if len(names) == 1:
+            hit = [x for x in c.classes if x.get("name") == names[0]]
+            if len(hit) == 1:
+                clazz = hit[0]["clazz_id"]
+
+        def fetch(state):
+            rows: list[dict] = []
+            total = None
+            class_size = None
+            for page in range(1, 101):
+                data = self.on(M2, f"""
+                    const j=await J('/mooc2-ans/exam/test/markresult-new', POST({{courseid:'{_safe_id(c.id)}',clazzid:'{_safe_id(clazz)}',cpi:'{_safe_id(c.cpi)}',id:'{_safe_id(e['id'])}',paperId:'{_safe_id(e['paper_id'])}',pages:'{page}',size:'100',state:'{state}',markType:'0',topicid:'0'}}));
+                    if(!Array.isArray(j?.data)) return {{valid:false}};
+                    return {{valid:true,total:j.total,classSize:j.classSize,rows:j.data.map(x=>({{name:x.createUserName,uid:String(x.createUserId),status:x.status,submitTime:x.submitTime,score:x.answerScore}}))}};
+                """)
+                if not isinstance(data, dict) or data.get("valid") is not True:
+                    raise XxtError("考试批阅名单响应失败或结构不完整；不能视为空名单。")
+                total = data.get("total")
+                class_size = data.get("classSize")
+                batch = data.get("rows") or []
+                rows.extend(batch)
+                if len(batch) < 100 or (isinstance(total, int) and len(rows) >= total):
+                    break
+            return rows, total, class_size
+
+        submitted, sub_total, class_size = fetch("1")
+        unsubmitted, unsub_total, _ = fetch("0")
+        verified = len(submitted) == sub_total and len(unsubmitted) == unsub_total
+        return {"exam": e["title"], "exam_id": e["id"], "paper_id": e["paper_id"], "class_id": clazz,
+                "total": class_size, "submitted": sub_total, "unsubmitted": unsub_total,
+                "submitted_rows": submitted, "unsubmitted_rows": unsubmitted, "lists_verified": verified,
+                "grading_note": "已交/未交名单按接口计数核对。逐题打分请在批阅页人工完成。"}
 
     # ================================================================ discussions
     def _bbsid(self, c: Course) -> str:
@@ -408,19 +435,47 @@ class ContentOps(XxtBase):
     def topics(self, course: str, limit: int = 50) -> list[dict]:
         c = self.ctx(course)
         bbs = self._bbsid(c)
-        result = self.on(GROUP, f"""
-            const j=await J('/course/topic/{bbs}/getTopicList?folder_uuid=&page=1&pageSize={int(limit)}&kw=&courseId={c.id}&isSetTop=&selectedStartTime=&selectedEndTime=&selectedType=0&learnSilverStartTime=&learnSilverEndTime=&lastAuxValue=');
-            // Observed 2026-11: an empty forum answers status:true with NO datas field
-            // (keys: update_time,userAuth,member,folder_list,poff,circle,status).
-            // Only that exact success shape counts as an empty list.
-            if(j?.status===true && j.datas===undefined && j.userAuth && Array.isArray(j.folder_list)) return {{valid:true,items:[]}};
-            if(!Array.isArray(j?.datas) || j?.status===false || j?.success===false) return {{valid:false}};
-            if(j.datas.some(x=>!x || !x.uuid || typeof x.title!=='string')) return {{valid:false}};
-            return {{valid:true,items:j.datas.map(x=>({{topic_id:x.uuid,id:String(x.id),title:x.title,content:(x.content||'').slice(0,200),author:x.createrName,replies:x.reply_count,reads:x.readPersonCount,time:x.ftime}}))}};
-        """)
-        if not isinstance(result, dict) or result.get("valid") is not True or not isinstance(result.get("items"), list):
-            raise XxtError("讨论列表响应失败或结构不完整；不能视为空列表。")
-        return result["items"]
+        limit = max(1, int(limit))
+        out: list[dict] = []
+        seen: set[str] = set()
+        # getTopicList is cursor-based: the page number alone is ignored by the
+        # server. The first request omits last_reply_time; each later request must
+        # carry the previous poff.lastValue as last_reply_time (and poff.lastAuxValue).
+        # poff.lastPage==1 marks the last page. De-duplicate by uuid because posts can
+        # shift between pages while reading. At most 100 pages as a safety bound.
+        page = 1
+        last_reply_time = ""
+        last_aux = ""
+        for _ in range(100):
+            if len(out) >= limit:
+                break
+            cursor = "" if page == 1 else f"&last_reply_time={last_reply_time}"
+            result = self.on(GROUP, f"""
+                const j=await J('/course/topic/{bbs}/getTopicList?folder_uuid=&page={page}&pageSize={TOPIC_PAGE_SIZE}&kw=&courseId={c.id}&isSetTop=&selectedStartTime=&selectedEndTime=&selectedType=0&learnSilverStartTime=&learnSilverEndTime=&lastAuxValue={last_aux}{cursor}');
+                // Observed 2026-11: an empty forum answers status:true with NO datas field
+                // (keys: update_time,userAuth,member,folder_list,poff,circle,status).
+                // Only that exact success shape counts as an empty list.
+                if(j?.status===true && j.datas===undefined && j.userAuth && Array.isArray(j.folder_list)) return {{valid:true,items:[],lastPage:1}};
+                if(!Array.isArray(j?.datas) || j?.status===false || j?.success===false) return {{valid:false}};
+                if(j.datas.some(x=>!x || !x.uuid || typeof x.title!=='string')) return {{valid:false}};
+                return {{valid:true,items:j.datas.map(x=>({{topic_id:x.uuid,id:String(x.id),title:x.title,content:(x.content||'').slice(0,200),author:x.createrName,replies:x.reply_count,reads:x.readPersonCount,time:x.ftime}})),lastValue:j.poff?.lastValue,lastAuxValue:j.poff?.lastAuxValue,lastPage:j.poff?.lastPage}};
+            """)
+            if not isinstance(result, dict) or result.get("valid") is not True or not isinstance(result.get("items"), list):
+                raise XxtError("讨论列表响应失败或结构不完整；不能视为空列表。")
+            items = result["items"]
+            for it in items:
+                tid = it.get("topic_id")
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    out.append(it)
+                    if len(out) >= limit:
+                        break
+            if result.get("lastPage") == 1 or not items:
+                break
+            last_reply_time = str(result.get("lastValue") or "")
+            last_aux = str(result.get("lastAuxValue") or "")
+            page += 1
+        return out[:limit]
 
     def create_topic(self, course: str, title: str, content: str) -> dict:
         c = self.ctx(course)

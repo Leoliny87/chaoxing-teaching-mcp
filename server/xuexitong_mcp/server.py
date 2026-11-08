@@ -893,7 +893,7 @@ def export_exam_papers(course: Course_, papers: Annotated[list[str], Field(descr
     return client().export_papers(course, ids, format, with_answers)
 
 
-@tool(R, "查看考试批阅页人数和当前可见行；已交、未交名单尚未核实（逐题打分需人工完成）。")
+@tool(R, "查看考试批阅页已交/未交人数和名单（markresult-new 接口，按计数核对；逐题打分需人工完成）。")
 def exam_marklist(course: Course_, exam: Annotated[str, Field(description="考试标题或考试ID")]) -> dict:
     return client().exam_marklist(course, exam)
 
@@ -909,8 +909,8 @@ def question_bank_needs_human(what: Annotated[str, Field(description="题库 / �
 
 
 # ------------------------------------------------------------------ 讨论
-@tool(R, "列出课程讨论区话题（仅第一页，正文截取，结果可能不完整）。")
-def list_discussions(course: Course_, limit: Annotated[int, Field(description="最多返回几条")] = 30) -> list:
+@tool(R, "列出课程讨论区话题（自动翻页，最多 limit 条，按 UUID 去重，正文截取）。")
+def list_discussions(course: Course_, limit: Annotated[int, Field(description="最多返回几条（跨页累计）")] = 30) -> list:
     return client().topics(course, limit)
 
 
@@ -2487,7 +2487,7 @@ def list_activities(course: Course_, status: Annotated[str, Field(description="�
     return client().activities(course, status, limit)
 
 
-@tool(W, "发起签到：当前仅预演；需指定班级，签到类型选择尚未完成安全验证。")
+@tool(W, "发起签到：普通/二维码/签到码已验证可执行，手势/位置仅预演；需指定班级。")
 def start_checkin(course: Course_, title: Annotated[str, Field(description="签到标题，如“第3周周二签到”")] = "签到",
                   sign_type: Annotated[str, Field(description="普通 / 手势 / 位置 / 二维码 / 签到码")] = "普通",
                   code: Annotated[str, Field(description="签到码（仅签到码签到）")] = "",
@@ -2512,18 +2512,19 @@ def start_checkin(course: Course_, title: Annotated[str, Field(description="签�
         draft = _dry(c, "发起签到（学生会收到推送）", bind={"class_name": target["id"], "gesture": effective_gesture},
                      title=title, sign_type=sign_type, code=code, gesture=effective_gesture, address=address, classes=[target],
                      note="签到时长使用学习通默认设置（手动结束）。结束用 end_activity。")
-        if bar in (0, 5):
-            return draft  # 普通 / 签到码：直接调用已验证的 saveOrBegin 接口
-        reason = "手势、位置、二维码签到的接口参数尚未实测，当前仅支持预演。"
+        if bar in (0, 2, 5):
+            return draft  # 普通 / 二维码 / 签到码：直接调用已验证的 saveOrBegin 接口
+        reason = "手势、位置签到的接口参数尚未实测，当前仅支持预演。"
         if bar == 4:
             reason += "位置还会由地图或默认定位决定，无法预先可靠冻结。"
         return _preview_only(draft, reason)
-    if bar not in (0, 5):
-        raise XxtError("只有普通签到和签到码签到已验证可执行。")
-    return client().start_checkin_v3(course, class_name, title, 30, code if bar == 5 else "")
+    if bar not in (0, 2, 5):
+        raise XxtError("只有普通、二维码和签到码签到已验证可执行。")
+    return client().start_checkin_v3(course, class_name, title, 30, code if bar == 5 else "",
+                                     qr_refresh=10 if bar == 2 else 0)
 
 
-@tool(R, "查看签到人数、签到率和当前可见列表；已签、未签名单尚未核实。")
+@tool(R, "查看签到人数、签到率和已签/未签名单（getAttendList 接口，按计数核对一致）。")
 def checkin_status(course: Course_, activity: Annotated[str, Field(description="签到活动标题或活动ID")]) -> dict:
     return client().checkin_status(course, activity)
 
@@ -2546,22 +2547,22 @@ def end_activity(course: Course_, activity: Annotated[str, Field(description="�
     return client().end_activity(c.id, activity, class_name)
 
 
-@tool(D, "将本服务已关联记录的通知测试活动移入回收站；准确ID及班级，预演后执行并核实回收站。其它活动仅预演。")
+@tool(D, "将课堂活动（签到/投票等任意类型）移入回收站，可还原；准确ID或标题及班级，预演冻结目标后执行并核实回收站。")
 def delete_activity(course: Course_, activity: Annotated[str, Field(description="活动标题或活动ID")], class_name: Class_ = "", confirm: Confirm = False,
                     deletion_id: Annotated[str, Field(description="由预演绑定，调用时保持空值")] = "") -> dict:
     c = _check_write(course)
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
+        if deletion_id:raise XxtError("活动预演 deletion_id 必须留空。")
         if re.fullmatch(r"\d+", activity):
-            if deletion_id:raise XxtError("活动预演 deletion_id 必须留空。")
-            p=client().prepare_linked_activity_deletion(c.id,activity,target["id"])
-            return _dry(c,"将本服务关联的通知测试活动移入回收站",bind={"activity":activity,"class_name":target["id"],"deletion_id":p["deletion_id"]},
-                        target=p["target"],notice_id=p["notice_id"],classes=[target])
-        scoped = client()._activity_class(c.id, target["id"])
-        a = client()._find_activity(scoped, activity)
-        return _preview_only(_dry(c, "删除活动（移入回收站）", bind={"activity": a["activity_id"], "class_name": target["id"]},
-                                  target=a["title"], type=a["type"], activity_id=a["activity_id"], status=a["status_name"], classes=[target]),
-                             "活动列表是否完整尚未验证，删除后不能可靠证明目标已移入回收站。")
+            aid = activity
+        else:
+            scoped = client()._activity_class(c.id, target["id"])
+            aid = client()._find_activity(scoped, activity)["activity_id"]
+        p = client().prepare_activity_deletion(c.id, aid, target["id"])
+        a = p["target"]
+        return _dry(c, "将活动移入回收站（可还原）", bind={"activity": aid, "class_name": target["id"], "deletion_id": p["deletion_id"]},
+                    target=a, type=a.get("type"), activity_id=aid, status=a.get("status_name"), classes=[target])
     return client().delete_linked_activity(c.id,activity,class_name,deletion_id)
 
 
