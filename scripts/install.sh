@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install xuexitong-mcp from a release tag (Linux / macOS).
-#   bash install.sh [--profile student|reviewer|teacher] [--ref v0.5.0] [--dir DIR] [--repo URL]
+#   bash install.sh [--profile student|reviewer|teacher] [--ref v0.6.0] [--dir DIR] [--repo URL]
 # The install is a git checkout so that `update` / `rollback` work later.
 # No account, password, cookie or token is asked for or stored by this script.
 set -euo pipefail

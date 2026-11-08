@@ -1,5 +1,5 @@
 ﻿# Install xuexitong-mcp from a release tag (Windows PowerShell 5.1+).
-#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Profile student|reviewer|teacher] [-Ref v0.5.0]
+#   powershell -ExecutionPolicy Bypass -File install.ps1 [-Profile student|reviewer|teacher] [-Ref v0.6.0]
 # The install is a git checkout so that `update` / `rollback` work later.
 # No account, password, cookie or token is asked for or stored by this script.
 param(
