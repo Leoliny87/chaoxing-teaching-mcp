@@ -462,19 +462,21 @@ class ManageOps(XxtBase):
         if not self.wait_for("return typeof rePublicWork==='function' && !!document.getElementById('endTime')", timeout=20):
             raise XxtError("修改设置页没有加载；没有修改。")
         r = self.here("""
-            window.close=function(){}; window.__rp=null;
-            const orig=$.ajax; $.ajax=function(o){ if(o&&/update-publish/.test(o.url||'')){ const s=o.success; o.success=function(d){window.__rp=d||{}; try{s&&s.apply(this,arguments)}catch(e){}}; o.error=function(){window.__rp={status:false,msg:'网络错误'}} } return orig.apply(this,arguments) };
+            window.close=function(){}; window.__rp=null; window.__sent=false; window.__toasts=[];
+            const ot=$.toast; $.toast=function(o){ window.__toasts.push(String((o&&o.content)||'')); return ot&&ot.apply(this,arguments) };
+            const orig=$.ajax; $.ajax=function(o){ if(o&&/update-publish/.test(o.url||'')){ window.__sent=true; const s=o.success; o.success=function(d){window.__rp=d||{}; try{s&&s.apply(this,arguments)}catch(e){}}; o.error=function(){window.__rp={status:false,msg:'网络错误'}} } return orig.apply(this,arguments) };
             const old={start:$('#startTime').val(),end:$('#endTime').val()};
             $('#endTime').val(%(end)s); if(%(st)s) $('#startTime').val(%(st)s);
             try{ if(typeof endTimeChanged==='function') endTimeChanged() }catch(e){}
             const ret=rePublicWork();
-            for(let i=0;i<40&&!window.__rp;i++) await new Promise(r=>setTimeout(r,250));
-            return {old, sent:!!window.__rp, resp:window.__rp, refused:ret===false};
+            for(let i=0;i<32&&!window.__rp&&(window.__sent||!window.__toasts.length)&&(window.__sent||i<4);i++) await new Promise(r=>setTimeout(r,250));
+            return {old, sent:window.__sent, resp:window.__rp, refused:ret===false, toasts:window.__toasts};
         """ % {"end": json.dumps(end), "st": json.dumps(st)}, retry_safe=False)
         if not isinstance(r, dict):
             raise XxtError("修改设置页没有响应。")
-        if r.get("refused") and not r.get("sent"):
-            return {"ok": False, "write_outcome": "not_written", "error": "页面校验没通过（例如开始时间早于现在）；没有提交。"}
+        if not r.get("sent"):
+            why = "；".join(x for x in r.get("toasts") or [] if x)[:120]
+            return {"ok": False, "write_outcome": "not_written", "error": f"页面校验没通过（{why or '例如开始时间早于现在'}）；没有提交。"}
         resp = r.get("resp") or {}
         row = next((x for x in self.assignments(c.id) if x["id"] == a["id"]), {})
         tm = str(row.get("time") or "")
@@ -503,18 +505,21 @@ class ManageOps(XxtBase):
         if not self.wait_for("return typeof updatepublish==='function' && !!document.getElementById('endTime')", timeout=20):
             raise XxtError("考试修改设置页没有加载；没有修改。")
         r = self.here("""
-            window.close=function(){}; window.__up=null;
-            const orig=$.ajax; $.ajax=function(o){ if(o&&/update-publishsettings/.test(o.url||'')){ const s=o.success; o.success=function(d){window.__up=d||{}; try{s&&s.apply(this,arguments)}catch(e){}}; o.error=function(){window.__up={status:false,msg:'网络错误'}} } return orig.apply(this,arguments) };
+            window.close=function(){}; window.__up=null; window.__sent=false; window.__toasts=[];
+            // the page reports a failed check with $.toast and sends nothing: catch it instead of waiting
+            const ot=$.toast; $.toast=function(o){ window.__toasts.push(String((o&&o.content)||'')); return ot&&ot.apply(this,arguments) };
+            const orig=$.ajax; $.ajax=function(o){ if(o&&/update-publishsettings/.test(o.url||'')){ window.__sent=true; const s=o.success; o.success=function(d){window.__up=d||{}; try{s&&s.apply(this,arguments)}catch(e){}}; o.error=function(){window.__up={status:false,msg:'网络错误'}} } return orig.apply(this,arguments) };
             $('#endTime').val(%(end)s); if(%(st)s) $('#startTime').val(%(st)s); if(%(lim)s) $('#limitTime').val(%(lim)s);
             // true = skip the page's own "times changed" confirmation (the preview is our confirmation)
             let ret=updatepublish(true);
-            for(let i=0;i<40&&!window.__up;i++) await new Promise(r=>setTimeout(r,250));
-            return {sent:!!window.__up, resp:window.__up, refused:ret===false};
+            for(let i=0;i<32&&!window.__up&&(window.__sent||!window.__toasts.length)&&(window.__sent||i<4);i++) await new Promise(r=>setTimeout(r,250));
+            return {sent:window.__sent, resp:window.__up, refused:ret===false, toasts:window.__toasts};
         """ % {"end": json.dumps(end), "st": json.dumps(st), "lim": json.dumps(str(limit_minutes) if limit_minutes else "")}, retry_safe=False)
         if not isinstance(r, dict):
             raise XxtError("考试修改设置页没有响应。")
         if not r.get("sent"):
-            return {"ok": False, "write_outcome": "not_written", "error": "页面校验没通过或没有发出保存请求；没有修改。"}
+            why = "；".join(x for x in r.get("toasts") or [] if x)[:120]
+            return {"ok": False, "write_outcome": "not_written", "error": f"页面校验没通过（{why or '没有发出保存请求'}）；没有修改。"}
         resp = r.get("resp") or {}
         row = next((x for x in self._rows("考试", c) if x["id"] == e["id"]), {})
         tm = str(row.get("time") or "")
