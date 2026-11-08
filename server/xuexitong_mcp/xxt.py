@@ -249,19 +249,21 @@ class XxtBase:
     def courses(self, refresh: bool = False) -> list[Course]:
         if self._courses and not refresh and time.time() - self._courses_time < self.cfg.course_list_ttl:
             return self._courses
-        self.b.navigate("https://mooc2-ans.chaoxing.com/mooc2-ans/visit/interaction?moocDomain=https://mooc1-1.chaoxing.com/mooc-ans", settle=0.5)
-        data = self.wait_for("""
-            const cs=[...document.querySelectorAll('div.course[id^=c_]')];
-            if(!cs.length) return null;
-            return cs.map(e=>({id:e.querySelector('.courseId')?.value,cpi:e.querySelector('.curPersonId')?.value,
-              role:e.querySelector('.role')?.value,
-              name:((e.querySelector('.course-name')||e.querySelector('.course-info h3')||{}).innerText||'').replace(/置顶/g,'').trim().split('\\n')[0].trim(),
-              info:T(e.querySelector('.course-info'))}));
-        """, timeout=20)
+        # Read the course-list HTML with a same-origin fetch from the host's
+        # static base page, not by navigating to the live Vue portal: the portal
+        # keeps re-rendering and BrowserSkill rejects navigation/observation there
+        # (observation_changed). courselistdata?courseType=0 returns the same
+        # div.course cards (courseId/curPersonId/role hidden fields) the portal renders.
+        data = self.on(M2, """
+            const h=await F('/mooc2-ans/visit/courselistdata?courseType=0');
+            const cs=[...D(h).querySelectorAll('div.course[id^=c_]')];
+            return cs.map(e=>{const ne=e.querySelector('.course-name')||e.querySelector('.course-info h3');
+              return {id:e.querySelector('.courseId')?.value,cpi:e.querySelector('.curPersonId')?.value,
+                role:e.querySelector('.role')?.value,
+                name:((ne&&ne.getAttribute('title'))||T(ne)).replace(/置顶/g,'').trim(),
+                info:T(e.querySelector('.course-info'))};});
+        """)
         if not data:
-            u = self.b.href() or ""
-            if "passport" in u or "login" in u:
-                raise NeedsHuman("学习通未登录：请在浏览器里手动登录学习通（需要人工完成验证码/扫码）。")
             raise XxtError("课程列表为空或页面未加载")
         prev = {c.id: c for c in self._courses}
         out = []

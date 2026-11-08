@@ -276,14 +276,19 @@ class Bsk:
     def ensure_session(self, *, renew_idle_readonly: bool = False):
         with self.lock:
             if self.session and renew_idle_readonly:
-                # Health checks may begin a new read-only session only after
-                # the CLI explicitly confirms normal idle expiry. Never turn
-                # a permission, transport, or unknown failure into recovery.
+                # Health checks may begin a new read-only session only after the
+                # CLI confirms the session is definitively dead (idle expiry or a
+                # closed window). In those cases the owned tab no longer exists,
+                # so there is nothing to preserve and recovery proceeds even when
+                # preserve_tab was set by an earlier error. Any other failure
+                # (permission, transport, unknown) keeps preserve_tab's protection
+                # and is never turned into recovery.
                 try:
                     self.run(["tab", "list", "--scope", "agent"])
                 except BskError as e:
-                    if (e.code != "not_found" or e.data.get("reason") != "session_idle_timeout"
-                            or (self.preserve_tab and not getattr(self, "_login_handoff", False))):
+                    dead = e.code == "not_found" and e.data.get("reason") in (
+                        "session_idle_timeout", "session_window_closed")
+                    if not dead:
                         raise
                     self.session = None
                     self.tab = None

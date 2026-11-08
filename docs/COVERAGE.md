@@ -4,7 +4,7 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-08，第四轮后）
+## 0. 当前完成度（2026-11-08，第五轮后）
 
 注册的工具：共 215 个；教师配置 191 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
@@ -310,6 +310,12 @@
 - **问题图谱的学生探索**：设置在 `stat2 /stat2/knowledge/getBaseSetting {modeType:3}` 的 `exploreMode`、`exploreSetting {link, topic, answer}`（关联、知识点、简答三类任务），修改 `GET /stat2/question-map/update-exploreSetting {setting}`、`update-exploreMode {link, topic, answer}`。学生端：`question-map-stu/explore/getSonQuestion {questionIds}` 给出这个问题下要回答的子问题（**返回里带着教师参考 `answer`，工具一律去掉**），`explore/record {type:2}` 是本人已保存的回答，`POST explore/update-record {questionIds, data: {顶层问题ID: [{id, questionLevel, stuAnswer}]}, type:2}` 保存，`explore/progress-questionId` 是进度。工具只做了「简答」（type 2）。
 - **问题图谱讨论区**：`question-map-stu/bbs/topic-list {lastValue}`（师生都用这个读），发帖 `POST question-map-stu/bbs/topic-add`（教师 `question-map/bbs/topic-add`）`{topicTitle(≤20 字), topicContent, rtf_content, imgUrlArr, attachment}`，点赞 `topic-praise`。列表不返回作者姓名（只有带用户 ID 的头像地址，工具不返回）。
 - 实测：知识列表开关关/开；添加知识点 G、H 并改属性；F 在 E 下和最外层之间来回移动、a3 调顺序，ID 和标签都不变；问题图谱的标签页隐藏再显示；开启学生探索；教师发帖。学生身份：读到知识列表、学习地图、问题图谱探索（没有参考答案），两次「确认提交」保存了两个子问题的回答（第二次保留第一次的回答，进度 33%），讨论区发帖成功。
+
+### 2026-11-08（第五轮）稳定性修复：会话自愈与课程列表静态读取
+- **会话已死自愈**：`bsk.ensure_session` 原来只在 `session_idle_timeout` 且 `preserve_tab=False` 时才重建会话；而任何一次报错都会置 `preserve_tab=True`，之后会话闲置或窗口被关就永久卡死，只能重启服务。现在把 `session_idle_timeout` 和 `session_window_closed` 都判为"会话已死"——这两种情况下代理标签页已不存在、无东西可保护，故即使 `preserve_tab=True` 也重建会话；其它错误（permission/transport/unknown，标签页还活着）的 preserve_tab 保护不变。回归测试 `tests/test_session_recovery.py`（合成数据）：两种死会话原因都恢复、三种活页错误仍拒绝。
+- **课程列表改静态读取**：`xxt.courses` 原来导航到持续重绘的 `visit/interaction` 页抓 live DOM，间歇被 BrowserSkill 以 `observation_changed` 拒绝（health_check 的 courses 步因此永远失败）。改为从静态基准页同源 fetch `mooc2-ans/visit/courselistdata?courseType=0`，用 DOMParser 解析同一批 `div.course[id^=c_]` 卡片（courseId/curPersonId/role 隐藏字段都在），保留主讲/团队 role 区分。注意 `mooc1/visit/courselistdata?courseType=0` 返回的是不带 role 的 `li.course`，不能用；要用 mooc2-ans 宿主的。实测仍返回 60 门、36 主讲+24 团队、名字/cpi/info 与原版逐条一致。回归测试 `tests/test_courses_fetch.py`。
+- **health_check 步骤重排**：把 courses 和界面语言检测移到 guard 导航之前（此时标签页还在稳定静态页，避免从持续重绘的 mobilelearn 页发起下一次导航被拒）；语言检测改为静态 fetch `visit/interaction` 外壳 HTML 判断"我教的课/我学的课/新建课程"标记，不再读活页 body。实测 health_check 现在 courses=60、ui_language=中文、error=null；ok=false 只剩"未装防 App 跳转扩展"这一个真实环境原因。
+- 全套 233 项测试通过；重启服务后经真实 MCP stdio 链路复核 health_check 与 list_courses 均正常。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。

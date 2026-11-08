@@ -11,7 +11,7 @@ from typing import Any
 
 from .bsk import BskError, FIXED_HOMEPAGE
 from .privacy import safe_browser_error_details, safe_error_text
-from .xxt import (ACTIVE_STATUS, BASE_PAGE, ML, NOTICE, SIGN_TYPES, _G, Course, XxtBase, XxtError, _best, _safe_id)
+from .xxt import (ACTIVE_STATUS, BASE_PAGE, M2, ML, NOTICE, SIGN_TYPES, _G, Course, XxtBase, XxtError, _best, _safe_id)
 
 
 _ATYPE = {2: "签到", 4: "抢答", 11: "选人", 14: "问卷", 42: "随堂练习", 43: "投票", 45: "通知", 5: "主题讨论", 23: "评分", 35: "分组任务", 17: "直播",
@@ -362,6 +362,17 @@ class ActivityOps(XxtBase):
             if res["login"] == "已登录" and getattr(self.b, "_login_handoff", False):
                 self.b.preserve_tab = False
                 self.b._login_handoff = False
+            step = "courses"
+            cs = self.courses(refresh=True)
+            res["courses"] = len(cs)
+            step = "language_read"
+            # Detect the portal UI language from the static shell HTML (same-origin
+            # fetch). courses() leaves the tab on the static base page; the live Vue
+            # portal re-renders, so reading its body directly is unreliable. Do this
+            # before the guard navigation parks the tab on the re-rendering activity
+            # page, which would otherwise make the next navigation fail.
+            lang = self.on(M2, "const h=await F('/mooc2-ans/visit/interaction?moocDomain=https://mooc1-1.chaoxing.com/mooc-ans'); return {zh:/我教的课|我学的课|新建课程/.test(h), en:/Teaching|Learning|New Create/.test(h)}")
+            res["ui_language"] = "中文" if isinstance(lang, dict) and lang.get("zh") else ("English" if isinstance(lang, dict) and lang.get("en") else "未知")
             step = "guard_navigation"
             # HTML page on mobilelearn; 'load' can hang on this page, so only wait for DOMContentLoaded
             self.b.navigate(f"https://mobilelearn.chaoxing.com/page/active/activeList?courseId=0&clazzId=0&cpi=0&ut=t&fid={self.fid}",
@@ -370,12 +381,6 @@ class ActivityOps(XxtBase):
             g = self.here("return {guard:!!window.__xxtNoAppGuard, lang:navigator.language}")
             res["guard_extension"] = bool(g.get("guard"))
             res["browser_language"] = g.get("lang")
-            step = "courses"
-            cs = self.courses(refresh=True)
-            res["courses"] = len(cs)
-            step = "language_read"
-            sample = self.here("return document.body.innerText.slice(0,300)") or ""
-            res["ui_language"] = "中文" if re.search(r"(我教的课|我学的课|新建课程)", sample) else ("English" if re.search(r"Teaching|Learning|New Create", sample) else "未知")
         except BskError as e:
             res["error"] = f"BskError: {safe_error_text(e)}"
             if e.code != "login_required":
