@@ -426,24 +426,26 @@ class WriteOps(XxtBase):
 
     # ================================================================ sign-in via API
     def start_checkin_v3(self, course: str, class_id: str, title: str, minutes: int, code: str = "",
-                         late_minutes: int = 10, qr_refresh: int = 0) -> dict:
+                         late_minutes: int = 10, qr_refresh: int = 0, other_id: int = 0,
+                         location_text: str = "", location_range: str = "") -> dict:
         c = self.ctx(course)
         before = {a["activity_id"] for a in self.activities(c.id, limit=1000, class_id=class_id)}
-        q = up.urlencode({"now": 1, "courseId": c.id, "classId": _safe_id(class_id), "otherId": 0, "activeId": "",
+        q = up.urlencode({"now": 1, "courseId": c.id, "classId": _safe_id(class_id), "otherId": int(other_id), "activeId": "",
                           "planId": "", "timeLong": int(minutes) * 60000, "isresult": 0, "isCourseware": 0,
                           "ifphoto": 0, "ifrefreshewm": 1 if qr_refresh > 0 else 0,
                           "ewmRefreshTime": int(qr_refresh) if qr_refresh > 0 else 10, "classroomDataId": "",
                           "classroomPlanId": "", "picId": 0, "pageNum": "", "timerCron": "", "dateCron": "",
-                          "isTeachingCalendar": 0, "fromtype": "", "ifopenAddress": 0, "locationLatitude": "",
-                          "locationLongitude": "", "locationRange": "", "ifSkipWeek": 0, "validity_begintime": "",
+                          "isTeachingCalendar": 0, "fromtype": "", "ifopenAddress": 1 if other_id == 4 else 0,
+                          "locationLatitude": "", "locationLongitude": "", "locationRange": location_range,
+                          "ifSkipWeek": 0, "validity_begintime": "",
                           "validity_endtime": "", "disposable_publishtime": "", "ifSendToOtherClass": 0,
                           "onlyAttendForCurrentClass": 0, "fyktBigClassChatId": "", "isTeachingPlanLibrary": 0,
                           "ifNeedVCode": 0, "lateMinute": int(late_minutes), "openCheckFaceFlag": 0,
                           "openCheckWeChatFlag": 0, "openSignOutFlag": "", "signOutRelativeTime": "",
                           "signOutAbsoluteTime": "", "signOutDuration": ""})
         r = self._call(ML, f"/v2/apis/sign/saveOrBegin?{q}", "POST",
-                       {"title": title, "signCode": code, "pageId": "", "locationText": "", "sendToOtherClassList": "",
-                        "fykbParas": "", "knowledgePoints": ""})
+                       {"title": title, "signCode": code, "pageId": "", "locationText": location_text,
+                        "sendToOtherClassList": "", "fykbParas": "", "knowledgePoints": ""})
         new = [a for a in self.activities(c.id, limit=1000, class_id=class_id)
                if a["activity_id"] not in before and a["title"] == title]
         ok = r.get("http") == 200 and len(new) == 1

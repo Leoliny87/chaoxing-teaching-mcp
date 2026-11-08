@@ -4,7 +4,7 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-08，第六轮后）
+## 0. 当前完成度（2026-11-09，第八轮后）
 
 注册的工具：共 215 个；教师配置 191 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
@@ -323,7 +323,22 @@
 - **活动删除泛化**（delete_activity）：新增 `prepare_activity_deletion`（任意类型，班级校验+唯一性+预演冻结+结果未明保护），复用类型无关的 `setdel`+回收站正向核实。注意 `activities()` 只对通知活动附 class_id 字段，普通活动靠查询 classId scoping+回收站核实（有 class_id 才校验）。实测删普通签到/二维码签到，`absent_from_active_list`+`recycle_row_verified` 双通过。回归 `tests/test_activity_delete.py`。
 - **签到名单**（checkin_status）：改读 `/widget/sign/pcTeaSignController/getAttendList`（`yiqianList`/`weiqianList`+`yiqian`/`weiqian`计数+`signRate`），避开重绘的 endSign 页，按计数核对名单长度（lists_verified）。`signRate` 是 0–100 百分比。实测：教师工具按设计不代签，由测试者本人账号驱动学生端 `/v2/apis/sign/signIn` 给林云学生身份造一条已签数据，已签/未签两侧名单+rate=50 全核实。回归 `tests/test_checkin_status.py`。
 - **考试批阅名单**（exam_marklist）：改读 `POST /mooc2-ans/exam/test/markresult-new`，`state:'1'`=已交/`state:'0'`=未交（**不是 perspectiveType**），id 用考试关系 ID（clazzAndRelationId[clazzid]，本例等于考试 ID）、clazzid 用考试实际班级（从 class 名映射），分页按计数核对。实测助手课已交 1/未交 1 的考试，submitted_rows/unsubmitted_rows 全核实。回归 `tests/test_exam_marklist.py`。
-- 全套 249 项测试通过；每项均经真实 MCP stdio 链路在助手课实测。手势/位置签到仍仅预演（手势 API 参数无文档、位置经纬度预演难冻结），留待后续。
+- 全套 249 项测试通过；每项均经真实 MCP stdio 链路在助手课实测。
+
+### 2026-11-09（第七轮）手势/位置签到补全为可发布（五种签到全通）
+- 签到类型由 saveOrBegin 的 query `otherId` 区分（0 普通/2 二维码/3 手势/4 位置/5 签到码，正好等于 SIGN_TYPES 的 bar）。**手势**：口令存正文 `signCode`，就是九宫格 1-9 的数字序列（如 12357=左上→右横→左下斜），实测 getPPTActiveInfo 读回 otherId=3、signCode="12357"。**位置**：`ifopenAddress=1`+正文 `locationText`（地点名）+`locationRange`（默认 500 米），经纬度可空——实测 locationText="湖南中医药大学" 读回正确，平台接受无坐标。
+- UI 发布路径（ops_activity.start_checkin 画手势/选地图）实测不可用：既要 `__xxtNoAppGuard` 防跳转扩展（未装），又在重绘的签到表单上被 observation_changed 拒绝。故五种类型统一走 saveOrBegin 接口（静态基准页，可靠）。`start_checkin_v3` 加 other_id/location_text/location_range 参数；工具按 bar 路由。
+- 全套 253 项测试通过；手势/位置均经 MCP 工具端到端发布并核实，测试签到已清理。回归 `tests/test_checkin_gesture_location.py`。学生端按设计仍不做签到写操作（不代签）。
+
+### 2026-11-09（第八轮，C 批 checkpoint）问题图谱探索三类任务全通
+- **C1 问题图谱探索 link/topic**：`explore/update-record` 的 `type` 映射实证为 **0=关联(link)/1=知识点(topic)/2=简答(answer)**（getBaseSetting 的 exploreSetting{link,topic,answer} 三类全开）。data 结构与简答完全相同 `{topId:[{id,questionLevel,stuAnswer}]}`，只是 stuAnswer 语义不同：简答=HTML 文本（para 包裹），关联=相关问题 ID、知识点=知识点 ID（原始字符串，不包 para）。实测助手课问题图谱（测试班 159260111，林云学生身份）：type1 存 stuAnswer="281207139"（知识点 a2）、type0 存 "11413389"（关联 Q2），读回一致。`my_qm_explore`/`save_my_qm_explore` 加 task_type 参数，学生工具 list/save_my_question_explore 同步暴露。回归 `tests/test_qm_explore_types.py`，全套 256 通过。
+- 探查笔记：stat2-vue 是 SPA，问题图谱学生探索逻辑不在 app.js 的 50 个懒加载 chunk 里（前端逆向未果），改用实证 API（直接调 record/update-record 试 type 0/1/2）确定映射，更可靠。`_get` 用 STAT_HOST（带 https://），勿用 xxt.STAT（无 scheme）。
+
+**C 批待续（按可行性排序）**
+- C2 图谱批量导入/导出：导出端点 `questionBankTopic/export-knowledge-points`(Excel)/`exportcoursetopicxmind`(xmind) 需新版图谱专属凭据——带课程 enc/ut=t 仍报"非教师无查询权限"/"无效的课程"，旧版大纲页已重定向成空壳；凭据在 topic-ans/knowgraph SPA 里，待逆向。导入 5 种（智能/模板/xmind/同步他课/章节）更复杂。
+- C3 错题集：接口通，但课程创建者本人学生身份 stuId=0 收不到错题，**必须纯学生测试号登录**答错后验证非空格式。
+- C4 AI 助教对话：读接口已通（robot-lc），发送端点（SSE chat）待抓包。
+- C5 全景 6 图：上传机制完全未知，最低优先级。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。

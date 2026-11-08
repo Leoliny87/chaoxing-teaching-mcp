@@ -1297,31 +1297,33 @@ def list_my_graph(course: StuCourse_, graph: Annotated[str, Field(description="�
 
 
 @tool(R, "学生端：问题图谱的「探索」。列出最上层的问题和我的探索进度；指定 question 时列出它下面要回答的子问题和我已保存的回答"
-         "（不提供教师参考答案）。学生要自己思考作答。")
-def list_my_question_explore(course: StuCourse_, question: Annotated[str, Field(description="要探索的最上层问题（标题或 question_id），留空=只列问题")] = "") -> dict:
-    return client().my_qm_explore(course, question)
+         "（不提供教师参考答案）。task_type 选探索任务：answer 简答 / link 关联 / topic 知识点。学生要自己思考作答。")
+def list_my_question_explore(course: StuCourse_, question: Annotated[str, Field(description="要探索的最上层问题（标题或 question_id），留空=只列问题")] = "",
+                             task_type: Annotated[str, Field(description="探索任务类型：answer 简答 / link 关联 / topic 知识点")] = "answer") -> dict:
+    return client().my_qm_explore(course, question, task_type)
 
 
-@tool(W, "学生端：保存我在问题图谱探索里的回答（按子问题 sub_id 填学生本人写的回答；没填的子问题保留原来的回答）。必须先预演并把回答完整展示给学生；"
-         "只有学生本人回复「确认提交」后，才能带 confirm_text=\"确认提交\" 和 plan_id 保存并读回核对。")
+@tool(W, "学生端：保存我在问题图谱探索里的回答（按子问题 sub_id 填；没填的子问题保留原回答）。task_type：answer 简答填文字，link 关联填相关问题ID，topic 知识点填知识点ID。"
+         "必须先预演并把回答完整展示给学生；只有学生本人回复「确认提交」后，才能带 confirm_text=\"确认提交\" 和 plan_id 保存并读回核对。")
 def save_my_question_explore(course: StuCourse_, question: Annotated[str, Field(description="最上层问题（标题或 question_id）")],
-                             answers: Annotated[dict, Field(description="按子问题回答，如 {\"<sub_id>\": \"我的回答\"}；只能是学生本人的回答")],
+                             answers: Annotated[dict, Field(description="按子问题回答，如 {\"<sub_id>\": \"回答\"}；answer 填文字，link/topic 填ID")],
+                             task_type: Annotated[str, Field(description="探索任务类型：answer 简答 / link 关联 / topic 知识点")] = "answer",
                              confirm: Confirm = False, confirm_text: ConfirmText_ = "") -> dict:
     _student_phrase(confirm, confirm_text)
     _check_student_write(course)
     if not isinstance(answers, dict) or not answers or any(not str(v).strip() or len(str(v)) > 5000 for v in answers.values()):
         raise XxtError("answers 要按子问题填 1–5000 字的回答。")
     if not confirm:
-        ex = client().my_qm_explore(course, question).get("exploring") or {}
+        ex = client().my_qm_explore(course, question, task_type).get("exploring") or {}
         subs = {x["sub_id"]: x for x in ex.get("sub_questions") or []}
         bad = [k for k in answers if str(k) not in subs]
         if bad:
             raise XxtError(f"这些不是这个问题下的子问题：{bad}（用 list_my_question_explore 查 sub_id）。")
-        return {"ok": True, "dry_run": True, "action": "保存问题图谱探索的回答", "question": ex.get("question"),
+        return {"ok": True, "dry_run": True, "action": "保存问题图谱探索的回答", "question": ex.get("question"), "task_type": task_type,
                 "answers": [{"sub_question": subs[str(k)]["title"], "answer": str(v)} for k, v in answers.items()],
                 "next": f"把以上回答完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。",
                 "_bind": {"question": ex.get("question_id")}}
-    return client().save_my_qm_explore(course, question, {str(k): str(v) for k, v in answers.items()})
+    return client().save_my_qm_explore(course, question, {str(k): str(v) for k, v in answers.items()}, task_type)
 
 
 @tool(R, "学生端：问题图谱的讨论区（帖子标题、内容、时间、点赞数和回复数）。")
@@ -2487,7 +2489,7 @@ def list_activities(course: Course_, status: Annotated[str, Field(description="�
     return client().activities(course, status, limit)
 
 
-@tool(W, "发起签到：普通/二维码/签到码已验证可执行，手势/位置仅预演；需指定班级。")
+@tool(W, "发起签到（五种类型均可执行，走 saveOrBegin 接口）：普通/二维码/签到码，手势按九宫格1-9数字口令、位置按地点名；需指定班级。")
 def start_checkin(course: Course_, title: Annotated[str, Field(description="签到标题，如“第3周周二签到”")] = "签到",
                   sign_type: Annotated[str, Field(description="普通 / 手势 / 位置 / 二维码 / 签到码")] = "普通",
                   code: Annotated[str, Field(description="签到码（仅签到码签到）")] = "",
@@ -2512,16 +2514,14 @@ def start_checkin(course: Course_, title: Annotated[str, Field(description="签�
         draft = _dry(c, "发起签到（学生会收到推送）", bind={"class_name": target["id"], "gesture": effective_gesture},
                      title=title, sign_type=sign_type, code=code, gesture=effective_gesture, address=address, classes=[target],
                      note="签到时长使用学习通默认设置（手动结束）。结束用 end_activity。")
-        if bar in (0, 2, 5):
-            return draft  # 普通 / 二维码 / 签到码：直接调用已验证的 saveOrBegin 接口
-        reason = "手势、位置签到的接口参数尚未实测，当前仅支持预演。"
-        if bar == 4:
-            reason += "位置还会由地图或默认定位决定，无法预先可靠冻结。"
-        return _preview_only(draft, reason)
-    if bar not in (0, 2, 5):
-        raise XxtError("只有普通、二维码和签到码签到已验证可执行。")
-    return client().start_checkin_v3(course, class_name, title, 30, code if bar == 5 else "",
-                                     qr_refresh=10 if bar == 2 else 0)
+        return draft  # 五种签到类型均走 saveOrBegin 接口发布
+    # otherId: 0 普通 / 2 二维码 / 3 手势 / 4 位置 / 5 签到码。手势口令（九宫格 1-9 序列）存
+    # signCode；位置置 ifopenAddress=1 + locationText（地点名，经纬度可空）+ 默认 500 米范围。
+    return client().start_checkin_v3(course, class_name, title, 30,
+                                     effective_gesture if bar == 3 else (code if bar == 5 else ""),
+                                     qr_refresh=10 if bar == 2 else 0, other_id=bar,
+                                     location_text=address if bar == 4 else "",
+                                     location_range="500" if bar == 4 else "")
 
 
 @tool(R, "查看签到人数、签到率和已签/未签名单（getAttendList 接口，按计数核对一致）。")
