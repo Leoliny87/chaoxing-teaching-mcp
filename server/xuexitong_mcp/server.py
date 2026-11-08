@@ -2072,6 +2072,129 @@ def ai_format_chapter(course: Course_, chapter: Chapter_, card_id: CardId_,
     return client().ai_format_apply(course, chapter, card_id, formatted_html)
 
 
+@tool(R, "章节「智能编写」可选的文章类型、目录结构、写作风格（含本人在这门课里自定义的选项及其 option_id）。")
+def get_ai_writing_options(course: Course_) -> dict:
+    return client().ai_writing_options(course)
+
+
+@tool(W, "给「智能编写」新增一个自定义选项：kind=文章类型（可带说明）/ 目录结构 / 写作风格。先预演，确认后保存并读回核对。")
+def add_ai_writing_option(course: Course_, kind: Annotated[str, Field(description="文章类型 / 目录结构 / 写作风格")],
+                          name: Annotated[str, Field(description="选项名称，1–20 字")],
+                          description: Annotated[str, Field(description="文章类型的说明（仅文章类型用），可留空")] = "",
+                          confirm: Confirm = False) -> dict:
+    from .ops_ai import OPTION_KINDS
+    c = _check_write(course)
+    if kind not in OPTION_KINDS:
+        raise XxtError(f"kind 只能是：{'、'.join(OPTION_KINDS)}。")
+    name = (name or "").strip()
+    if not 1 <= len(name) <= 20:
+        raise XxtError("选项名称要 1–20 字。")
+    if kind != "文章类型" and description:
+        raise XxtError("只有文章类型可以带说明。")
+    if not confirm:
+        have = [x["name"] for x in client().ai_writing_options(c.id)["custom"] if x["kind"] == kind]
+        if name in have:
+            raise XxtError(f"已经有同名的{kind}「{name}」。")
+        return _dry(c, f"新增智能编写的自定义{kind}", kind=kind, name=name, description=description)
+    return client().save_ai_writing_option(c.id, kind, name, description)
+
+
+@tool(D, "删除「智能编写」的一个自定义选项（option 填 option_id 或名称）。先预演，确认后删除并核对。")
+def delete_ai_writing_option(course: Course_, option: Annotated[str, Field(description="自定义选项的 option_id 或名称")],
+                             confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        hit = [x for x in client().ai_writing_options(c.id)["custom"] if option in (x["option_id"], x["name"])]
+        if len(hit) != 1:
+            raise XxtError("没有找到唯一的这个自定义选项（get_ai_writing_options 可查 option_id）。")
+        return _dry(c, "删除智能编写的自定义选项", bind={"option": hit[0]["option_id"]}, **hit[0])
+    return client().delete_ai_writing_option(c.id, option)
+
+
+@tool(W, "章节「智能编写」：按主题让平台 AI 先写大纲（也可自己给大纲）再写正文，可选文章类型、目录结构、读者对象、字数、写作风格、联网搜索。"
+         "预演时生成全文（会用掉平台的 AI 次数）并返回大纲、正文和参考来源；确认后把这份正文原样追加到这一页末尾（学生可见），读回核对。")
+def ai_write_chapter(course: Course_, chapter: Chapter_, card_id: CardId_,
+                     topic: Annotated[str, Field(description="文章主题，1–100 字")],
+                     article_type: Annotated[str, Field(description="通用文章 / 课程思政 / 实验设计方案 / 实验报告 / 教学反思 / 工作总结 / 师德师风心得 / 培训心得 / 实习报告，或自定义类型")] = "通用文章",
+                     sections: Annotated[list[str], Field(description="目录结构（如 引言、结尾），留空=该类型默认")] = [],  # noqa: B006
+                     outline: Annotated[str, Field(description="自己给的大纲（Markdown），留空=先让 AI 写大纲")] = "",
+                     audience: Annotated[str, Field(description="年级或对象，如 高中二年级，可留空")] = "",
+                     words: Annotated[int, Field(ge=100, le=10000, description="文章字数")] = 1000,
+                     styles: Annotated[list[str], Field(description="写作风格：智能匹配 / 专业严谨 / 生动有趣 / 通俗易懂 / 情感共鸣 / 个性化，或自定义")] = [],  # noqa: B006
+                     web_search: Annotated[bool, Field(description="是否联网搜索参考资料")] = False,
+                     confirm: Confirm = False, written_html: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    topic = (topic or "").strip()
+    if not 1 <= len(topic) <= 100:
+        raise XxtError("文章主题要 1–100 字。")
+    if not confirm:
+        if written_html:
+            raise XxtError("预演时 written_html 必须留空。")
+        ch = client().find_chapter(c.id, chapter)
+        cur = client()._read_card(client().course(c.id), ch["chapter_id"], card_id)
+        if cur is None:
+            raise XxtError("指定的章节卡片不存在。")
+        r = client().ai_write_preview(c.id, topic, article_type, sections, outline, audience, words, styles, web_search)
+        d = _chapter_dry(c, chapter, "把智能编写生成的正文追加到这一页末尾（学生可见）", card_id=card_id, topic=topic, article_type=article_type,
+                         outline=r["outline"], outline_generated=r["outline_generated"], article_markdown=r["article_markdown"],
+                         sources=r["sources"], chars=r["chars"], new_content_html=r["html"][:20000])
+        d["_bind"]["written_html"] = r["html"]
+        return d
+    return client()._append_html(course, chapter, card_id, written_html)
+
+
+@tool(R, "章节「AI 校正」：文本校正（这一页的文字：标点、成语、错别字、语法、搭配、地名、机构名、领导人姓名、时间）或文档校正（这一页插入的文档）。"
+         "start=true 让平台开始检测（不改正文，会用掉 AI 次数），再等最多 wait_seconds 秒；start=false 只读上次的结果。文本建议可用 apply_ai_corrections 替换进正文。")
+def ai_check_chapter(course: Course_, chapter: Chapter_, card_id: CardId_,
+                     kind: Annotated[str, Field(description="文本 / 文档")] = "文本",
+                     start: Annotated[bool, Field(description="是否开始一次新的检测")] = False,
+                     wait_seconds: Annotated[int, Field(ge=0, le=180, description="最多等结果多少秒")] = 60) -> dict:
+    if kind not in ("文本", "文档"):
+        raise XxtError("kind 只能是 文本 或 文档。")
+    ch = client().find_chapter(course, chapter)
+    return client().ai_check(course, ch["chapter_id"], card_id, kind, start, wait_seconds)
+
+
+@tool(W, "停止这一页正在进行的 AI 文本校正。先预演，确认后停止并读回状态。")
+def stop_ai_check(course: Course_, chapter: Chapter_, card_id: CardId_, confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _chapter_dry(c, chapter, "停止这一页的 AI 文本校正", card_id=card_id)
+    return client().ai_check_stop(course, chapter, card_id)
+
+
+@tool(W, "把 AI 文本校正的修改建议替换进这一页正文（items 填建议的 index，留空=全部）。预演给出将改的每一处；确认时正文须和预演时一致，保存后读回核对，保留插入项。")
+def apply_ai_corrections(course: Course_, chapter: Chapter_, card_id: CardId_,
+                         items: Annotated[list[int], Field(description="要采用的建议 index（ai_check_chapter 返回），留空=全部")] = [],  # noqa: B006
+                         confirm: Confirm = False, corrected_html: FileSha_ = "", source_digest: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    if not confirm:
+        if corrected_html or source_digest:
+            raise XxtError("预演时 corrected_html / source_digest 必须留空。")
+        ch = client().find_chapter(c.id, chapter)
+        r = client().ai_fix_preview(c.id, ch["chapter_id"], card_id, items)
+        d = _chapter_dry(c, chapter, "把 AI 校正的修改替换进这一页正文（学生可见）", card_id=card_id, changes=r["changes"], not_found=r["not_found"])
+        d["_bind"].update(corrected_html=r["html"], source_digest=r["source_digest"])
+        return d
+    return client().ai_fix_apply(course, chapter, card_id, corrected_html, source_digest)
+
+
+@tool(W, "把本机的全景资源上传到本人的全景资源库（全景图片：一张 2:1 的 jpg/png；全景视频：mp4），之后可用 insert_chapter_panorama 插入章节。"
+         "文件须在 upload_allow_dirs 里，预演记下哈希；确认后上传并在全景资源列表里核对。")
+def upload_panorama(course: Annotated[str, Field(description="要用它的课程（只用于写入白名单校验；资源存在本人的全景库里）")],
+                    file_path: Annotated[str, Field(description="本机全景图片或视频的绝对路径")], confirm: Confirm = False, file_sha256: FileSha_ = "") -> dict:
+    c = _check_write(course)
+    pth = _check_upload_path(file_path)
+    if pth.suffix.lower() not in (".jpg", ".jpeg", ".png", ".mp4"):
+        raise XxtError("全景资源只能是 .jpg / .jpeg / .png 图片或 .mp4 视频。")
+    if not confirm:
+        if file_sha256:
+            raise XxtError("预演时 file_sha256 必须留空。")
+        fp = _upload_preview_digest(pth)
+        return _dry(c, "上传全景资源到本人的全景资源库", bind={"file_path": str(pth), "file_sha256": fp["sha256"]}, file=pth.name, **fp)
+    return client().upload_panorama(str(pth), file_sha256)
+
+
 @tool(W, "把已有的课程资料插入章节某一页（「本课资料」；也可作为文档/音频/视频/图片插入，不用重新上传）。先预演，确认后插入并读回核对，保留该页已有插入项。")
 def insert_chapter_material(course: Course_, chapter: Chapter_, card_id: CardId_,
                             material: Annotated[str, Field(description="课程资料的完整名称或资料ID（list_materials 可查）")],

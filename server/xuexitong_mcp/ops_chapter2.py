@@ -210,6 +210,35 @@ class ChapterInsertOps(XxtBase):
                  "uploaded": time.strftime("%Y-%m-%d", time.localtime(int((x.get("uploadtime") or {}).get("time") or 0) / 1000))}
                 for x in r if isinstance(x, dict) and str(x.get("id") or "").isdigit()]
 
+    def upload_panorama(self, file_path: str, sha: str) -> dict:
+        """全景上传: the picker page (mobile3 /threedresourse/panorama/toselect) posts the file alone as multipart field
+        "file" to /fyportal/threedresourse/panorama/upload -> {status, msg, data:{id, filename}} (its 资源类型 dropdown is
+        not sent).  The new resource then shows in /fyportal/threedresourse/panorama/list."""
+        before = {x["panorama_id"] for x in self._panoramas()}
+        tmp, snap, meta = self._snapshot(file_path, sha)
+        try:
+            self._stage(snap, meta)          # _panoramas() left the browser on the picker page
+            r = self.here("""
+                const f=document.getElementById('mcp-file').files[0]; if(!f) return {stage:'file'};
+                const fd=new FormData(); fd.append('file',f,f.name);
+                const r=await fetch('/fyportal/threedresourse/panorama/upload',{method:'POST',body:fd,credentials:'include'});
+                const t=await r.text(); let j=null; try{j=JSON.parse(t.replace(/^<pre[^>]*>|<[/]pre>$/g,''))}catch(e){}
+                return {stage:'done',http:r.status,j,raw:j?'':t.slice(0,120)};
+            """, retry_safe=False)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        j = (r or {}).get("j") if isinstance(r, dict) else None
+        if not isinstance(j, dict):
+            return {"ok": False, "write_outcome": "unknown", "error": "上传请求没有得到可读的回应；请用 search_chapter_resources(kind=全景) 核查。"}
+        if j.get("status") is not True:
+            return {"ok": False, "write_outcome": "not_written", "error": f"平台拒绝上传：{str(j.get('msg') or '')[:80]}。"}
+        pid = str((j.get("data") or {}).get("id") or "")
+        new = [x for x in self._panoramas() if x["panorama_id"] not in before]
+        ok = len(new) == 1 and new[0]["panorama_id"] == pid
+        return {"ok": ok, "panorama": new[0] if new else None, "message": j.get("msg"),
+                "note": "已在本人的全景资源库里；用 insert_chapter_panorama 插入章节。",
+                **({} if ok else {"write_outcome": "unknown", "error": "上传后在全景资源列表里没核对到新资源。"})}
+
     # ------------------------------------------------------------------ inserts
     def find_suke(self, suke: str) -> dict:
         items = self._suke_all()
