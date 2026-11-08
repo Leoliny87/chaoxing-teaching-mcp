@@ -96,7 +96,7 @@ def test_outline_levels():
 
 def test_bank_question_ids():
     from xuexitong_mcp.ops_bank import _qids
-    assert _qids(["96c9c9c158034b3281f6fde35ecd201c", " 123 "]) == ["96c9c9c158034b3281f6fde35ecd201c", "123"]
+    assert _qids(["0123456789abcdef0123456789abcdef", " 123 "]) == ["0123456789abcdef0123456789abcdef", "123"]
     for bad in ([], ["x';alert(1)"], ["A" * 32], ["1"] * 201):
         with pytest.raises(XxtError):
             _qids(bad)
