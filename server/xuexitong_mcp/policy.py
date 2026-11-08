@@ -30,8 +30,8 @@ STUDENT_BASE = frozenset({"list_my_courses", "list_my_assignments", "read_my_ass
                           "submit_my_assignment", "list_my_exams", "list_my_activities", "list_my_materials",
                           "download_my_material", "ask_tutor", "health_check", "open_my_activity", "submit_my_activity",
                           "list_my_tasks", "list_my_task_points", "list_my_study_record", "list_my_wrong_questions",
-                          "list_my_course_graph", "list_my_graph"})
-STUDENT_OPTIONAL = frozenset({"list_my_discussions", "reply_my_discussion"})
+                          "list_my_course_graph", "list_my_graph", "list_my_question_explore", "save_my_question_explore"})
+STUDENT_OPTIONAL = frozenset({"list_my_discussions", "reply_my_discussion", "list_my_question_discussion", "post_my_question_discussion"})
 STUDENT_ONLY = (STUDENT_BASE | STUDENT_OPTIONAL) - {"health_check"}
 REVIEW_TOOLS = frozenset({"record_review_suggestion", "list_review_suggestions"})
 NEVER_FOR_REVIEWER = frozenset({"read_page", "screenshot", "ai_check_chapter"})  # the last can start a platform AI job

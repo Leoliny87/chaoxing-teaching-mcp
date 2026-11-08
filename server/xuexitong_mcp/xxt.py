@@ -422,8 +422,9 @@ def make_client(cfg: Config):
     from .ops_graph import GraphOps
     from .ops_graph2 import NewGraphOps
     from .ops_ai import ChapterAiOps
+    from .ops_graph3 import GraphMoreOps
 
-    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, StudentActiveOps, StudentMoreOps, ReviewOps, ActiveOps, ClassOps, ClassAdminOps, BankOps, ReadOps, SettingsOps, ManageOps, PaperOps, ImportOps, ChapterInsertOps, GraphOps, NewGraphOps, ChapterAiOps,
+    class Xxt(NoticeOps, CreateOps, UploadOps, TaskOps, StudentOps, StudentActiveOps, StudentMoreOps, ReviewOps, ActiveOps, ClassOps, ClassAdminOps, BankOps, ReadOps, SettingsOps, ManageOps, PaperOps, ImportOps, ChapterInsertOps, GraphOps, NewGraphOps, GraphMoreOps, ChapterAiOps,
               WriteOps, V3Ops,
               ContentOps,
               CourseOps,

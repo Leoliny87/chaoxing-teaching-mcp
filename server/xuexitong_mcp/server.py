@@ -1290,8 +1290,58 @@ def list_my_course_graph(course: StuCourse_) -> dict:
 
 
 @tool(R, "学生端：查看新版课程图谱里的问题图谱（层级、问题、描述、子问题）、能力图谱（课程目标和关联知识点）或课程思政图谱（打了思政标签的知识点和我的完成率、掌握率）。只读；老师没开启的图谱会说明。")
-def list_my_graph(course: StuCourse_, graph: Annotated[str, Field(description="问题图谱 / 能力图谱 / 课程思政图谱")]) -> dict:
+def list_my_graph(course: StuCourse_, graph: Annotated[str, Field(description="问题图谱 / 能力图谱 / 课程思政图谱 / 知识列表 / 学习地图")]) -> dict:
+    if graph in ("知识列表", "学习地图"):
+        return client().my_list_or_map(course, graph)
     return client().my_graphs(course, graph)
+
+
+@tool(R, "学生端：问题图谱的「探索」。列出最上层的问题和我的探索进度；指定 question 时列出它下面要回答的子问题和我已保存的回答"
+         "（不提供教师参考答案）。学生要自己思考作答。")
+def list_my_question_explore(course: StuCourse_, question: Annotated[str, Field(description="要探索的最上层问题（标题或 question_id），留空=只列问题")] = "") -> dict:
+    return client().my_qm_explore(course, question)
+
+
+@tool(W, "学生端：保存我在问题图谱探索里的回答（按子问题 sub_id 填学生本人写的回答；没填的子问题保留原来的回答）。必须先预演并把回答完整展示给学生；"
+         "只有学生本人回复「确认提交」后，才能带 confirm_text=\"确认提交\" 和 plan_id 保存并读回核对。")
+def save_my_question_explore(course: StuCourse_, question: Annotated[str, Field(description="最上层问题（标题或 question_id）")],
+                             answers: Annotated[dict, Field(description="按子问题回答，如 {\"<sub_id>\": \"我的回答\"}；只能是学生本人的回答")],
+                             confirm: Confirm = False, confirm_text: ConfirmText_ = "") -> dict:
+    _student_phrase(confirm, confirm_text)
+    _check_student_write(course)
+    if not isinstance(answers, dict) or not answers or any(not str(v).strip() or len(str(v)) > 5000 for v in answers.values()):
+        raise XxtError("answers 要按子问题填 1–5000 字的回答。")
+    if not confirm:
+        ex = client().my_qm_explore(course, question).get("exploring") or {}
+        subs = {x["sub_id"]: x for x in ex.get("sub_questions") or []}
+        bad = [k for k in answers if str(k) not in subs]
+        if bad:
+            raise XxtError(f"这些不是这个问题下的子问题：{bad}（用 list_my_question_explore 查 sub_id）。")
+        return {"ok": True, "dry_run": True, "action": "保存问题图谱探索的回答", "question": ex.get("question"),
+                "answers": [{"sub_question": subs[str(k)]["title"], "answer": str(v)} for k, v in answers.items()],
+                "next": f"把以上回答完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。",
+                "_bind": {"question": ex.get("question_id")}}
+    return client().save_my_qm_explore(course, question, {str(k): str(v) for k, v in answers.items()})
+
+
+@tool(R, "学生端：问题图谱的讨论区（帖子标题、内容、时间、点赞数和回复数）。")
+def list_my_question_discussion(course: StuCourse_) -> dict:
+    return client().qm_discussion(course, "s")
+
+
+@tool(W, "学生端：在问题图谱的讨论区发一个帖子（以学生本人身份发布，其他同学可见）。必须先预演并把标题和内容完整展示给学生；"
+         "只有学生本人回复「确认提交」后，才能带 confirm_text=\"确认提交\" 和 plan_id 发布并核对。只发布学生本人写的内容。")
+def post_my_question_discussion(course: StuCourse_, title: Annotated[str, Field(description="标题，1–20 字")],
+                                content: Annotated[str, Field(description="正文（学生本人的文字），1–5000 字")],
+                                confirm: Confirm = False, confirm_text: ConfirmText_ = "") -> dict:
+    _student_phrase(confirm, confirm_text)
+    _check_student_write(course)
+    if not 1 <= len(title.strip()) <= 20 or not 1 <= len(content.strip()) <= 5000:
+        raise XxtError("标题要 1–20 字，正文 1–5000 字。")
+    if not confirm:
+        return {"ok": True, "dry_run": True, "action": "在问题图谱讨论区发帖（其他同学可见）", "title": title, "content": content,
+                "next": f"把以上标题和内容完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": {}}
+    return client().post_qm_discussion(course, title.strip(), content, "s")
 
 
 @tool(R, "学生端：列出我在某门课里的考试（标题、状态、剩余时间、截止时间）。只读：考试由学生本人在学习通里作答，本服务不代答。")
@@ -1743,7 +1793,7 @@ def link_questions_to_knowledge(course: Course_, point: Point_,
 
 
 # ------------------------------------------------------------------ 新版课程图谱：图谱类型、标签、思政图谱、问题图谱、能力图谱
-GraphKind_ = Annotated[str, Field(description="问题图谱 / 能力图谱 / 课程思政图谱")]
+GraphKind_ = Annotated[str, Field(description="问题图谱 / 能力图谱 / 课程思政图谱 / 知识列表 / 学习地图")]
 QmQuestion_ = Annotated[str, Field(description="问题图谱里的问题（标题或问题ID，get_question_map 可查）")]
 
 
@@ -1784,11 +1834,14 @@ def upgrade_course_graph(course: Course_, confirm: Confirm = False) -> dict:
 @tool(W, "开启或关闭新版课程图谱里的问题图谱、能力图谱、课程思政图谱（开启后学生端也能看到）。先预演，确认后设置并核对。")
 def set_graph_type(course: Course_, graph: GraphKind_, visible: Annotated[bool, Field(description="true=开启")], confirm: Confirm = False) -> dict:
     from .ops_graph2 import SWITCHES
+    from .ops_graph3 import HIDE_GRAPHS
     c = _check_write(course)
     if not confirm:
-        if graph not in SWITCHES:
-            raise XxtError(f"graph 只能是：{'、'.join(SWITCHES)}。")
+        if graph not in SWITCHES and graph not in HIDE_GRAPHS:
+            raise XxtError(f"graph 只能是：{'、'.join([*SWITCHES, *HIDE_GRAPHS])}。")
         return _dry(c, ("开启" if visible else "关闭") + graph + "（学生端随之变化）", graph=graph, visible=visible)
+    if graph in HIDE_GRAPHS:
+        return client().set_graph_hidden(course, graph, visible)
     return client().set_graph_type(course, graph, visible)
 
 
@@ -1824,6 +1877,130 @@ def get_question_map(course: Course_) -> dict:
     out = client().question_map(course)
     out["recycle_bin"] = client().qm_recycle(course)
     return out
+
+
+@tool(R, "新版图谱的「知识列表」：知识点平铺列表（标签、班级平均完成率/掌握率、使用量、创建时间、说明），可分页、排序、按关键词或标签筛选。")
+def get_knowledge_list(course: Course_, page: Annotated[int, Field(ge=1, description="页码")] = 1,
+                       page_size: Annotated[int, Field(ge=1, le=100, description="每页条数")] = 20,
+                       sort: Annotated[str, Field(description="完成率 / 掌握率 / 使用量 / 创建时间")] = "完成率",
+                       ascending: Annotated[bool, Field(description="是否升序（默认降序）")] = False,
+                       keyword: Annotated[str, Field(description="按名称搜索，可留空")] = "",
+                       labels: Annotated[list[str], Field(description="只看带这些标签的，可留空")] = []) -> dict:  # noqa: B006
+    return client().knowledge_list(course, page, page_size, sort, keyword, labels, ascending=ascending)
+
+
+@tool(W, "在「知识列表」里添加一个知识点（加在课程图谱最外层），可同时设置知识类型、标签、说明。先预演，确认后添加并核对。")
+def add_knowledge_list_point(course: Course_, name: Annotated[str, Field(description="知识点名称，1–50 字")],
+                             kind: Annotated[str, Field(description="知识类型：未设置 / 事实性 / 概念性 / 程序性 / 元认知")] = "未设置",
+                             labels: Annotated[list[str], Field(description="标签名，可留空")] = [],  # noqa: B006
+                             description: Annotated[str, Field(description="说明，可留空")] = "", confirm: Confirm = False) -> dict:
+    from .ops_graph3 import KNOW_KINDS
+    c = _check_write(course)
+    name = (name or "").strip()
+    if not 1 <= len(name) <= 50:
+        raise XxtError("知识点名称要 1–50 字。")
+    if kind not in KNOW_KINDS:
+        raise XxtError(f"kind 只能是：{'、'.join(KNOW_KINDS)}。")
+    if not confirm:
+        have = {x["name"] for x in client().knowledge_labels(c.id)}
+        if [x for x in labels if x not in have]:
+            raise XxtError(f"没有这些标签：{[x for x in labels if x not in have]}（可先用 create_knowledge_label 新建）。")
+        if [p for p in client().knowledge_points(c.id) if p["name"] == name]:
+            raise XxtError(f"图谱里已经有「{name}」；同名节点平台会自动加数字。")
+        return _dry(c, "在知识列表里添加知识点（加在图谱最外层，学生可见）", name=name, kind=kind, labels=labels, description=description)
+    return client().add_list_point(c.id, name, kind, labels, description)
+
+
+@tool(R, "读取一个知识点的属性：知识类型、说明、标签、教学目标、参考学时（及课程是否开启这两项）。")
+def get_knowledge_properties(course: Course_, point: Point_) -> dict:
+    p = client().find_point(course, point)
+    return client().point_properties(course, p["point_id"])
+
+
+@tool(W, "修改一个知识点的属性：知识类型、说明、标签（整体替换）、教学目标（课程开启时才保存）、参考学时。没给的项保持原样。先预演，确认后保存并读回核对。")
+def set_knowledge_properties(course: Course_, point: Point_,
+                             kind: Annotated[str, Field(description="未设置 / 事实性 / 概念性 / 程序性 / 元认知；留空=不改")] = "",
+                             description: Annotated[str | None, Field(description="说明；不传=不改，空字符串=清空")] = None,
+                             labels: Annotated[list[str] | None, Field(description="标签名（整体替换）；不传=不改，空列表=去掉全部")] = None,
+                             teaching_target: Annotated[str | None, Field(description="教学目标；不传=不改")] = None,
+                             study_hours: Annotated[str | None, Field(description="参考学时；不传=不改")] = None,
+                             confirm: Confirm = False) -> dict:
+    from .ops_graph3 import KNOW_KINDS
+    c = _check_write(course)
+    if kind and kind not in KNOW_KINDS:
+        raise XxtError(f"kind 只能是：{'、'.join(KNOW_KINDS)}。")
+    if not confirm:
+        p = client().find_point(c.id, point)
+        if labels:
+            have = {x["name"] for x in client().knowledge_labels(c.id)}
+            if [x for x in labels if x not in have]:
+                raise XxtError(f"没有这些标签：{[x for x in labels if x not in have]}。")
+        cur = client().point_properties(c.id, p["point_id"])
+        change = {k: v for k, v in (("kind", kind or None), ("description", description), ("labels", labels),
+                                     ("teaching_target", teaching_target), ("study_hours", study_hours)) if v is not None}
+        if not change:
+            raise XxtError("没有要修改的项。")
+        return _dry(c, "修改知识点属性（学生可见）", bind={"point": p["point_id"]}, point=p["name"],
+                    current={k: cur[k] for k in ("kind", "description", "labels", "teaching_target", "study_hours")}, change=change,
+                    **({"warning": "这门课没有开启「教学目标」，平台不会保存。"} if teaching_target is not None and not cur["teaching_target_enabled"] else {}))
+    return client().set_point_properties(c.id, point, kind or None, description, labels, teaching_target, study_hours)
+
+
+@tool(R, "新版图谱的「学习地图」：按课程图谱最外层分成的学习阶段，每个阶段的知识点、标签和所在班级的平均完成率/掌握率。")
+def get_learning_map(course: Course_) -> dict:
+    return client().learning_map(course)
+
+
+@tool(W, "移动或调整知识点顺序（新版图谱编辑器的保存方式，学习地图的阶段顺序也随之变化）：放到某个分类下（parent 留空=最外层），"
+         "排在某个同级知识点前面（before 留空=排最后）。只能放进「分类」。预演给出移动后的大纲；确认后保存并核对。")
+def move_knowledge_point(course: Course_, point: Point_, parent: Annotated[str, Field(description="新的上级分类（名称或ID），留空=最外层")] = "",
+                         before: Annotated[str, Field(description="排在这个同级知识点前面（名称或ID），留空=排最后")] = "",
+                         confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        pts = client().knowledge_points(c.id)
+        p = client().find_point(c.id, point, pts)
+        par = client().find_point(c.id, parent, pts) if parent else None
+        bef = client().find_point(c.id, before, pts) if before else None
+        r = client().move_preview(c.id, p["point_id"], par["point_id"] if par else "", bef["point_id"] if bef else "")
+        return _dry(c, "移动知识点（课程图谱和学习地图随之变化，学生可见）",
+                    bind={"point": p["point_id"], "parent": par["point_id"] if par else "", "before": bef["point_id"] if bef else ""},
+                    point=p["name"], to=par["name"] if par else "最外层", before=bef["name"] if bef else "排最后", new_outline=r["outline"])
+    return client().move_point(c.id, point, parent, before)
+
+
+@tool(R, "问题图谱的探索设置：是否开启学生探索，以及探索任务类型（关联、知识点、简答）。")
+def get_question_map_settings(course: Course_) -> dict:
+    return client().qm_explore_settings(course)
+
+
+@tool(W, "设置问题图谱的学生探索：开启/关闭，以及任务类型（关联、知识点、简答，可只改其中几项）。先预演，确认后保存并核对。")
+def set_question_map_explore(course: Course_, enabled: Annotated[bool, Field(description="是否开启学生探索")],
+                             task_types: Annotated[dict, Field(description="可选，如 {\"关联\": true, \"知识点\": false, \"简答\": true}")] = {},  # noqa: B006
+                             confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if any(k not in ("关联", "知识点", "简答") or not isinstance(v, bool) for k, v in (task_types or {}).items()):
+        raise XxtError("task_types 只能是 关联 / 知识点 / 简答 → true/false。")
+    if not confirm:
+        return _dry(c, ("开启" if enabled else "关闭") + "问题图谱的学生探索", current=client().qm_explore_settings(c.id), enabled=enabled,
+                    task_types=task_types or None)
+    return client().set_qm_explore(c.id, enabled, task_types or None)
+
+
+@tool(R, "问题图谱的讨论区（当前班级）：帖子标题、内容、时间、点赞数和回复数（平台不返回作者）。")
+def get_question_map_discussion(course: Course_) -> dict:
+    return client().qm_discussion(course, "t")
+
+
+@tool(W, "以教师身份在问题图谱讨论区发帖（当前班级的学生可见）。先预演，确认后发布并核对。")
+def post_question_map_discussion(course: Course_, title: Annotated[str, Field(description="标题，1–20 字")],
+                                 content: Annotated[str, Field(description="正文，1–5000 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not 1 <= len(title.strip()) <= 20 or not 1 <= len(content.strip()) <= 5000:
+        raise XxtError("标题要 1–20 字，正文 1–5000 字。")
+    if not confirm:
+        return _dry(c, "在问题图谱讨论区发帖（学生可见）", title=title.strip(), content=content)
+    return client().post_qm_discussion(c.id, title.strip(), content, "t")
 
 
 @tool(W, "在问题图谱里新增或修改一个问题：层级 1–3（默认三层）、名称、描述、教师参考（学生看不到）、标签、关联知识点（只能是最底层的知识点）。"

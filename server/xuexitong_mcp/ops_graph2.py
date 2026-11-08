@@ -87,12 +87,24 @@ class NewGraphOps(XxtBase):
                            "model_id": m.get("id"), "visible": not m.get("hide")} for m in lst]}
 
     def set_graph_type(self, course: str, kind: str, visible: bool) -> dict:
+        """The new UI has two levels: 设置 → 图谱设置 shows/hides a graph's tab (coursetopic/updatetopicmodelhide, used here for
+        every graph), and the older 高级设置 page (still embedded) turns the 问题/能力/课程思政 feature on — used only to turn it on."""
         if kind not in SWITCHES:
             raise XxtError(f"能开关的图谱：{'、'.join(SWITCHES)}（知识图谱总是开启）。")
         path, field, mode = SWITCHES[kind]
         c = self.ctx(course)
-        r = self._get(f"/mooc2-ans/questionBankTopic/{path}", {"courseId": str(c.id), "cpi": str(c.cpi), "clazzId": str(c.clazz_id),
-                                                              "topicModelId": 0, "ut": "t", field: 1 if visible else 0})
+        st = self._get("/mooc2-ans/coursetopic/gettopicsetting", {"courseid": str(c.id), "clazzid": str(c.clazz_id), "cpi": str(c.cpi), "topicModelId": 0})
+        d = (st or {}).get("data") or {} if isinstance(st, dict) else {}
+        on = (d.get("switchStatusData") or {}).get({3: "problemMapStatus", 4: "targetMapStatus", 5: "ideologicalStatus"}[mode])
+        model = [x for x in d.get("topicModelData") or [] if x.get("modeType") == mode]
+        if on and model and model[0].get("id"):
+            r = self._get("/mooc2-ans/coursetopic/updatetopicmodelhide", {"courseid": str(c.id), "cpi": str(c.cpi), "hide": 0 if visible else 1,
+                                                                         "topicModeoId": str(model[0]["id"])})
+        elif not visible:
+            r = {"status": True}                              # the feature is off, so there is no tab to hide
+        else:
+            r = self._get(f"/mooc2-ans/questionBankTopic/{path}", {"courseId": str(c.id), "cpi": str(c.cpi), "clazzId": str(c.clazz_id),
+                                                                  "topicModelId": 0, "ut": "t", field: 1})
         now = {t["mode_type"]: t["visible"] for t in self.graph_types(c.id, c=c)["types"]}
         ok = isinstance(r, dict) and r.get("status") is True and now.get(mode) is visible
         return {"ok": ok, "graph": kind, "visible": now.get(mode),
@@ -121,11 +133,12 @@ class NewGraphOps(XxtBase):
         if miss:
             return {"ok": False, "write_outcome": "not_written", "error": f"没有这些标签：{miss}（可用 create_knowledge_label 新建）。"}
         ids = [labels[n] for n in label_names]
-        r = self._post("/mooc2-ans/questionBankTopic/updatetopiclablerelation", {
-            "courseid": str(c.id), "cpi": str(c.cpi), "topicId": _safe_id(point_id), "batchAddLabel": 0, "topicIdLabels": "".join(f"{i}," for i in ids)})
+        # The new UI (知识列表 / outline 「属性编辑」) saves labels through savepropertyedit; the old frame page used
+        # updatetopiclablerelation.  set_point_properties keeps the point's other properties as they are.
+        r = self.set_point_properties(c.id, point_id, None, None, label_names, None, None)
         node = [n for n in self._graph_nodes(c) if str(n.get("id")) == str(point_id)]
         got = sorted(x for x in str((node[0] if node else {}).get("tag") or "").split(",") if x)
-        ok = isinstance(r, dict) and r.get("status") is True and got == sorted(ids)
+        ok = r.get("ok") is True and got == sorted(ids)
         return {"ok": ok, "point_id": point_id, "labels": label_names,
                 **({} if ok else {"write_outcome": "unknown", "error": f"标签核对不一致（读回 {got}）。"})}
 
