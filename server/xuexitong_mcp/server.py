@@ -1255,6 +1255,11 @@ def list_my_course_graph(course: StuCourse_) -> dict:
     return client().my_course_graph(course)
 
 
+@tool(R, "学生端：查看新版课程图谱里的问题图谱（层级、问题、描述、子问题）、能力图谱（课程目标和关联知识点）或课程思政图谱（打了思政标签的知识点和我的完成率、掌握率）。只读；老师没开启的图谱会说明。")
+def list_my_graph(course: StuCourse_, graph: Annotated[str, Field(description="问题图谱 / 能力图谱 / 课程思政图谱")]) -> dict:
+    return client().my_graphs(course, graph)
+
+
 @tool(R, "学生端：列出我在某门课里的考试（标题、状态、剩余时间、截止时间）。只读：考试由学生本人在学习通里作答，本服务不代答。")
 def list_my_exams(course: StuCourse_) -> dict:
     return client().my_exams(course)
@@ -1701,6 +1706,207 @@ def link_questions_to_knowledge(course: Course_, point: Point_,
         return _dry(c, "把题目关联到知识点", bind={"point": p["point_id"]}, point=p["name"],
                     questions=[bank[q]["stem"][:60] for q in ids])
     return client().link_questions(course, point, list(question_ids))
+
+
+# ------------------------------------------------------------------ 新版课程图谱：图谱类型、标签、思政图谱、问题图谱、能力图谱
+GraphKind_ = Annotated[str, Field(description="问题图谱 / 能力图谱 / 课程思政图谱")]
+QmQuestion_ = Annotated[str, Field(description="问题图谱里的问题（标题或问题ID，get_question_map 可查）")]
+
+
+def _qm_find(c, q: str) -> dict:
+    from .xxt import _best
+    return _best(client().question_map(c.id)["questions"], str(q), key="title", id_keys=("question_id",))
+
+
+def _point_ids(c, names: list[str], leaves_only: bool = False) -> list[str]:
+    pts = client().knowledge_points(c.id)
+    sel = [client().find_point(c.id, x, pts) for x in names]
+    if leaves_only:
+        parents = {p["parent_id"] for p in pts}
+        bad = [p["name"] for p in sel if p["point_id"] in parents]
+        if bad:
+            raise XxtError(f"这些是「分类」（下面还有知识点），问题只能关联最底层的知识点：{bad}。")
+    return [p["point_id"] for p in sel]
+
+
+@tool(R, "读取课程图谱的版本（旧版/新版）和图谱类型：知识图谱、知识列表、学习地图、问题图谱、能力图谱、课程思政图谱，以及各自是否对学生显示。")
+def get_graph_types(course: Course_) -> dict:
+    return client().graph_types(course)
+
+
+@tool(W, "把课程图谱升级到新版（「体验新版」）。升级后上级知识点变成「分类」，最底层的知识点下不能再加子级，同名节点会自动加数字；"
+         "平台限制切换次数。先预演，确认后升级并核对版本。")
+def upgrade_course_graph(course: Course_, confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        cur = client().graph_types(c.id)
+        if cur.get("version") == "新版":
+            raise XxtError("这门课的课程图谱已经是新版。")
+        return _dry(c, "把课程图谱升级到新版（会改动图谱结构，平台限制切换次数）", current_version=cur.get("version"),
+                    points=len(client().knowledge_points(c.id)))
+    return client().upgrade_graph(course)
+
+
+@tool(W, "开启或关闭新版课程图谱里的问题图谱、能力图谱、课程思政图谱（开启后学生端也能看到）。先预演，确认后设置并核对。")
+def set_graph_type(course: Course_, graph: GraphKind_, visible: Annotated[bool, Field(description="true=开启")], confirm: Confirm = False) -> dict:
+    from .ops_graph2 import SWITCHES
+    c = _check_write(course)
+    if not confirm:
+        if graph not in SWITCHES:
+            raise XxtError(f"graph 只能是：{'、'.join(SWITCHES)}。")
+        return _dry(c, ("开启" if visible else "关闭") + graph + "（学生端随之变化）", graph=graph, visible=visible)
+    return client().set_graph_type(course, graph, visible)
+
+
+@tool(W, "给知识点设置标签（重点、难点、考点、课程思政或自建标签；会替换它原有的标签）。打上「课程思政」的知识点会出现在课程思政图谱里。先预演，确认后保存并核对。")
+def set_knowledge_labels(course: Course_, point: Point_, labels: Annotated[list[str], Field(description="标签名列表，空列表=去掉全部标签")],
+                         confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        p = client().find_point(c.id, point)
+        have = {x["name"] for x in client().knowledge_labels(c.id)}
+        miss = [x for x in labels if x not in have]
+        if miss:
+            raise XxtError(f"没有这些标签：{miss}；现有：{sorted(have)}。")
+        return _dry(c, "设置知识点标签（替换原有标签，学生可见）", bind={"point": p["point_id"]}, point=p["name"], before=p.get("labels"), after=labels)
+    return client().set_point_labels(course, point, labels)
+
+
+@tool(W, "新建一个知识点标签（之后可用 set_knowledge_labels 打到知识点上）。先预演，确认后新建并核对。")
+def create_knowledge_label(course: Course_, name: Annotated[str, Field(description="标签名，1–20 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _dry(c, "新建知识点标签", name=name)
+    return client().create_knowledge_label(course, name)
+
+
+@tool(R, "读取课程思政图谱：全部知识点（分类/知识点）、各自的标签，以及打了「课程思政」标签、在图谱里显示为花朵的知识点。")
+def get_ideology_graph(course: Course_) -> dict:
+    return client().ideology_graph(course)
+
+
+@tool(R, "读取问题图谱：各层级（名称、描述）、每个问题（层级、名称、描述、教师参考、标签、关联知识点、下一层子问题），以及回收站。")
+def get_question_map(course: Course_) -> dict:
+    out = client().question_map(course)
+    out["recycle_bin"] = client().qm_recycle(course)
+    return out
+
+
+@tool(W, "在问题图谱里新增或修改一个问题：层级 1–3（默认三层）、名称、描述、教师参考（学生看不到）、标签、关联知识点（只能是最底层的知识点）。"
+         "question 留空=新增；修改时没给的字段保持原样。先预演，确认后保存并核对。")
+def save_question_map_question(course: Course_, level: Annotated[int, Field(description="层级，1/2/3")],
+                               title: Annotated[str, Field(description="问题名称，1–200 字")],
+                               description: Annotated[str, Field(description="问题描述（纯文本，可多行）")] = "",
+                               teacher_reference: Annotated[str, Field(description="教师参考（纯文本，学生端不显示）")] = "",
+                               labels: Annotated[list[str], Field(description="标签名（重点/难点/考点/课程思政…）")] = [],  # noqa: B006
+                               knowledge_points: Annotated[list[str], Field(description="关联的知识点（名称或ID）")] = [],  # noqa: B006
+                               question: Annotated[str, Field(description="要修改的问题（标题或ID），留空=新增")] = "", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        labs = {x["name"]: x["label_id"] for x in client().knowledge_labels(c.id)}
+        miss = [x for x in labels if x not in labs]
+        if miss:
+            raise XxtError(f"没有这些标签：{miss}。")
+        pids = _point_ids(c, knowledge_points, leaves_only=True)
+        q = _qm_find(c, question) if question else None
+        return _dry(c, ("修改" if q else "新增") + "问题图谱里的问题（学生可见，教师参考除外）",
+                    bind={"labels": [labs[x] for x in labels], "knowledge_points": pids, "question": q["question_id"] if q else ""},
+                    level=level, title=title, description=description, teacher_reference=teacher_reference or None, labels=labels,
+                    knowledge_points=knowledge_points, editing=q["title"] if q else None)
+    return client().save_qm_question(course, level, title, description, teacher_reference, labels, knowledge_points, question)
+
+
+@tool(W, "设置问题图谱里一个问题的下一层子问题（替换原有子问题；子问题必须在下一层级）。先预演，确认后保存并核对。")
+def link_question_map_children(course: Course_, question: QmQuestion_,
+                               children: Annotated[list[str], Field(description="下一层的问题（标题或ID）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        q = _qm_find(c, question)
+        kids = [_qm_find(c, x) for x in children]
+        bad = [k["title"] for k in kids if k["level"] != q["level"] + 1]
+        if bad:
+            raise XxtError(f"子问题必须在第 {q['level'] + 1} 层级：{bad}。")
+        return _dry(c, "设置问题的子问题（替换原有）", bind={"question": q["question_id"], "children": [k["question_id"] for k in kids]},
+                    question=q["title"], children=[k["title"] for k in kids], before=q["children"])
+    return client().link_qm_children(course, question, children)
+
+
+@tool(D, "删除问题图谱里的问题（进问题图谱回收站，可用 restore_question_map_questions 还原）。先预演，确认后删除并核对。")
+def delete_question_map_questions(course: Course_, questions: Annotated[list[str], Field(description="问题（标题或ID）")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        qs = [_qm_find(c, x) for x in questions]
+        return _dry(c, "删除问题（进回收站）", bind={"questions": [q["question_id"] for q in qs]}, questions=[q["title"] for q in qs])
+    return client().delete_qm_questions(course, questions)
+
+
+@tool(W, "从问题图谱回收站还原问题（get_question_map 的 recycle_bin 里的 recycle_id）。先预演，确认后还原并核对。")
+def restore_question_map_questions(course: Course_, question_ids: Annotated[list[str], Field(description="回收站记录的 recycle_id")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        rb = {x["recycle_id"]: x for x in client().qm_recycle(c.id)}
+        miss = [x for x in question_ids if str(x) not in rb]
+        if miss or not question_ids:
+            raise XxtError(f"回收站里没有：{miss}。")
+        return _dry(c, "还原问题", questions=[rb[str(x)]["title"] for x in question_ids])
+    return client().restore_qm_questions(course, [str(x) for x in question_ids])
+
+
+@tool(W, "修改问题图谱某一层级的名称和描述。先预演，确认后保存并核对。")
+def update_question_map_level(course: Course_, level: Annotated[int, Field(description="层级 1/2/3")],
+                              title: Annotated[str, Field(description="新名称，留空=不改")] = "",
+                              description: Annotated[str, Field(description="新描述，留空=不改")] = "", confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        cur = [x for x in client().question_map(c.id)["levels"] if x["level"] == level]
+        if not cur:
+            raise XxtError(f"没有第 {level} 层级。")
+        return _dry(c, "修改问题图谱层级", level=level, before=cur[0], title=title or None, description=description or None)
+    return client().update_qm_level(course, level, title, description)
+
+
+@tool(R, "读取能力图谱（课程目标）：每个目标的名称、描述、标签和关联的知识点，以及目标标签。")
+def get_course_targets(course: Course_) -> dict:
+    return client().course_targets(course)
+
+
+@tool(W, "新增或修改一个课程目标（能力图谱）：名称、描述、关联知识点、目标标签。target 留空=新增。先预演，确认后保存并核对。")
+def save_course_target(course: Course_, name: Annotated[str, Field(description="目标名称，1–200 字")],
+                       description: Annotated[str, Field(description="目标描述")] = "",
+                       knowledge_points: Annotated[list[str], Field(description="关联的知识点（名称或ID）")] = [],  # noqa: B006
+                       labels: Annotated[list[str], Field(description="目标标签名（get_course_targets 的 labels）")] = [],  # noqa: B006
+                       target: Annotated[str, Field(description="要修改的目标（名称或ID），留空=新增")] = "", confirm: Confirm = False) -> dict:
+    from .xxt import _best
+    c = _check_write(course)
+    if not confirm:
+        cur = client().course_targets(c.id)
+        labs = {x["name"]: x["label_id"] for x in cur["labels"]}
+        miss = [x for x in labels if x not in labs]
+        if miss:
+            raise XxtError(f"没有这些目标标签：{miss}（可用 create_target_label 新建）。")
+        t = _best(cur["targets"], target, key="name", id_keys=("target_id",)) if target else None
+        return _dry(c, ("修改" if t else "新增") + "课程目标（能力图谱，学生可见）",
+                    bind={"knowledge_points": _point_ids(c, knowledge_points), "labels": [labs[x] for x in labels], "target": t["target_id"] if t else ""},
+                    name=name, description=description, knowledge_points=knowledge_points, labels=labels, editing=t["name"] if t else None)
+    return client().save_course_target(course, name, description, knowledge_points, labels, target)
+
+
+@tool(D, "删除一个课程目标（能力图谱）。先预演，确认后删除并核对。")
+def delete_course_target(course: Course_, target: Annotated[str, Field(description="目标名称或ID")], confirm: Confirm = False) -> dict:
+    from .xxt import _best
+    c = _check_write(course)
+    if not confirm:
+        t = _best(client().course_targets(c.id)["targets"], target, key="name", id_keys=("target_id",))
+        return _dry(c, "删除课程目标", bind={"target": t["target_id"]}, target=t["name"], knowledge_points=t["knowledge_points"])
+    return client().delete_course_target(course, target)
+
+
+@tool(W, "新建一个课程目标标签（能力图谱里给目标分类用）。先预演，确认后新建并核对。")
+def create_target_label(course: Course_, name: Annotated[str, Field(description="标签名，1–60 字")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _dry(c, "新建课程目标标签", name=name)
+    return client().create_target_label(course, name)
 
 
 @tool(W, "把课程图谱里的知识点作为「课程图谱」插入章节某一页（学生在章节里看到这些知识点的图谱）。先预演，确认后插入并核对。")

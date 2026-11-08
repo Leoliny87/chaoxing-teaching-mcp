@@ -29,3 +29,17 @@ def test_graph_tools_and_policy():
     assert {"get_course_graph", "add_knowledge_points", "set_knowledge_relations", "set_knowledge_visibility", "delete_knowledge_points",
             "restore_knowledge_points", "link_questions_to_knowledge", "insert_chapter_graph", "list_my_course_graph"} <= names
     assert "list_my_course_graph" in STUDENT_BASE and "get_course_graph" not in STUDENT_BASE
+
+
+def test_new_graph_tools_and_policy():
+    from xuexitong_mcp import server as srv
+    from xuexitong_mcp.ops_graph2 import SWITCHES, para, plain
+    from xuexitong_mcp.policy import STUDENT_BASE
+    names = {n for n, *_ in srv.TOOLS}
+    assert {"get_graph_types", "upgrade_course_graph", "set_graph_type", "set_knowledge_labels", "create_knowledge_label", "get_ideology_graph",
+            "get_question_map", "save_question_map_question", "link_question_map_children", "delete_question_map_questions",
+            "restore_question_map_questions", "update_question_map_level", "get_course_targets", "save_course_target",
+            "delete_course_target", "create_target_label", "list_my_graph"} <= names
+    assert "list_my_graph" in STUDENT_BASE and "get_question_map" not in STUDENT_BASE
+    assert set(SWITCHES) == {"问题图谱", "能力图谱", "课程思政图谱"}
+    assert para("a<b\nc") == "<p>a&lt;b</p><p>c</p>" and plain("<p>x&amp;y</p> <p>z</p>") == "x&y z"
