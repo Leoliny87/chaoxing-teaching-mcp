@@ -4,9 +4,9 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-08，第三轮后）
+## 0. 当前完成度（2026-11-08，第四轮后）
 
-注册的工具：共 201 个；教师配置 181 个、学生配置 19 个（可再开讨论两项）、预审配置 58 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+注册的工具：共 215 个；教师配置 191 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
 - 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。课程设置（学生端配置和课程设置里 20 项开关/选项/文字，含允许学生自测、视频水印、承诺书、课程通知、试读、资源下载、评价、AI 功能、课程说明）；班级设置（允许加入、加入需同意、允许退课、忽略视频拖拽、对学生隐藏、结课/取消结课、人数上限）和班级改名；把学生移出班级、从退课日志恢复、从本课另一个班添加学生；教师团队、成绩权重（经典模式读写）、加班/退课日志。
@@ -15,19 +15,19 @@
 - 试卷与考试：22 种题型（含选做题）建卷、自动随机组卷（按题型从题库抽题）、平行试卷（新建、加入/移除子卷、难度、序号、归类、同步子卷标题，结构不一致时拒绝）、试卷库「导入试卷」（平台 Word 模板或 .ti 文件，也可导入成平行试卷的子卷）、导出试卷（Word/PDF/Excel/Ti）、发布考试（含常用防作弊和查看设置）、修改已发布考试的时间和时长（平台的校验提示原样返回）、考试批阅页人数；考试和试卷删除到回收站、还原、试卷彻底删除（被考试引用的试卷平台不允许彻底删除，工具会拒绝）。
 - 题库：24 种题型新增、列表（不返回答案）、修改题目、文件夹（新建、把题移进去）、删除到回收站/还原、难度、标签（新建、打标签）、批量导入（按题目数据生成模板 Excel 导入 14 种题型；导入本机 Excel/.ti 文件；智能导入：普通文本交给平台识别）、导出到本机（Excel/Word/PDF/Ti，可选不含答案）。
 - 课程图谱：读取知识点大纲和关系；按缩进大纲批量添加、改名、删除到图谱回收站/还原、前置/后置/关联关系、按班显示隐藏、把题库题目关联到知识点、插入章节。
-- 新版图谱（测试课已切换到新版）：切换到新版、图谱类型列表和问题/能力/课程思政图谱开关、知识点标签（新建标签、打标签）、课程思政图谱读取、问题图谱（层级名称、问题增改、关联下一层问题、删除到回收站/还原）、能力图谱=课程目标（增改删、目标标签、关联知识点）；学生端读取问题图谱、能力图谱、课程思政图谱（不含教师参考）。
+- 新版图谱（测试课已切换到新版）：切换到新版；六种图谱（知识图谱、知识列表、学习地图、问题图谱、能力图谱、课程思政图谱）的显示/隐藏（新版「设置 → 图谱设置」的开关）；知识列表（分页、排序、按标签筛选，添加知识点）；知识点属性（知识类型、说明、标签、教学目标、参考学时）；学习地图（按阶段读取班级完成率和掌握率）；移动知识点和调整顺序；课程思政图谱读取；问题图谱（层级名称、问题增改、关联下一层问题、删除到回收站/还原、学生探索设置、讨论区读取和发帖）；能力图谱=课程目标（增改删、目标标签、关联知识点）。学生端读取这六种图谱（不含教师参考），并能在问题图谱里探索作答、在讨论区发帖（都要学生本人「确认提交」）。
 - 通知：发送、删除、按 UUID 补记；讨论：发帖、列表、置顶/加精及取消、教师回复、删除；课程资料：上传、列表、文件夹、移进文件夹、下载权限、删除/还原/彻底删除；成绩：读取、导出 Excel 到本机。
 - 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务，或按分组方案分小组，可设组内/组间互评权重）、学生反馈、白板、抽签、推送课程资料、推送课件、推送教案；结束活动、活动结果。
 - 课件库与教案：把课程资料里的 ppt/pptx/pdf/doc/docx 加入课件库；新建教案（可带 课前/课中/课后 等段落）。
 - 教学任务：新建、发布；任务点 21 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到、自测（新建自测模板：模拟测验或刷题，随机或按题型抽题）。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
 - 读取：课程首页（待办、作业/考试/AI实践预警、学情看板、高风险学生）、学情统计（基础数据、学情统计、学习监控、课堂报告）、教学日历、下载中心、AI 助教（是否开启、知识库设置、会话列表）。
-- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务/学习记录/课程图谱（结构、关系、本人完成率和掌握率）/新版的问题、能力、思政图谱/错题集（错题只给题目和本人作答，不给正确答案），作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
+- 学生端：我的课程/作业/考试/活动/资料/讨论/教学任务/学习记录/课程图谱（结构、关系、本人完成率和掌握率）/新版的知识列表、学习地图、问题、能力、思政图谱（问题图谱探索作答和讨论区发帖要「确认提交」）/错题集（错题只给题目和本人作答，不给正确答案），作业 22 种题型作答（暂存、确认提交；教学任务里的作业也在作业列表里），下载资料，回复讨论。活动：`open_my_activity` 告诉学生要做什么并给出自己打开的链接；随堂练习、问卷、投票、评分、分组任务、主题讨论回复可以由学生把自己的作答告诉 agent，预览后学生回复「确认提交」才写入，并按各类型的已提交信号读回核实；签到、抢答、选人、白板、抽签、学生反馈和看资料/课件/教案只给链接，由学生本人操作。教学任务：`list_my_tasks`、`list_my_task_points` 列出任务和任务点（类型、是否完成、要求）并给出任务页链接，学生自己点开学习。
 - 策略层与打包：三种角色、确认提交、节流、不可信内容标注、中心辅导、预审记录；安装脚本、一键更新和回退；v0.3.0、v0.4.0、v0.5.0 已发布。
 
 **还没做（可以继续补）**
 - 教师写：教师团队增删成员和权限（涉及其他真实教师，只做了读取）。
 - 全景「6 张图片」类型：上传接口只收一个文件、不带类型，怎么传 6 张图没弄清。
-- 新版图谱：「知识列表」「学习地图」两种图谱的开关和读取没找到接口；学生在问题图谱里的探索和讨论（属于学生写入，要走「确认提交」）没做；图谱的批量导入/导出。
+- 新版图谱：问题图谱探索里的「关联」「知识点」两类任务（只做了「简答」）；独立于课程图谱的自定义学习地图（这门课的学习地图直接用课程图谱，编辑器的保存方式会让换了上级的知识点变成新 ID，没有做成工具）；图谱的批量导入/导出。
 - AI 助教对话（只读取了设置和会话列表）。
 - 错题集：读取路径已实测（按页面的参数查询，返回空列表）。用本人在测试课里的学生身份，作业答错（0 分）和考试答错（0 分，学生本人完成滑块验证后交卷）都提交了，错题集仍为空。推测平台不给课程创建者本人的学生身份收集错题；要用一个纯学生账号或章节测验再验证。有错题时的返回格式未核实。
 - 「课程」(type 0)、「选课」(24) 不在课程任务的添加菜单里，没做。
@@ -66,6 +66,20 @@
 | 作业/考试（旧接口） | `mooc2-ans/work/*`、`mooc2-ans/exam/*` | — | list_assignments、submissions、list_exams、exam_marklist… | 读已验证；与"教学任务"的关系待确认 |
 
 2026-11-06 真实只读验证通过的工具：health_check、list_courses、open_course、list_chapters、list_materials、list_notices、list_assignments、list_assignment_library、list_exams、list_activities、list_students、get_grades、list_inbox。
+
+## 1.05 新版和旧版：接口是不是一样（2026-11-08 核对）
+
+结论：**不用把所有功能针对新版重做一遍。** 学习通的「新版」主要是一个新的外壳和几个新应用，大部分模块里面打开的还是同一批页面、调的同一批接口；本 MCP 从一开始就是照着新版界面里实际发出的请求做的。核对方法和结果：
+
+- **新版教师外壳的模块**（`coursemanagev3/base-info` 的 `courseNavigationListV3`，测试课实读）：教学任务 → `task.chaoxing.com/task/index`；教学活动 → `mobilelearn /page/active/activeList`；资源中心 → `stat2-vue/resource`；AI助教 → `robot-lc`；学情统计 → `stat2-vue/statistics`；课程管理 → `mooc2-ans/tcm/course-manage`；通知 → `notice.chaoxing.com /pc/course/notice`；讨论 → `groupweb /course/topic`。
+- **资源中心各库**（`resource-info`）：资料库 `mooc2-ans/coursedata`、课程章节 `mooc2-ans/mycourse/tchcourse`（编辑进新章节编辑器 `ananas2`）、课程图谱 `topic-ans/knowgraph`、智能题库 `mooc2-ans/qbank/questionlist`、作业库 `mooc2-ans/work/library`、考试库 `mooc2-ans/exam/paperlist`、实践库 `mooc2-ans/ai-evaluate/v2/library`、课件库和活动库在 mobilelearn。工具调用的正是这些页面的接口（按页面核对，没有逐个接口比对）。
+- **学生端**：「我学的课」里的课程链接是 `mooc1 /visit/stucoursemiddle?…&ismooc2=1&v=2`，跳到 `mooc2-ans/mycourse/stu`，和学生工具用的入口一致。
+- **真正换了接口的地方**都已按新版做：新版外壳和首页（`base-info`、待办、预警）、任务引擎、学情统计（stat2）、新章节编辑器（`getcard`/`savecard` 不变，插入项和 AI 是新接口）、新版图谱（`topic-ans/knowgraph` + stat2 的问题图谱和课程目标）。
+- **课程图谱逐个接口比对**：把工具用到的每个图谱接口，和新版图谱应用的全部脚本（约 220 个接口）以及新版「编辑」打开的大纲页 `coursetopic/outlinemodehead`（`outlinemode.js`、`topicPropertyEdit.js`）对照。添加、改名、删除、回收站、关系、排序、属性、显示隐藏都和新版界面用的一样。只有三处原来只在旧版框架页里用：
+  - 读大纲 `questionBankTopic/knowledgepointsdata` → 已改用新版大纲页的 `coursetopic/outlinemodedata`（结构相同，多一个 `type` 区分分类/知识点），旧接口留作备用；
+  - 打标签 `updatetopiclablerelation` → 已改用新版属性编辑的 `savepropertyedit`；
+  - 读某个知识点关联的题目 `reltaionquestionbanklist` → 新版里没找到按知识点列题目的接口（`knowledge-v4/questionRelation` 是全课统计），暂时保留。
+- **还依赖旧页面的少数地方**（旧版下线时要再看）：上面这个关联题目的读取；「开启问题/能力/课程思政图谱」用的旧设置页接口（新版「设置 → 高级设置」仍然嵌着这个页面）；「体验新版」的切换接口（本来就是从旧版切到新版）。
 
 ## 1.1 学生端入口（实测）
 
@@ -286,6 +300,16 @@
   - 实测：测试页加了一段带错别字的文字（再接再励、按部就搬、半途而费、的的、半角逗号）。平台很慢：文本检测和测试 PDF 的文档检测都过了一个多小时才出结果（45 分钟时还是「检测中/进行中」，在编辑器里点「开始检测」也一样），所以工具只等最多 3 分钟，之后用 `start=false` 再读。结果：文本 5 处（拼写 1、成语 3、标点 1），PDF「通过」。`apply_ai_corrections` 把 5 处全部替换进正文并保存，读回一致。
 - **全景资源上传**（`upload_panorama`）：全景选择页 `mobile3 /threedresourse/panorama/toselect` 的上传只把文件本身（字段 `file`）`POST /fyportal/threedresourse/panorama/upload`，返回 `{status, msg, data:{id, filename}}`，页面上的「资源类型」下拉框不会发送。实测：上传一张 2048×1024 的 jpg，平台识别为 image，再用 `insert_chapter_panorama` 插入测试页。
 - **测试数据清理**：试卷库里两份导入测试卷已删到回收站。
+
+### 2026-11-08（第四轮）知识列表、学习地图、移动知识点、问题图谱的探索和讨论
+- **图谱显示隐藏**：新版「设置 → 图谱设置」每种图谱一个开关，点一下立刻 `GET coursetopic/updatetopicmodelhide {courseid, cpi, hide, topicModeoId(拼写如此)=<图谱ID>}`，图谱 ID 在 `coursetopic/gettopicsetting` 的 `topicModelData`。实测：这个开关只决定师生两端显不显示这个标签页，问题图谱的「开启」状态（`switchStatusData.problemMapStatus`）不变。`set_graph_type` 现在对所有图谱用这个开关，只有功能本身没开时才用旧设置页把它打开。
+- **知识列表**（图谱样式 8，`#/knowledgeMap/listMode`）：`GET coursetopic/gettopicwoodsdata {page, limit, orderType(0 降序/1 升序), orderText, query, lableIds}`，`orderText`：完成率 `completeWeightRate`、掌握率 `graspWeightRate`、使用量 `citecount`、创建时间 `id`。「添加知识点」`GET coursetopic/woodsaddtopic {topic, classify, topicLabelIds, topicDesc}` 加在图谱最外层；列表的索引要过几秒才出现新知识点（大纲里先出现），工具按大纲核对。
+- **知识点属性**：`questionBankTopic/edittopicproperty` 读，`POST savepropertyedit {topicIds, classify(1 事实性/2 概念性/3 程序性/4 元认知), cognize:-1, topicLabelIds(整体替换), topicDesc, teachTargert(拼写如此), studyHours}`。实测：类型、说明、标签、参考学时都能保存；教学目标在课程没开启时不保存。
+- **学习地图**（图谱样式 1，框架视图）：`GET coursetopic/getframemodeldata {topicModelId:0, getLabelData:1}`，最外层节点是阶段，带所选班级的 `completeWeightRate` / `graspWeightRate`；`getlearnmapmodeldata` 的 `topicDataCount` 是独立学习地图的节点数（测试课 0，学习地图直接用课程图谱）。
+- **移动知识点**：学习地图的「编辑」是思维导图编辑器（`#/mindMapEdit` → `questionBankTopic/knowledgegraphmindmapv3`，里面再嵌 `/topic-ans/mindMap`），保存 `POST savetopicbymindmap {topicModelId, topicdata: {root, linkData}}`。**实测：在这里把知识点挪到别的上级后，平台把它删掉重建成新 ID，标签、关系、关联题目都丢了**（同一上级内调顺序 ID 不变）。所以 `move_knowledge_point` 改用知识图谱「编辑」大纲页的拖动保存：`POST questionBankTopic/updatetopicsort {topicsort: [{id, children:[…]}]}`，实测跨上级移动 ID 和标签都保留。目标上级必须是「分类」。
+- **问题图谱的学生探索**：设置在 `stat2 /stat2/knowledge/getBaseSetting {modeType:3}` 的 `exploreMode`、`exploreSetting {link, topic, answer}`（关联、知识点、简答三类任务），修改 `GET /stat2/question-map/update-exploreSetting {setting}`、`update-exploreMode {link, topic, answer}`。学生端：`question-map-stu/explore/getSonQuestion {questionIds}` 给出这个问题下要回答的子问题（**返回里带着教师参考 `answer`，工具一律去掉**），`explore/record {type:2}` 是本人已保存的回答，`POST explore/update-record {questionIds, data: {顶层问题ID: [{id, questionLevel, stuAnswer}]}, type:2}` 保存，`explore/progress-questionId` 是进度。工具只做了「简答」（type 2）。
+- **问题图谱讨论区**：`question-map-stu/bbs/topic-list {lastValue}`（师生都用这个读），发帖 `POST question-map-stu/bbs/topic-add`（教师 `question-map/bbs/topic-add`）`{topicTitle(≤20 字), topicContent, rtf_content, imgUrlArr, attachment}`，点赞 `topic-praise`。列表不返回作者姓名（只有带用户 ID 的头像地址，工具不返回）。
+- 实测：知识列表开关关/开；添加知识点 G、H 并改属性；F 在 E 下和最外层之间来回移动、a3 调顺序，ID 和标签都不变；问题图谱的标签页隐藏再显示；开启学生探索；教师发帖。学生身份：读到知识列表、学习地图、问题图谱探索（没有参考答案），两次「确认提交」保存了两个子问题的回答（第二次保留第一次的回答，进度 33%），讨论区发帖成功。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
