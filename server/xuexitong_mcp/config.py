@@ -42,6 +42,8 @@ class Config:
     tutor_token: str = ""
     tutor_timeout: float = 60
     update: dict = field(default_factory=dict)   # [update]: remote, channel, require_signed_tags, allowed_signers
+    auto_login: bool = True
+    login_account: str = ""
     path: Path | None = None
 
     def bsk(self) -> str:
@@ -95,6 +97,9 @@ def load(path: str | os.PathLike | None = None) -> Config:
         cfg.tutor_token = str(tu.get("token", "") or "")
         cfg.tutor_timeout = float(tu.get("timeout", cfg.tutor_timeout))
         cfg.update = dict(d.get("update", {}) or {})
+        li = d.get("login", {}) or {}
+        cfg.auto_login = bool(li.get("auto_login", True))
+        cfg.login_account = str(li.get("login_account", "") or "")
     # The environment can narrow the explicitly configured allowlist, never
     # create or broaden authority.  An explicitly empty variable denies all.
     if "XUEXITONG_MCP_WRITE_ALLOW" in os.environ:
@@ -102,4 +107,6 @@ def load(path: str | os.PathLike | None = None) -> Config:
         cfg.write_allow_courses = [x for x in cfg.write_allow_courses if x in requested]
     if os.environ.get("XUEXITONG_MCP_BSK"):
         cfg.bsk_path = os.environ["XUEXITONG_MCP_BSK"]
+    if os.environ.get("XUEXITONG_MCP_AUTO_LOGIN") == "0":
+        cfg.auto_login = False
     return cfg
