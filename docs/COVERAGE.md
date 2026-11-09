@@ -337,7 +337,7 @@
 **C 批待续（按可行性排序）**
 - C2 图谱批量导入/导出：导出端点 `questionBankTopic/export-knowledge-points`(Excel)/`exportcoursetopicxmind`(xmind) 需新版图谱专属凭据——带课程 enc/ut=t 仍报"非教师无查询权限"/"无效的课程"，旧版大纲页已重定向成空壳；凭据在 topic-ans/knowgraph SPA 里，待逆向。导入 5 种（智能/模板/xmind/同步他课/章节）更复杂。
 - C3 错题集：**已完成（见第十一轮）**——纯学生测试号实测非空格式，修复条目选择器与答案剥离。
-- C4 AI 助教对话：读接口已通（robot-lc），发送端点（SSE chat）待抓包。
+- C4 AI 助教对话：**调查后判定受阻（见 GitHub issue #3）**——学生端「AI助教」实为 12 个独立 AI 应用的启动器（`getStuAiWorkBench`→`stuAiWorkBenchAgent`→POST 取 `li.agentInfo` 列表，各应用是独立域名的独立 SPA，数个需独立登录/接受协议），无统一对话/SSE 端点；唯一的会话型机器人 robot-lc 是教师端（`ai_assistant` 只读它），学生导航不暴露，抓其发送端还需教师浏览器（本次未连接）。教师端 `ai_assistant` 只读、`ask_tutor` 走教师自建中心辅导服务，均为既定设计。
 - C5 全景 6 图：上传机制完全未知，最低优先级。
 
 ### 2026-11-09（第九轮）首次登录引导（v0.8.0）
@@ -353,6 +353,7 @@
 ### 2026-11-09（第十一轮）登录提交抗竞态（v0.9.1）+ 错题集纯学生号实测修复（v0.9.2）
 - **登录提交抗竞态（v0.9.1）**：`LoginAutomator.fill_and_submit` 原来用 cooperate 的 `navigate`+`eval`，但 passport2 登录页持续重绘会打断 cooperate 同步（"Page changed while synchronizing"→"requires a valid control context"），且每次重试都重新导航反而不断让上下文失效。改为：用裸 `bsk navigate --tab-id`（不走 cooperate）只导航一次 → 等页面稳定 3.5s → 只重试两个 eval（填表、点登录），瞬时同步错误退避重试。纯学生测试号经此路径真实登录成功（到达 `i.mooc.chaoxing.com` 首页）。顺带补全 MANIFEST.sha256——`tests/test_graph_export.py` 自 v0.9.0 起被 git 跟踪却漏出清单，check_manifest 会报"清单外的文件"。回归 `tests/test_login_automator.py`（瞬时同步错误重试）、`tests/test_login_flow.py`，全套 283 通过、check_manifest 干净。
 - **C3 错题集（v0.9.2，纯学生测试号 955c85d5 实测）**：扫描测试号 42 个课程身份，在两门真实课程里命中非空错题集（中药炮制学 2 题、药用植物学 200 题，含单选/多选/判断/填空四种题型），**只读**捕获真实 DOM，无需任何学生端写操作。发现两处缺陷并修复：① 条目选择器原来是猜的（`.wrong-topic-item`/`.questionLi`/`[qid]`…），与真实 DOM 的 `.topic-list` 一个都不匹配——有错题也返回 `count:0`；② 真实 DOM 把**正确答案当可见文本**放在 `.answer-default`（"正确答案：B"）、用 `.option-correct`/`.option-wrong` 标记选项、`.topic-analysis` 放"答案解析：…"，而原剥离选择器（`.rightAnswer`/`.correctAnswer`/`[class*=Analysis]`…）一个都不匹配——一旦修好①让条目出现，正确答案与解析就会**泄漏**给学生（此前仅靠 Python 文本 `re.split("正确答案")` 兜底侥幸拦住）。改为：按 `.topic-list` 取题；读取任何文本前先从克隆节点删除 `.answer-default`、`.topic-analysis:not(.topic-zhoshi-main)`（保留无害的知识点标签）、`.element-invisible-hidden`，并摘掉 `.option-correct`/`.option-wrong` 类；结构化抽取 type/题干/选项/我的作答(`.answer-my`)/知识点/recordId。Python 层保留纵深防御：对每个字符串字段再按答案/解析标记截断。`stuId` 自查时为 '0'（身份来自会话而非该字段），原实现误判为空。实测核实：200 题全部抽出、题型分布与原始 DOM 一致、选项中性无正误标记、`.answer-default` 的"正确答案：块茎/B:同化薄壁组织"与"答案解析：周皮的产生…"均**未出现**在返回里；`my_answer` 在平台未记录本人作答时忠实返回空。回归 `tests/test_wrong_questions.py`（6 项：选择器契约、纵深防御兜底、返回结构、空集、读取失败），全套 289 通过。
+- **C4 AI助教对话（限定尝试后判定受阻，已开 GitHub issue #3）**：在纯学生测试号上用 `bsk debug` 抓包 + 同源 fetch 逐层摸清——学生课程导航「AI助教」`GET mooc1/course-ans/ai/getStuAiWorkBench?courseId&clazzId&cpi&ut=s`（**参数必须驼峰**，小写报"参数缺失"）返回 HTML 工作台，菜单一个 iframe「AI智能体」`course-ans/ai/stuAiWorkBenchAgent`；该页 `$.ajax` **POST 自身** `{courseId,clazzId,cpi,classifyId,ut,queryType:1,kw,dataMode:1}` 返回 `li.agentInfo` **应用列表**。实测助手课有 **12 个独立 AI 应用**（资料助手/AI陪练/作业查重/程序题自测/文献阅读/视频理解/智能编写/公式识别/超星翻译/AI绘画/AIGC检测/AI阅读助手），每个 `visitUrl` 是**独立域名的独立 SPA**（数个还要 `dayauser.chaoxing.com/passport` 独立登录/接受协议）。**结论：不存在统一的"AI助教对话"SSE 端点**，要做只能逐个应用逆向（12 个独立工程）。唯一的会话型机器人 robot-lc 是教师端（`ai_assistant` 只读），学生导航不暴露，抓其发送端还需教师浏览器（本次实例未连接）。按既定设计：`ops_settings.py:55` 故意不做"学生端AI助教机器人"开关（开启需弹窗接受协议），学生提问走 `policy.ask_tutor` 教师自建中心辅导服务。故 C4 不作实现，转 D。
 
 
 
