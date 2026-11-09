@@ -336,7 +336,7 @@
 
 **C 批待续（按可行性排序）**
 - C2 图谱批量导入/导出：导出端点 `questionBankTopic/export-knowledge-points`(Excel)/`exportcoursetopicxmind`(xmind) 需新版图谱专属凭据——带课程 enc/ut=t 仍报"非教师无查询权限"/"无效的课程"，旧版大纲页已重定向成空壳；凭据在 topic-ans/knowgraph SPA 里，待逆向。导入 5 种（智能/模板/xmind/同步他课/章节）更复杂。
-- C3 错题集：接口通，但课程创建者本人学生身份 stuId=0 收不到错题，**必须纯学生测试号登录**答错后验证非空格式。
+- C3 错题集：**已完成（见第十一轮）**——纯学生测试号实测非空格式，修复条目选择器与答案剥离。
 - C4 AI 助教对话：读接口已通（robot-lc），发送端点（SSE chat）待抓包。
 - C5 全景 6 图：上传机制完全未知，最低优先级。
 
@@ -349,6 +349,12 @@
 ### 2026-11-09（第十轮）课程图谱导出完成；导入受阻（见 GitHub issue）
 - **导出已做**（`export_course_graph`，Excel/Xmind）：`GET mooc2-ans/questionBankTopic/export-knowledge-points`（**必须驼峰** courseId/clazzId=0/cpi/ut=t/topicModelId=0；小写 courseid 会报"非教师无查询权限"）→ 返回 `{data:<带 enc 的下载 URL>}`（mooc1/import-export-ans）→ 从 M1 基准页 fetch 该 URL 取文件字节。Excel/Xmind 都是 ZIP（PK 魔数）。实测助手课导出 .xlsx 5021B、.xmind 5599B。xmind 端点 `exportcoursetopicxmind` 同理。回归 `tests/test_graph_export.py`，全套 282 通过。
 - **导入未做（受阻，已开 GitHub issue 求援）**：流程已摸清——模板 `import-export-ans/template/importTopicOutlineTemplate.xlsx`（可下载，9968B）；上传 `mooc1/upload-ans/upload/uploadNew`（FormData）换 `fileImportTopicEnc`；`POST import-export-ans/import/importknoeledgepoint`（FormData: courseId/personId/enc=fileImportTopicEnc/timestamp/topicBankTaskId/iframeFileName/templateType；query: courseid/taskId/sourceCourseId）；轮询 `import/knoeledgepointstate`。**卡点**：① uploadNew 只传 {file,name,source:0} 报 `error Params`，真实上传走隐藏 iframe（字段名 iframeFileName），端点/参数运行时动态构造，静态 JS（chunk 1622.8434c225.js / 上传组件 5599、7844）挖不出；② knowgraph 是 Vue SPA，直接导航 body 为空，需课程外壳 iframe 带完整上下文才渲染，UI 驱动也难。需运行时抓 iframe 上传请求才能补全。
+
+### 2026-11-09（第十一轮）登录提交抗竞态（v0.9.1）+ 错题集纯学生号实测修复（v0.9.2）
+- **登录提交抗竞态（v0.9.1）**：`LoginAutomator.fill_and_submit` 原来用 cooperate 的 `navigate`+`eval`，但 passport2 登录页持续重绘会打断 cooperate 同步（"Page changed while synchronizing"→"requires a valid control context"），且每次重试都重新导航反而不断让上下文失效。改为：用裸 `bsk navigate --tab-id`（不走 cooperate）只导航一次 → 等页面稳定 3.5s → 只重试两个 eval（填表、点登录），瞬时同步错误退避重试。纯学生测试号经此路径真实登录成功（到达 `i.mooc.chaoxing.com` 首页）。顺带补全 MANIFEST.sha256——`tests/test_graph_export.py` 自 v0.9.0 起被 git 跟踪却漏出清单，check_manifest 会报"清单外的文件"。回归 `tests/test_login_automator.py`（瞬时同步错误重试）、`tests/test_login_flow.py`，全套 283 通过、check_manifest 干净。
+- **C3 错题集（v0.9.2，纯学生测试号 955c85d5 实测）**：扫描测试号 42 个课程身份，在两门真实课程里命中非空错题集（中药炮制学 2 题、药用植物学 200 题，含单选/多选/判断/填空四种题型），**只读**捕获真实 DOM，无需任何学生端写操作。发现两处缺陷并修复：① 条目选择器原来是猜的（`.wrong-topic-item`/`.questionLi`/`[qid]`…），与真实 DOM 的 `.topic-list` 一个都不匹配——有错题也返回 `count:0`；② 真实 DOM 把**正确答案当可见文本**放在 `.answer-default`（"正确答案：B"）、用 `.option-correct`/`.option-wrong` 标记选项、`.topic-analysis` 放"答案解析：…"，而原剥离选择器（`.rightAnswer`/`.correctAnswer`/`[class*=Analysis]`…）一个都不匹配——一旦修好①让条目出现，正确答案与解析就会**泄漏**给学生（此前仅靠 Python 文本 `re.split("正确答案")` 兜底侥幸拦住）。改为：按 `.topic-list` 取题；读取任何文本前先从克隆节点删除 `.answer-default`、`.topic-analysis:not(.topic-zhoshi-main)`（保留无害的知识点标签）、`.element-invisible-hidden`，并摘掉 `.option-correct`/`.option-wrong` 类；结构化抽取 type/题干/选项/我的作答(`.answer-my`)/知识点/recordId。Python 层保留纵深防御：对每个字符串字段再按答案/解析标记截断。`stuId` 自查时为 '0'（身份来自会话而非该字段），原实现误判为空。实测核实：200 题全部抽出、题型分布与原始 DOM 一致、选项中性无正误标记、`.answer-default` 的"正确答案：块茎/B:同化薄壁组织"与"答案解析：周皮的产生…"均**未出现**在返回里；`my_answer` 在平台未记录本人作答时忠实返回空。回归 `tests/test_wrong_questions.py`（6 项：选择器契约、纵深防御兜底、返回结构、空集、读取失败），全套 289 通过。
+
+
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
