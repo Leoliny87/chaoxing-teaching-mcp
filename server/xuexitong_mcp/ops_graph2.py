@@ -19,10 +19,12 @@ course-target/knowledge/knowledgeMap draws it (students: study-target/knowledge/
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
+from pathlib import Path
 
-from .xxt import M2, XxtBase, XxtError, _safe_id
+from .xxt import M1, M2, XxtBase, XxtError, _safe_id
 
 STAT_HOST = "https://stat2-ans.chaoxing.com"
 GRAPH_TYPES = {1: "知识图谱", 6: "知识列表", 2: "学习地图", 3: "问题图谱", 4: "能力图谱", 5: "课程思政图谱"}
@@ -354,3 +356,39 @@ class NewGraphOps(XxtBase):
             return {"graph": graph, "targets": [{"name": x.get("name"), "description": x.get("description"),
                                                   "knowledge_points": [n.get("name") for n in x.get("nodes") or [] if n.get("level")]} for x in lst]}
         raise XxtError("graph 只能是：问题图谱、能力图谱、课程思政图谱（知识图谱用 list_my_course_graph）。")
+
+    def export_course_graph(self, course: str, fmt: str = "Excel") -> dict:
+        """Export the course knowledge graph to a local file. Excel (.xlsx) or Xmind.
+        The questionBankTopic export endpoint (camelCase courseId/clazzId/topicModelId) returns a
+        signed mooc1 download URL; fetch it and save. Both formats are ZIP-based (PK magic)."""
+        if fmt not in ("Excel", "Xmind"):
+            raise XxtError("导出格式只能是 Excel 或 Xmind。")
+        c = self.ctx(course)
+        ep = "export-knowledge-points" if fmt == "Excel" else "exportcoursetopicxmind"
+        info = self.on(M2, f"""
+            const j=await J('/mooc2-ans/questionBankTopic/{ep}?courseId={_safe_id(c.id)}&clazzId=0&cpi={_safe_id(c.cpi)}&ut=t&topicModelId=0');
+            return {{status:j?.status, data:j?.data, msg:j?.msg}};
+        """)
+        if not isinstance(info, dict) or info.get("status") is not True or not info.get("data"):
+            raise XxtError(f"图谱导出凭据获取失败（{str((info or {}).get('msg') or '')[:60]}）。")
+        self.on(M1, "return true;")
+        filedata = self.b.eval("""
+            const resp=await fetch(%s,{credentials:'include'});
+            if(!resp.ok) return {ok:false,status:resp.status};
+            const buf=new Uint8Array(await resp.arrayBuffer());
+            let bin=''; for(let i=0;i<buf.length;i++) bin+=String.fromCharCode(buf[i]);
+            return {ok:true,b64:btoa(bin),size:buf.length};
+        """ % json.dumps(info["data"]))
+        if not isinstance(filedata, dict) or not filedata.get("ok"):
+            raise XxtError("图谱导出文件下载失败。")
+        raw = base64.b64decode(filedata["b64"])
+        ext = ".xlsx" if fmt == "Excel" else ".xmind"
+        d = Path(self.cfg.download_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / re.sub(r'[\\/:*?"<>|\s]+', "_", f"{c.name}-课程图谱{ext}")
+        out.write_bytes(raw)
+        ok = raw[:4] == b"PK\x03\x04" and len(raw) > 0
+        res = {"ok": ok, "file": str(out), "format": fmt, "size": len(raw)}
+        if not ok:
+            res.update(write_outcome="unknown", error="下载的文件不是有效的图谱导出格式。")
+        return res

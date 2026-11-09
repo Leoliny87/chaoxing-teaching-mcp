@@ -1707,6 +1707,11 @@ def get_course_graph(course: Course_) -> dict:
     return out
 
 
+@tool(L, "导出课程图谱到本机下载目录：Excel（知识点表）或 Xmind（思维导图）。只读导出，不改平台。")
+def export_course_graph(course: Course_, fmt: Annotated[str, Field(description="导出格式：Excel 或 Xmind")] = "Excel") -> dict:
+    return client().export_course_graph(course, fmt)
+
+
 @tool(R, "查看一个知识点：上下级、前置/后置/关联知识点，以及关联的题目（题干和题型）。")
 def get_knowledge_point(course: Course_, point: Point_) -> dict:
     p = client().find_point(course, point)

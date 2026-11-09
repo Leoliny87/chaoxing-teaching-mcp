@@ -4,7 +4,7 @@
 
 本文的界面结构与接口来自 2026-11-06 在一台教师机上用真实登录态做的探查（BrowserSkill 0.4.2，Chrome 156）。第 1 节是只读探查。1.2 节起的写操作全部在测试课「助手」里实际执行过，测试数据都以 `[MCP测试]` 开头。接口路径只记录主机和路径，不记录签名参数和真实 ID。
 
-## 0. 当前完成度（2026-11-09，第九轮后）
+## 0. 当前完成度（2026-11-09，第十轮后）
 
 注册的工具：共 215 个；教师配置 191 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
@@ -345,6 +345,10 @@
 - 流程：首次调 `login` 工具弹本机表单输账号密码 → 存 keyring → 自动填表提交 → 人工划滑块 → 到达各自首页；账号名持久化到 config `[login] login_account`，之后凭据复用、过期自动重登；`logout` 删凭据。`auto_login` 默认开（env `XUEXITONG_MCP_AUTO_LOGIN=0` 可关）。login/logout 跨所有 profile（policy.LOGIN_TOOLS）。
 - 实测：维护者本人账号走完整流程，health_check 由"未登录"变"已登录"、courses=60。修复 LoginAutomator 误用 Bsk.here（应为 eval）。全套 277 测试通过。新增依赖 keyring>=24。
 - 安全模型变更（维护者批准）：从"完全不碰密码"改为"密码仅存本机系统 keyring + 半自动登录"；滑块/短信/协议仍由本人完成，不做反反爬。
+
+### 2026-11-09（第十轮）课程图谱导出完成；导入受阻（见 GitHub issue）
+- **导出已做**（`export_course_graph`，Excel/Xmind）：`GET mooc2-ans/questionBankTopic/export-knowledge-points`（**必须驼峰** courseId/clazzId=0/cpi/ut=t/topicModelId=0；小写 courseid 会报"非教师无查询权限"）→ 返回 `{data:<带 enc 的下载 URL>}`（mooc1/import-export-ans）→ 从 M1 基准页 fetch 该 URL 取文件字节。Excel/Xmind 都是 ZIP（PK 魔数）。实测助手课导出 .xlsx 5021B、.xmind 5599B。xmind 端点 `exportcoursetopicxmind` 同理。回归 `tests/test_graph_export.py`，全套 282 通过。
+- **导入未做（受阻，已开 GitHub issue 求援）**：流程已摸清——模板 `import-export-ans/template/importTopicOutlineTemplate.xlsx`（可下载，9968B）；上传 `mooc1/upload-ans/upload/uploadNew`（FormData）换 `fileImportTopicEnc`；`POST import-export-ans/import/importknoeledgepoint`（FormData: courseId/personId/enc=fileImportTopicEnc/timestamp/topicBankTaskId/iframeFileName/templateType；query: courseid/taskId/sourceCourseId）；轮询 `import/knoeledgepointstate`。**卡点**：① uploadNew 只传 {file,name,source:0} 报 `error Params`，真实上传走隐藏 iframe（字段名 iframeFileName），端点/参数运行时动态构造，静态 JS（chunk 1622.8434c225.js / 上传组件 5599、7844）挖不出；② knowgraph 是 Vue SPA，直接导航 body 为空，需课程外壳 iframe 带完整上下文才渲染，UI 驱动也难。需运行时抓 iframe 上传请求才能补全。
 
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
