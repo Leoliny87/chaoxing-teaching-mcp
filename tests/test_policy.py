@@ -28,7 +28,7 @@ def test_environment_can_only_narrow():
 
 def test_student_profile_is_minimal_and_cannot_be_widened():
     a = P.allowed_tools("student", TOOLS, ["delete_material", "publish_notice", "read_page", "reply_my_discussion"], [])
-    assert a == set(P.STUDENT_BASE) | {"reply_my_discussion"}
+    assert a == set(P.STUDENT_BASE) | {"reply_my_discussion"} | P.LOGIN_TOOLS
     kinds = dict(TOOLS)
     assert not any(kinds[n] == "destructive" for n in a)
     assert not any(n.startswith(("create_", "publish_", "delete_", "insert_")) for n in a)
@@ -39,7 +39,7 @@ def test_reviewer_is_read_only_plus_review_records():
     a = P.allowed_tools("reviewer", TOOLS, ["publish_notice"], [])
     kinds = dict(TOOLS)
     assert {"record_review_suggestion", "list_review_suggestions", "assignment_submissions", "health_check"} <= a
-    assert all(kinds[n] == "read" for n in a - P.REVIEW_TOOLS) and "read_page" not in a
+    assert all(kinds[n] == "read" for n in a - P.REVIEW_TOOLS - P.LOGIN_TOOLS) and "read_page" not in a
     assert not (a & P.STUDENT_ONLY)
 
 
@@ -55,7 +55,7 @@ def test_build_server_registers_only_profile_tools_and_refuses_others(tmp_path, 
     monkeypatch.delenv("XUEXITONG_MCP_PROFILE", raising=False)
     try:
         srv.build_server(cfg)
-        assert srv._state["profile"] == "student" and srv._state["allowed"] == set(P.STUDENT_BASE)
+        assert srv._state["profile"] == "student" and srv._state["allowed"] == set(P.STUDENT_BASE) | P.LOGIN_TOOLS
         assert cfg.min_nav_interval == 2.0 and srv._state["budget"].limit == 300
         r = srv._wrap(dict((n, f) for n, _, _, f in srv.TOOLS)["publish_notice"], "write")(course="x", title="t", content="c")
         assert r["ok"] is False and "不允许" in r["error"]

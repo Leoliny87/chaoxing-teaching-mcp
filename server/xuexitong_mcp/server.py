@@ -69,7 +69,7 @@ def _err(e: Exception) -> dict:
                 existing.b._login_handoff = False
         if e.code == "login_required":
             return {"ok": False, "needs_human": True, "login": "未登录", "login_url": FIXED_HOMEPAGE,
-                    "error": msg, "hint": "请本人在配置指定的本地 Profile 手动登录后继续；不自动重试，不更换实例。"}
+                    "error": msg, "hint": "请调用 login 工具输入账号密码自动登录（滑块需本人完成）；也可手动在浏览器登录。不自动重试，不更换实例。"}
         if e.code in ("control_not_ready", "sync_incomplete", "observation_unavailable") or e.code.startswith("readiness_"):
             return {"ok": False, "error": msg, "browser_error": details,
                     "hint": "当前控制状态或同步凭据不完整，已停止操作；请检查状态，勿自动重试。"}
@@ -349,6 +349,26 @@ def tool(kind: str, desc: str):
 @tool(R, "环境自检：bsk doctor、Chrome 策略、学习通登录状态、防弹窗扩展、界面语言。出问题时先调用它。")
 def health_check() -> dict:
     return client().health()
+
+
+@tool(L, "首次登录引导：打开本机表单输入学习通账号密码（存系统 keyring），自动填表登录，滑块需本人完成；之后凭据持久复用。不回传密码。")
+def login() -> dict:
+    from . import login as _login
+    cfg = _state["cfg"] or _config.load()
+    try:
+        return _login.run_login(cfg, client().b)
+    except _login.LoginError as e:
+        return {"ok": False, "error": str(e), "hint": "也可手动在浏览器登录 https://i.mooc.chaoxing.com/space/index 。"}
+
+
+@tool(L, "退出登录：删除本机系统 keyring 里保存的学习通凭据。")
+def logout() -> dict:
+    from . import login as _login
+    cfg = _state["cfg"] or _config.load()
+    try:
+        return _login.run_logout(cfg)
+    except _login.LoginError as e:
+        return {"ok": False, "error": str(e)}
 
 
 @tool(R, "列出我教的所有课程（课程名、ID、是否本人创建）。课程名有重复时请用 ID。")

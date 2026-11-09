@@ -48,3 +48,8 @@ channel = "stable"          # stable：只要正式版；rc：也接受 vX.Y.Zrc
 # 学生服务器建议打开：只接受教师用 SSH 密钥签名的版本标签。
 require_signed_tags = false
 allowed_signers = ""        # 例如 "~/.config/xuexitong-mcp/allowed_signers"
+
+[login]
+# 首次登录引导：账号密码存系统 keyring（不在此文件），MCP 自动填表登录，滑块需本人完成。
+auto_login = true        # 默认开：会话过期时用 keyring 凭据自动重登；设 false 或 env XUEXITONG_MCP_AUTO_LOGIN=0 关闭
+login_account = ""       # 当前账号用户名（非密码）；运行 login 工具后填写
