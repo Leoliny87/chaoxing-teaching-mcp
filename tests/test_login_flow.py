@@ -7,6 +7,13 @@ from xuexitong_mcp.config import Config
 
 
 class FakeBsk:
+    def __init__(self):
+        self.tab = 7
+        self.cfg = type("C", (), {"t_navigate": 40})()
+
+    def run(self, args, timeout=None, session=True):
+        return {}
+
     def navigate(self, url, **kw):
         return url
 

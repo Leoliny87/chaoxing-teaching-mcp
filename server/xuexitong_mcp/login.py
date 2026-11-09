@@ -152,14 +152,30 @@ class LoginAutomator:
     def __init__(self, bsk):
         self.b = bsk
 
-    def fill_and_submit(self, account: str, password: str) -> None:
-        self.b.navigate(LOGIN_URL, wait="domcontentloaded", readiness=False)
-        self.b.eval(
+    def fill_and_submit(self, account: str, password: str, retries: int = 5) -> None:
+        # The passport2 login page breaks the cooperate sync while it re-renders.
+        # Navigate once with the raw bsk command (no cooperate context), let the
+        # page fully settle, then retry only the evals — re-navigating per attempt
+        # would reload the page and keep invalidating the cooperate context.
+        from .bsk import BskError
+        self.b.run(["navigate", LOGIN_URL, "--tab-id", str(self.b.tab), "--wait-until", "domcontentloaded"],
+                   timeout=self.b.cfg.t_navigate + 10)
+        time.sleep(3.5)
+        fill_js = (
             "const p=document.getElementById('phone'); const w=document.getElementById('pwd');"
             f"p.value={json.dumps(account)}; w.value={json.dumps(password)};"
             "['input','change','keyup'].forEach(n=>{p.dispatchEvent(new Event(n,{bubbles:true}));w.dispatchEvent(new Event(n,{bubbles:true}));});"
             "return true;")
-        self.b.eval("document.getElementById('loginBtn').click(); return true;")
+        last = None
+        for _ in range(retries):
+            try:
+                self.b.eval(fill_js)
+                self.b.eval("document.getElementById('loginBtn').click(); return true;")
+                return
+            except BskError as e:
+                last = e
+                time.sleep(2.0)
+        raise last
 
     def wait_until_logged_in(self, timeout: float = 180, poll: float = 2) -> dict:
         deadline = time.time() + timeout
