@@ -10,6 +10,11 @@ class FakeBsk:
     def __init__(self):
         self.tab = 7
         self.cfg = type("C", (), {"t_navigate": 40})()
+        self.fills = []
+        self.clicks = []
+
+    def ensure_session(self, **kw):
+        return
 
     def run(self, args, timeout=None, session=True):
         return {}
@@ -21,6 +26,14 @@ class FakeBsk:
         if "location.href" in js:
             return "https://i.mooc.chaoxing.com/space/index"
         return True
+
+    def fill_selector(self, selector, value):
+        self.fills.append((selector, value))
+        return {}
+
+    def click_selector(self, selector, **kw):
+        self.clicks.append(selector)
+        return {}
 
 
 def test_run_login_with_stored_credentials(monkeypatch):

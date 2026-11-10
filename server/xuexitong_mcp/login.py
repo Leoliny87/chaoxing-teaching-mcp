@@ -152,25 +152,63 @@ class LoginAutomator:
     def __init__(self, bsk):
         self.b = bsk
 
+    def _on_login_page(self) -> bool:
+        """True when the owned tab's last known URL is the passport login page."""
+        from urllib.parse import urlsplit
+        try:
+            d = urlsplit(str(getattr(self.b, "url", "") or ""))
+        except ValueError:
+            return False
+        return d.hostname == "passport2.chaoxing.com" and d.path.rstrip("/").endswith("/login")
+
     def fill_and_submit(self, account: str, password: str, retries: int = 5) -> None:
-        # The passport2 login page breaks the cooperate sync while it re-renders.
+        # The passport2 login page hosts a QR-login widget that keeps polling and
+        # re-rendering. That churn repeatedly invalidates whole-page strict
+        # observations, so untargeted `evaluate` calls are rejected with
+        # cooperation_sync_required (observed live 2026-11-10: 5/5 attempts
+        # denied, effect_state=none). Targeted selector fill/click carry no
+        # observation requirement and remain protected only in their own region,
+        # so they survive the QR churn. Concurrent user activity can still revoke
+        # a single action; the retry loop below only repeats not-yet-submitted,
+        # replay-safe steps (fill/click before any successful submit).
         # Navigate once with the raw bsk command (no cooperate context), let the
-        # page fully settle, then retry only the evals — re-navigating per attempt
-        # would reload the page and keep invalidating the cooperate context.
+        # page fully settle, then retry only the targeted actions — re-navigating
+        # per attempt would reload the page and restart the QR churn.
         from .bsk import BskError
-        self.b.run(["navigate", LOGIN_URL, "--tab-id", str(self.b.tab), "--wait-until", "domcontentloaded"],
-                   timeout=self.b.cfg.t_navigate + 10)
+        # login may be the very first tool call of a fresh server process, and
+        # its agent window may also have been reclaimed/closed since a previous
+        # attempt. Bind with the liveness-checked renewal so a dead session is
+        # rebuilt instead of failing the raw navigate below with a stale id
+        # (observed 2026-11-10: not_found/session_window_closed at 0.0s).
+        # The bootstrap navigates the owned tab to the portal homepage; when
+        # logged out it is bounced to the passport login page and raises
+        # login_required. That parked tab is exactly where this flow wants to
+        # be, so continue instead of propagating the guard — otherwise `login`
+        # deadlocks: its own error hint tells the caller to "call login"
+        # (observed 2026-11-10, 0.5s).
+        parked_on_login = False
+        try:
+            self.b.ensure_session(renew_idle_readonly=True)
+        except BskError as e:
+            if e.code != "login_required" or not getattr(self.b, "tab", None):
+                raise
+            parked_on_login = True
+        # The extension protects the login page: the FIRST navigation onto it is
+        # allowed, but any further raw (context-less) action on it — including a
+        # redundant re-navigation to the same LOGIN_URL — is denied instantly
+        # with cooperation_sync_required (observed 2026-11-10, 0.0s). When the
+        # bootstrap already parked the owned tab on the login page, skip the
+        # navigate entirely; otherwise (tab is elsewhere) navigate as before.
+        if not parked_on_login and not self._on_login_page():
+            self.b.run(["navigate", LOGIN_URL, "--tab-id", str(self.b.tab), "--wait-until", "domcontentloaded"],
+                       timeout=self.b.cfg.t_navigate + 10)
         time.sleep(3.5)
-        fill_js = (
-            "const p=document.getElementById('phone'); const w=document.getElementById('pwd');"
-            f"p.value={json.dumps(account)}; w.value={json.dumps(password)};"
-            "['input','change','keyup'].forEach(n=>{p.dispatchEvent(new Event(n,{bubbles:true}));w.dispatchEvent(new Event(n,{bubbles:true}));});"
-            "return true;")
         last = None
         for _ in range(retries):
             try:
-                self.b.eval(fill_js)
-                self.b.eval("document.getElementById('loginBtn').click(); return true;")
+                self.b.fill_selector("#phone", account)
+                self.b.fill_selector("#pwd", password)
+                self.b.click_selector("#loginBtn")
                 return
             except BskError as e:
                 last = e

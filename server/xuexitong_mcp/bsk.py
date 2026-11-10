@@ -696,6 +696,20 @@ class Bsk:
         time.sleep(self.cfg.settle if settle is None else settle)
         return r
 
+    def fill_selector(self, selector: str, value: str):
+        """Type into an input found by CSS selector (targeted; no strict observation).
+
+        Pages with a continuously mutating region (e.g. the passport login QR
+        widget polling for scan state) keep invalidating whole-page strict
+        observations, so untargeted `evaluate` gets rejected with
+        cooperation_sync_required. Targeted selector actions carry no
+        observation requirement and stay protected only in their own region,
+        so they survive unrelated DOM churn.
+        """
+        def b(ctx, obs):
+            return ["fill", "--selector", selector, "--value", value, "--context", ctx]
+        return self._act(b, retry_safe=True, need_obs=False)
+
     def press(self, key: str, selector: str | None = None):
         def b(ctx, obs):
             a = ["press", key, "--context", ctx, "--observation", obs]
