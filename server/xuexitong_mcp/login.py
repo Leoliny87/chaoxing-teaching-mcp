@@ -5,6 +5,7 @@ import html
 import json
 import re
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -133,11 +134,22 @@ def collect_credentials(store, open_browser: bool = True, timeout: float = 300) 
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     url = f"http://127.0.0.1:{port}/"
+    # Always make the form URL discoverable in the server's stderr (MCP clients
+    # keep it in their logs): on machines where no browser can be opened
+    # (headless, missing DISPLAY, no default browser) webbrowser.open fails
+    # silently and first-time users would otherwise stare at nothing until the
+    # 300s timeout. The URL carries no secret — the anti-CSRF token lives in
+    # the served HTML, and the server only accepts loopback Host headers.
+    print(f"[xuexitong-mcp] 首次登录表单: {url} （请在 {int(timeout)} 秒内填写；密码仅存入本机系统 keyring）",
+          file=sys.stderr, flush=True)
     if open_browser:
-        webbrowser.open(url)
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass  # URL is already on stderr; the user/agent can open it manually
     try:
         if not done.wait(timeout):
-            raise LoginError("登录表单超时未提交；请重新运行 login。")
+            raise LoginError("登录表单超时未提交；请重新运行 login（表单地址会打印在服务端 stderr 日志）。")
     finally:
         server.shutdown()
         server.server_close()

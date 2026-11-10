@@ -108,3 +108,106 @@ def test_remember_account_persists_and_reloads(tmp_path):
     assert cfg.login_account == "13800000000"
     assert 'login_account = "13800000000"' in p.read_text(encoding="utf-8")
     assert load(p).login_account == "13800000000"
+
+def test_collect_credentials_form_roundtrip(monkeypatch):
+    # First-run experience: the form URL must be discoverable on stderr even
+    # when no browser can be opened, and the token-protected POST must land
+    # the credentials in the store (school-wide rollout: headless installs).
+    import io
+    import re as _re
+    import threading
+    import time as _time
+    import urllib.parse
+    import urllib.request
+
+    class Store:
+        def __init__(self):
+            self.creds = {}
+
+        def get_password(self, a):
+            return self.creds.get(a)
+
+        def set_password(self, a, p):
+            self.creds[a] = p
+
+        def delete_password(self, a):
+            self.creds.pop(a, None)
+
+    store = Store()
+    err = io.StringIO()
+    monkeypatch.setattr(L.sys, "stderr", err)
+    out = {}
+
+    def run():
+        try:
+            out["account"] = L.collect_credentials(store, open_browser=False, timeout=15)
+        except Exception as e:  # pragma: no cover - failure path
+            out["error"] = e
+
+    th = threading.Thread(target=run, daemon=True)
+    th.start()
+    url = None
+    for _ in range(200):
+        m = _re.search(r"http://127\.0\.0\.1:\d+/", err.getvalue())
+        if m:
+            url = m.group(0)
+            break
+        _time.sleep(0.05)
+    assert url, f"form URL not printed to stderr: {err.getvalue()!r}"
+    page = urllib.request.urlopen(url, timeout=5).read().decode("utf-8")
+    tok = _re.search(r'name="token" value="([^"]+)"', page).group(1)
+    body = urllib.parse.urlencode(
+        {"token": tok, "account": "13800000000", "password": "secret"}).encode()
+    resp = urllib.request.urlopen(url.rstrip("/") + "/submit", data=body, timeout=5).read().decode("utf-8")
+    assert "已保存凭据" in resp
+    th.join(timeout=5)
+    assert out.get("account") == "13800000000"
+    assert store.creds == {"13800000000": "secret"}
+
+
+def test_collect_credentials_rejects_bad_token(monkeypatch):
+    import io
+    import re as _re
+    import threading
+    import time as _time
+    import urllib.parse
+    import urllib.request
+
+    class Store:
+        def __init__(self):
+            self.creds = {}
+
+        def get_password(self, a):
+            return self.creds.get(a)
+
+        def set_password(self, a, p):
+            self.creds[a] = p
+
+    store = Store()
+    err = io.StringIO()
+    monkeypatch.setattr(L.sys, "stderr", err)
+    out = {}
+
+    def run():
+        try:
+            out["account"] = L.collect_credentials(store, open_browser=False, timeout=2)
+        except Exception as e:
+            out["error"] = e
+
+    th = threading.Thread(target=run, daemon=True)
+    th.start()
+    url = None
+    for _ in range(200):
+        m = _re.search(r"http://127\.0\.0\.1:\d+/", err.getvalue())
+        if m:
+            url = m.group(0)
+            break
+        _time.sleep(0.05)
+    assert url
+    body = urllib.parse.urlencode(
+        {"token": "wrong-token", "account": "13800000000", "password": "secret"}).encode()
+    resp = urllib.request.urlopen(url.rstrip("/") + "/submit", data=body, timeout=5).read().decode("utf-8")
+    assert "令牌无效" in resp
+    th.join(timeout=6)
+    assert isinstance(out.get("error"), L.LoginError)  # timed out, nothing stored
+    assert store.creds == {}
