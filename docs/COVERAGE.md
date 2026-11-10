@@ -363,6 +363,16 @@
 - **写操作补测（教师号 f4b82b32 配合，全部通过）**：`download_my_material`——助手课有 6 份资料教师已开放下载（先前"无可下载资料"是探查脚本用错字段：学生端 `my_materials` 返回的是 `downloadable` 而非 `isdown`）；实测下载 MCP测试视频.mp4（38831 字节，大小与 sha256 一致、落盘成功），测试文件已清理。`submit_my_activity`——教师端用 `create_activity`（走 `GET /widget/quickvote/publishActive` 接口，**不需要"防App跳转扩展"**；该扩展只挡 `ops_activity` 里旧的 UI 版 `start_vote`/`start_checkin`）在测试班建了一个进行中投票，测试号 `open_my_activity`(agent_can_submit=true)→`submit_my_activity` 预演 `{"choice":"A"}`→提交 `{ok:true,done:true}`→读回 `submitted=true` 全通过；随后教师端 `end_activity`+`prepare_activity_deletion`/`delete_linked_activity`（API setdel + 回收站核实）把测试投票结束并移入回收站清理。注：直接调旧的 UI 版 `ops_activity.delete_activity`（`app.deleteActive`）会因 mobilelearn 列表重绘报 observation_changed，但 `delete_activity` 工具实际走的是 `prepare_activity_deletion`（API），正常。至此学生端读 20 项、写 6 项（reply_my_discussion / save_my_qm_explore / post_qm_discussion / 作业暂存 / 作业提交 / submit_my_activity / download_my_material）全部用纯学生号实测通过。
 - 回归 `tests/test_student_discussions.py`（5 项：签名 nonce URL、禁用 getTopicList、截断提示、无讨论区、缺签名参数、空列表），全套 294 通过。issue #4 已修复关闭。
 
+### 2026-11-10（第十三轮）首次登录引导连环修复（v0.9.4）
+- **背景**：ai395 主机部署从 0.2.0rc6 升级到 v0.9.3 并接入 DSH「学习通助手」preset 后真机实测登录，新用户首用路径连环暴露 4 个故障，全部修复并实测。
+- **Bug1 登录页 QR 干扰**：passport2 的扫码组件轮询重渲染，持续使全页严格观察失效——`fill_and_submit` 的无定向 `evaluate` 5/5 被拒（cooperation_sync_required，effect=none）。修复：改定向 `fill_selector`/`click_selector`（新增 `Bsk.fill_selector`），无严格观察要求，只保护目标区域，QR 刷新不再影响。
+- **Bug2 首调 login 死锁**：冷启动 login 为第一个工具调用时 session 未绑定（`--tab-id None` → cli_parse_error）；bootstrap 落到登录页抛 `login_required` 把 login 工具自己也挡住（错误提示却叫用户"调用 login"，循环死锁）；已停登录页后的二次裸导航又被扩展登录页保护秒拒。修复：`ensure_session(renew_idle_readonly=True)` 自检绑定（可重建被回收窗口）；接管 login_required handoff 复用已停标签；已在登录页时跳过冗余导航。
+- **Bug3 无头机表单不可见**：`collect_credentials` 只靠 `webbrowser.open`，打不开时静默失败→新用户干等 300s 超时无线索。修复：表单 URL 必打印到 stderr（MCP 客户端日志可查），open 异常不中断登录。URL 不含机密（防伪 token 在表单 HTML 内、服务只收 loopback Host 头）。
+- **Bug4 混合态拒绝**：logout 只清 keyring 不清浏览器 cookie；浏览器仍登录时 bootstrap readiness sync 之后再发裸导航被拒 control_context_invalid（0.01s，effect=none）。修复：实时 URL 已在门户首页→提前返回（凭据已保存，wait_until_logged_in 确认）；在其他页→改用带上下文的 `navigate()` 高层方法；在登录页→跳过导航。
+- **真机实测（ai395 实例 c41e7649，教师本人账号）**：keyring 复用路径 10.0s 登录成功（未弹滑块）；**新用户表单全流程演练**：logout 清凭据+清 config → login 自动弹出表单（stderr 同步打印 URL）→ 本人填写提交 → keyring 存入 + config 回写账号 → 自动填表登录成功；300s 超时路径干净报错可重跑；混合态提前返回 3.6s ok。
+- 回归：+7 测试（handoff 接管、停登录页跳过导航、已登录提前返回、他页同步导航、表单 HTTP 回路含 token 校验、坏令牌拒绝、超时），全套 **302 通过**。
+- **部署**：修复 117942d / 8b09bf1 / 52248fd 已推 main；本机 app 部署同步至 v0.9.4；DSH「学习通助手」preset 挂载 teacher 档 194 工具（写入白名单仅助手课），Codex 走同一 wrapper。
+
 
 
 ### 讨论（groupweb）
