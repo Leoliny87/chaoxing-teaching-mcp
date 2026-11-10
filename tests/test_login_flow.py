@@ -12,6 +12,10 @@ class FakeBsk:
         self.cfg = type("C", (), {"t_navigate": 40})()
         self.fills = []
         self.clicks = []
+        self.url = ""
+
+    def href(self):
+        return self.url
 
     def ensure_session(self, **kw):
         return

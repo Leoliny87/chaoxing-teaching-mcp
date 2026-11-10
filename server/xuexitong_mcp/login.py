@@ -208,12 +208,31 @@ class LoginAutomator:
         # The extension protects the login page: the FIRST navigation onto it is
         # allowed, but any further raw (context-less) action on it — including a
         # redundant re-navigation to the same LOGIN_URL — is denied instantly
-        # with cooperation_sync_required (observed 2026-11-10, 0.0s). When the
-        # bootstrap already parked the owned tab on the login page, skip the
-        # navigate entirely; otherwise (tab is elsewhere) navigate as before.
+        # with cooperation_sync_required (observed 2026-11-10, 0.0s). Once the
+        # session holds cooperation contexts (e.g. after bootstrap readiness
+        # syncs), even a raw navigate from another page is denied with
+        # control_context_invalid (observed 2026-11-10, 0.01s). Therefore:
+        # - parked by the login_required handoff, or cached URL already on the
+        #   login page: skip navigation entirely;
+        # - live URL on the portal homepage: the browser profile is ALREADY
+        #   logged in (logout only clears the local keyring, not cookies) —
+        #   there is no form to fill; return and let wait_until_logged_in
+        #   confirm. The freshly collected credentials are already saved for
+        #   future automatic re-logins;
+        # - anywhere else: navigate with the sync-based high-level method
+        #   (fresh context per action), never the raw context-less command.
+        from urllib.parse import urlsplit
         if not parked_on_login and not self._on_login_page():
-            self.b.run(["navigate", LOGIN_URL, "--tab-id", str(self.b.tab), "--wait-until", "domcontentloaded"],
-                       timeout=self.b.cfg.t_navigate + 10)
+            cur = ""
+            try:
+                cur = str(self.b.href() or "")
+            except BskError:
+                cur = ""
+            host = urlsplit(cur).hostname or ""
+            if host == HOME_HOST:
+                return
+            if host != "passport2.chaoxing.com":
+                self.b.navigate(LOGIN_URL, wait="domcontentloaded", readiness=False)
         time.sleep(3.5)
         last = None
         for _ in range(retries):

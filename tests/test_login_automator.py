@@ -13,7 +13,11 @@ class FakeBsk:
         self.fills = []      # (selector, value)
         self.clicks = []     # selector
         self.tab = 7
+        self.url = ""
         self.cfg = type("C", (), {"t_navigate": 40})()
+
+    def href(self):
+        return self.url
 
     def ensure_session(self, **kw):
         return
@@ -80,7 +84,13 @@ def test_fill_and_submit_retries_on_transient_sync_error(monkeypatch):
             self.clicks = []
             self.phone_calls = 0
             self.tab = 7
+            # Already parked on the (protected) login page: the flow must not
+            # navigate at all; this test focuses on the fill retry loop.
+            self.url = "https://passport2.chaoxing.com/login?fid=12"
             self.cfg = type("C", (), {"t_navigate": 40})()
+
+        def href(self):
+            return self.url
 
         def ensure_session(self, **kw):
             return
@@ -104,7 +114,7 @@ def test_fill_and_submit_retries_on_transient_sync_error(monkeypatch):
 
     b = FlakyBsk()
     LoginAutomator(b).fill_and_submit("13800000000", "secret")
-    assert b.navs == [LOGIN_URL]        # navigated once, not per retry
+    assert b.navs == []                 # parked on login page: no navigation
     assert b.phone_calls == 2           # first fill denied, retried
     assert b.clicks == ["#loginBtn"]    # submitted exactly once after success
 
@@ -139,8 +149,11 @@ def test_fill_and_submit_continues_when_bootstrap_parks_on_login_page(monkeypatc
     assert b.clicks == ["#loginBtn"]
 
 
-def test_fill_and_submit_navigates_when_tab_elsewhere(monkeypatch):
-    # Alive session whose tab is NOT on the login page: navigate must run.
+def test_fill_and_submit_returns_early_when_already_logged_in(monkeypatch):
+    # Mixed state (observed 2026-11-10): keyring emptied by logout but browser
+    # cookies still valid. Bootstrap lands on the portal homepage; there is no
+    # login form to fill — return early instead of firing raw actions that the
+    # extension denies with control_context_invalid.
     from xuexitong_mcp import login as L
     monkeypatch.setattr(L.time, "sleep", lambda s: None)
 
@@ -154,7 +167,35 @@ def test_fill_and_submit_navigates_when_tab_elsewhere(monkeypatch):
 
     b = AliveBsk()
     LoginAutomator(b).fill_and_submit("13800000000", "secret")
+    assert b.navs == []
+    assert b.fills == []
+    assert b.clicks == []
+
+
+def test_fill_and_submit_uses_sync_navigate_from_other_page(monkeypatch):
+    # Alive session on an unrelated page: navigate via the sync-based
+    # high-level method (raw context-less navigate is denied once the
+    # session holds cooperation contexts), then fill and submit.
+    from xuexitong_mcp import login as L
+    monkeypatch.setattr(L.time, "sleep", lambda s: None)
+
+    class CourseBsk(FakeBsk):
+        def __init__(self):
+            super().__init__([])
+            self.url = "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/tch?courseid=1"
+
+        def ensure_session(self, **kw):
+            return
+
+        def navigate(self, url, **kw):
+            self.navs.append(url)
+            self.url = "https://passport2.chaoxing.com/login?fid=12"
+            return url
+
+    b = CourseBsk()
+    LoginAutomator(b).fill_and_submit("13800000000", "secret")
     assert b.navs == [LOGIN_URL]
+    assert b.fills == [("#phone", "13800000000"), ("#pwd", "secret")]
     assert b.clicks == ["#loginBtn"]
 
 
