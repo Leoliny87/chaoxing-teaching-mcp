@@ -226,3 +226,97 @@ def test_graph_delete_point(cfg, monkeypatch):
     monkeypatch.setattr(c, "_gpost", lambda url, p: {"status": False, "msg": "拒"})
     out2 = c.textbook_graph_delete_point("11026", "901")
     assert out2["ok"] is False and out2["write_outcome"] == "not_written"
+
+
+# ------------------------------------------------ chapters / 目录 (course-chapter backend reuse)
+def _chclient(cfg, monkeypatch):
+    c = _client(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_tb_graph_ctx", lambda id: dict(CTX))
+    return c
+
+
+def _tree():
+    return {"success": True, "data": [
+        {"id": 100, "title": "第一章", "layer": 1, "children": [{"id": 101, "title": "第一节", "layer": 2, "children": None}]},
+        {"id": 200, "title": "第二章", "layer": 1, "children": None}]}
+
+
+def test_chapters_reads_tree(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: _tree() if "get-knowledge-list" in js else {})
+    out = c.textbook_chapters("11026")
+    assert out["count"] == 3
+    assert out["chapters"][0]["number"] == "1" and out["chapters"][1]["number"] == "1.1"
+    assert out["chapters"][1]["parent_id"] == "100"
+
+
+def test_chapters_invalid_not_empty(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: {"success": False})
+    with pytest.raises(XxtError):
+        c.textbook_chapters("11026")
+
+
+def test_create_chapter_verifies_readback(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    state = {"created": False}
+
+    def fake_on(host, js, **kw):
+        if "get-knowledge-list" in js:
+            t = _tree()
+            if state["created"]:
+                t["data"].append({"id": 300, "title": "新章节", "layer": 1, "children": None})
+            return t
+        if "createchapter" in js:
+            state["created"] = True
+            return {"id": 300}
+        return {}
+
+    monkeypatch.setattr(c, "on", fake_on)
+    out = c.textbook_create_chapter("11026", "新章节")
+    assert out["ok"] is True and out["chapter"]["chapter_id"] == "300"
+    with pytest.raises(XxtError):
+        c.textbook_create_chapter("11026", "")
+
+
+def test_rename_chapter_verifies_readback(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    state = {"renamed": False}
+
+    def fake_on(host, js, **kw):
+        if "get-knowledge-list" in js:
+            t = _tree()
+            if state["renamed"]:
+                t["data"][0]["title"] = "改名后"
+            return t
+        if "changename" in js:
+            state["renamed"] = True
+            return {"status": True}
+        return {}
+
+    monkeypatch.setattr(c, "on", fake_on)
+    out = c.textbook_rename_chapter("11026", "100", "改名后")
+    assert out["ok"] is True and out["chapter"]["title"] == "改名后"
+    with pytest.raises(XxtError):
+        c.textbook_rename_chapter("11026", "100", "")
+
+
+def test_delete_chapter_counts_children(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    state = {"deleted": False}
+
+    def fake_on(host, js, **kw):
+        if "get-knowledge-list" in js:
+            if state["deleted"]:
+                return {"success": True, "data": [_tree()["data"][1]]}
+            return _tree()
+        if "deletechapter" in js:
+            state["deleted"] = True
+            return {"status": True}
+        return {}
+
+    monkeypatch.setattr(c, "on", fake_on)
+    out = c.textbook_delete_chapter("11026", "100")
+    assert out["ok"] is True and out["also_deleted_children"] == 1
+    with pytest.raises(XxtError):
+        c.textbook_delete_chapter("11026", "99999")

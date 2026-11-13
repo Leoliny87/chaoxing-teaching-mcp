@@ -22,7 +22,7 @@ import json
 import os
 import re
 
-from .xxt import BASE_PAGE, M2, XxtBase, XxtError
+from .xxt import BASE_PAGE, M1, M2, XxtBase, XxtError
 
 CV = "cv-p.chaoxing.com"
 # A version-stable static file on the cv-p origin (no UI to re-render), so
@@ -242,3 +242,85 @@ class TextbookOps(XxtBase):
         if not (isinstance(r, dict) and r.get("status") is True):
             return {"ok": False, "write_outcome": "not_written", "error": "平台没有删除（%s）。" % str((r or {}).get("msg") or "")[:60]}
         return {"ok": True, "point_id": str(point_id), "note": "已删除（含子节点）；可在平台图谱回收站恢复。"}
+
+    # ---------------------------------------------- chapters / 目录 (same backend as course chapters)
+    # The textbook 目录 tab embeds mooc2-ans/mycourse/tchcourse; its chapter tree read/write uses the very
+    # same /mooc-ans/edit/ endpoints (M1) as the course-chapter tools (verified live 2026-11-13:
+    # get-knowledge-list with the textbook courseId returns the real chapter tree).
+    def textbook_chapters(self, id: str) -> dict:
+        ctx = self._tb_graph_ctx(id)
+        j = self.on(M1, "return await J('/mooc-ans/edit/get-knowledge-list?courseId=%s&cpi=%s');" % (ctx["courseid"], ctx["cpi"]))
+        if not isinstance(j, dict) or not isinstance(j.get("data"), list) or j.get("success") is False or j.get("result") is False:
+            raise XxtError("教材章节列表返回无效或服务端报错；不能视为空列表，请稍后核查。")
+        out: list[dict] = []
+        seen: set[str] = set()
+
+        def walk(nodes, prefix, parent):
+            if nodes is None:
+                return
+            if not isinstance(nodes, list):
+                raise XxtError("章节树子节点格式异常；未返回不完整列表。")
+            for i, n in enumerate(nodes, 1):
+                if (not isinstance(n, dict) or n.get("id") is None or isinstance(n.get("id"), bool)
+                        or not str(n.get("id")).strip() or not isinstance(n.get("title"), str) or not n["title"].strip()):
+                    raise XxtError("章节树节点缺少有效 ID 或标题；未返回不完整列表。")
+                cid = str(n["id"])
+                if cid in seen:
+                    raise XxtError("章节树中存在重复 ID；未返回不完整列表。")
+                seen.add(cid)
+                num = f"{prefix}{i}"
+                out.append({"chapter_id": cid, "number": num, "title": n.get("title"), "layer": n.get("layer"), "parent_id": parent})
+                walk(n.get("children"), num + ".", cid)
+
+        walk(j["data"], "", "0")
+        return {"textbook": ctx["_name"], "courseId": ctx["courseid"], "count": len(out), "chapters": out}
+
+    def _tb_find_chapter(self, id: str, chapter: str) -> dict:
+        chs = self.textbook_chapters(id)["chapters"]
+        ch = next((x for x in chs if x["chapter_id"] == str(chapter) or x["number"] == str(chapter)), None)
+        if not ch:
+            raise XxtError("未找到章节 %s；请用 textbook_chapters 核对。" % chapter)
+        return ch
+
+    def textbook_create_chapter(self, id: str, title: str, parent: str = "") -> dict:
+        ctx = self._tb_graph_ctx(id)
+        if not title or not title.strip():
+            raise XxtError("章节标题不能为空。")
+        if parent:
+            p = self._tb_find_chapter(id, parent)
+            pid, layer = p["chapter_id"], int(p["layer"]) + 1
+        else:
+            pid, layer = "0", 1
+        if layer > 7:
+            raise XxtError("章节不能超过7层。")
+        r = self.on(M1, "const f=new FormData(); f.append('courseid','%s'); f.append('name',%s); f.append('parentid','%s'); f.append('layer','%s'); f.append('mooc2','1'); return await J('/mooc-ans/edit/createchapter',{method:'POST',body:f});"
+                    % (ctx["courseid"], json.dumps(title), pid, layer), retry_safe=False)
+        nid = str((r or {}).get("id", ""))
+        hit = [x for x in self.textbook_chapters(id)["chapters"] if x["chapter_id"] == nid]
+        return {"ok": bool(hit), "chapter": hit[0] if hit else None, "server": r,
+                **({} if hit else {"write_outcome": "unknown", "error": "创建后未在章节树看到；请用 textbook_chapters 核查，不要重复创建。"})}
+
+    def textbook_rename_chapter(self, id: str, chapter_id: str, new_name: str) -> dict:
+        ctx = self._tb_graph_ctx(id)
+        if not new_name or len(new_name) > 100:
+            raise XxtError("章节名称需为 1–100 字。")
+        self._tb_find_chapter(id, chapter_id)
+        r = self.on(M1, "const r=await fetch('/mooc-ans/edit/changename',{method:'POST',credentials:'include',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8'},body:new URLSearchParams(%s)}); let j=null; try{j=await r.json()}catch(e){} return j;"
+                    % json.dumps({"courseid": ctx["courseid"], "nodeid": str(chapter_id), "name": new_name, "cpi": ctx["cpi"]}, ensure_ascii=False), retry_safe=False)
+        after = [x for x in self.textbook_chapters(id)["chapters"] if x["chapter_id"] == str(chapter_id)]
+        ok = isinstance(r, dict) and len(after) == 1 and after[0]["title"] == new_name
+        return {"ok": ok, "chapter": after[0] if after else None,
+                **({} if ok else {"write_outcome": "unknown", "error": "改名后核对不一致；请用 textbook_chapters 查看，不要重复提交。"})}
+
+    def textbook_delete_chapter(self, id: str, chapter_id: str) -> dict:
+        ctx = self._tb_graph_ctx(id)
+        chs = self.textbook_chapters(id)["chapters"]
+        ch = next((x for x in chs if x["chapter_id"] == str(chapter_id) or x["number"] == str(chapter_id)), None)
+        if not ch:
+            raise XxtError("未找到章节 %s；请用 textbook_chapters 核对。" % chapter_id)
+        kids = [x for x in chs if x["number"].startswith(ch["number"] + ".")]
+        r = self.on(M1, "const f=new FormData(); f.append('courseid','%s'); f.append('nodeid','%s'); return await J('/mooc-ans/edit/deletechapter',{method:'POST',body:f});"
+                    % (ctx["courseid"], ch["chapter_id"]), retry_safe=False)
+        ok = not [x for x in self.textbook_chapters(id)["chapters"] if x["chapter_id"] == ch["chapter_id"]]
+        return {"ok": ok, "deleted": f"{ch['number']} {ch['title']}", "also_deleted_children": len(kids), "server": r,
+                **({} if ok else {"write_outcome": "unknown", "error": "删除后核对不一致；请用 textbook_chapters 核查。"})}

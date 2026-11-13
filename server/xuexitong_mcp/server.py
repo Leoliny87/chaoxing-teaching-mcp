@@ -3121,6 +3121,47 @@ def textbook_graph_delete_point(id: Annotated[str, Field(description="教材 id"
     return client().textbook_graph_delete_point(id, point_id)
 
 
+@tool(R, "读取数字教材的目录章节树（编号/标题/层级/父子关系）。教材目录与课程章节同一后端，只读。")
+def textbook_chapters(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")]) -> dict:
+    return client().textbook_chapters(id)
+
+
+@tool(W, "在数字教材目录中新建章节（可指定父章节，留空=顶层，最多7层）。先预演，确认后创建。")
+def textbook_create_chapter(id: Annotated[str, Field(description="教材 id")],
+                            title: Annotated[str, Field(description="章节标题")],
+                            parent: Annotated[str, Field(description="父章节 id 或编号，留空=顶层")] = "",
+                            confirm: Confirm = False) -> dict:
+    if not confirm:
+        return _dry(None, "教材目录新建章节", bind={"id": str(id), "title": title, "parent": parent},
+                    textbook_id=id, title=title, parent=parent or "(顶层)",
+                    limitation="将在该教材目录新建章节；学生可见，请确认标题与位置。")
+    return client().textbook_create_chapter(id, title, parent)
+
+
+@tool(W, "重命名数字教材目录中的章节（1–100 字）。先预演，确认后保存。")
+def textbook_rename_chapter(id: Annotated[str, Field(description="教材 id")],
+                            chapter_id: Annotated[str, Field(description="章节 id 或编号")],
+                            new_name: Annotated[str, Field(description="新标题（1–100 字）")],
+                            confirm: Confirm = False) -> dict:
+    if not confirm:
+        return _dry(None, "教材目录重命名章节", bind={"id": str(id), "chapter_id": str(chapter_id), "new_name": new_name},
+                    textbook_id=id, chapter_id=chapter_id, new_name=new_name,
+                    limitation="将修改章节标题；学生可见，请确认。")
+    return client().textbook_rename_chapter(id, chapter_id, new_name)
+
+
+@tool(W, "删除数字教材目录中的章节（含其子章节）。先预演，确认后删除。")
+def textbook_delete_chapter(id: Annotated[str, Field(description="教材 id")],
+                            chapter_id: Annotated[str, Field(description="章节 id 或编号")],
+                            confirm: Confirm = False) -> dict:
+    if not confirm:
+        ch = client()._tb_find_chapter(id, chapter_id)
+        return _dry(None, "教材目录删除章节", bind={"id": str(id), "chapter_id": str(ch["chapter_id"])},
+                    textbook_id=id, chapter=f"{ch['number']} {ch['title']}",
+                    limitation="删除后学生将无法学习该章节（含子章节）；请确认。")
+    return client().textbook_delete_chapter(id, chapter_id)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
