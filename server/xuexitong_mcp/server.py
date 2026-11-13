@@ -3162,6 +3162,12 @@ def textbook_delete_chapter(id: Annotated[str, Field(description="教材 id")],
     return client().textbook_delete_chapter(id, chapter_id)
 
 
+@tool(R, "导出数字教材知识图谱到本机文件（Excel .xlsx 或 Xmind）。只读导出，不改动平台数据；图谱为空或刚添加知识点索引未更新时会提示。")
+def textbook_graph_export(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")],
+                          fmt: Annotated[str, Field(description="导出格式：Excel 或 Xmind")] = "Excel") -> dict:
+    return client().textbook_graph_export(id, fmt)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),

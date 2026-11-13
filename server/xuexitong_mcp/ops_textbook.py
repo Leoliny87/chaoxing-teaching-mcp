@@ -21,6 +21,7 @@ import base64
 import json
 import os
 import re
+from pathlib import Path
 
 from .xxt import BASE_PAGE, M1, M2, XxtBase, XxtError
 
@@ -324,3 +325,37 @@ class TextbookOps(XxtBase):
         ok = not [x for x in self.textbook_chapters(id)["chapters"] if x["chapter_id"] == ch["chapter_id"]]
         return {"ok": ok, "deleted": f"{ch['number']} {ch['title']}", "also_deleted_children": len(kids), "server": r,
                 **({} if ok else {"write_outcome": "unknown", "error": "删除后核对不一致；请用 textbook_chapters 核查。"})}
+
+    # ---------------------------------------------- knowledge graph export (Excel / Xmind)
+    # Same questionBankTopic export endpoints as the course graph; verified live 2026-11-13 with the
+    # textbook courseId (new-version knowgraph). The credential endpoint returns a signed mooc1
+    # import-export-ans download URL; the file is ZIP-based (PK magic). An empty graph (or one whose
+    # index has not caught up after an add) yields a short text message instead of a file.
+    def textbook_graph_export(self, id: str, fmt: str = "Excel") -> dict:
+        if fmt not in ("Excel", "Xmind"):
+            raise XxtError("导出格式只能是 Excel 或 Xmind。")
+        ctx = self._tb_graph_ctx(id)
+        ep = "export-knowledge-points" if fmt == "Excel" else "exportcoursetopicxmind"
+        info = self.on(M2, "const j=await J('/mooc2-ans/questionBankTopic/%s?courseId=%s&clazzId=0&cpi=%s&ut=t&topicModelId=0'); return {status:j?.status,data:j?.data,msg:j?.msg};"
+                       % (ep, ctx["courseid"], ctx["cpi"]))
+        if not isinstance(info, dict) or info.get("status") is not True or not info.get("data"):
+            raise XxtError("图谱导出凭据获取失败（%s）。" % str((info or {}).get("msg") or "")[:60])
+        self.on(M1, "return true;")
+        filedata = self.b.eval("""
+            const resp=await fetch(%s,{credentials:'include'});
+            if(!resp.ok) return {ok:false,status:resp.status};
+            const buf=new Uint8Array(await resp.arrayBuffer());
+            let bin=''; for(let i=0;i<buf.length;i++) bin+=String.fromCharCode(buf[i]);
+            return {ok:true,b64:btoa(bin),size:buf.length};
+        """ % json.dumps(info["data"]))
+        if not isinstance(filedata, dict) or not filedata.get("ok"):
+            raise XxtError("图谱导出文件下载失败。")
+        raw = base64.b64decode(filedata["b64"])
+        if raw[:4] != b"PK\x03\x04":
+            raise XxtError("导出内容不是有效文件（图谱可能为空，或刚添加的知识点索引未更新，稍后再试）：%s" % raw[:40].decode("utf8", "replace"))
+        ext = ".xlsx" if fmt == "Excel" else ".xmind"
+        d = Path(self.cfg.download_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / re.sub(r'[\\/:*?"<>|\s]+', "_", f"{ctx['_name']}-教材图谱{ext}")
+        out.write_bytes(raw)
+        return {"ok": True, "file": str(out), "size": len(raw), "format": fmt}

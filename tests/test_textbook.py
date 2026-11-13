@@ -320,3 +320,42 @@ def test_delete_chapter_counts_children(cfg, monkeypatch):
     assert out["ok"] is True and out["also_deleted_children"] == 1
     with pytest.raises(XxtError):
         c.textbook_delete_chapter("11026", "99999")
+
+
+# ------------------------------------------------ knowledge graph export (Excel / Xmind)
+def test_graph_export_saves_valid_file(cfg, monkeypatch, tmp_path):
+    import base64 as _b64
+    c = _chclient(cfg, monkeypatch)
+    cfg.download_dir = str(tmp_path)
+
+    def fake_on(host, js, **kw):
+        if "export-knowledge-points" in js or "exportcoursetopicxmind" in js:
+            return {"status": True, "data": "https://mooc1.chaoxing.com/import-export-ans/export-knowledge-points?courseId=269231810"}
+        return {}
+
+    monkeypatch.setattr(c, "on", fake_on)
+    fake_zip = b"PK\x03\x04" + b"0" * 100
+    monkeypatch.setattr(c.b, "eval", lambda js, **kw: {"ok": True, "b64": _b64.b64encode(fake_zip).decode(), "size": len(fake_zip)})
+    out = c.textbook_graph_export("11026", "Excel")
+    assert out["ok"] is True and out["size"] == len(fake_zip) and out["file"].endswith(".xlsx")
+    with pytest.raises(XxtError):
+        c.textbook_graph_export("11026", "PDF")
+
+
+def test_graph_export_empty_graph_raises(cfg, monkeypatch, tmp_path):
+    import base64 as _b64
+    c = _chclient(cfg, monkeypatch)
+    cfg.download_dir = str(tmp_path)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: {"status": True, "data": "https://mooc1.chaoxing.com/x"} if "export" in js else {})
+    msg = "该课程下暂无知识点".encode("utf8")
+    monkeypatch.setattr(c.b, "eval", lambda js, **kw: {"ok": True, "b64": _b64.b64encode(msg).decode(), "size": len(msg)})
+    with pytest.raises(XxtError):
+        c.textbook_graph_export("11026", "Excel")
+
+
+def test_graph_export_credential_failure(cfg, monkeypatch, tmp_path):
+    c = _chclient(cfg, monkeypatch)
+    cfg.download_dir = str(tmp_path)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: {"status": False, "msg": "非教师无查询权限"} if "export" in js else {})
+    with pytest.raises(XxtError):
+        c.textbook_graph_export("11026", "Excel")
