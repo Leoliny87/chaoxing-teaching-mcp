@@ -411,3 +411,31 @@ def test_graph_from_chapters_empty_raises(cfg, monkeypatch):
     monkeypatch.setattr(c, "on", lambda host, js, **kw: {"success": True, "data": []} if "get-knowledge-list" in js else {})
     with pytest.raises(XxtError):
         c.textbook_graph_from_chapters("11026")
+
+
+# ------------------------------------------------ materials / question bank thin wrappers
+def test_materials_reads_list(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: [{"material_id": "m1", "title": "资料A", "type": "pdf", "info": []}] if "coursedata" in js else {})
+    out = c.textbook_materials("11026")
+    assert out["count"] == 1 and out["materials"][0]["title"] == "资料A"
+
+
+def test_bank_questions_parses_folders_and_questions(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    resp = {"status": True, "total": 2, "questionBankRelationList": [
+        {"type": 0, "id": 10, "dirName": "文件夹A", "questionCount": 3},
+        {"type": 1, "questionId": 20, "questionBank": {"content": "<p>题干<b>内容</b></p>", "courseQuestionTypeName": "单选题", "difficulty": 2}}]}
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: resp if "qbank/search" in js else {})
+    out = c.textbook_bank_questions("11026")
+    assert out["total"] == 2 and len(out["items"]) == 2
+    assert out["items"][0]["kind"] == "folder" and out["items"][0]["name"] == "文件夹A"
+    assert out["items"][1]["kind"] == "question" and out["items"][1]["stem"] == "题干 内容"
+
+
+def test_bank_questions_empty_bank(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    # empty bank: no questionBankRelationList key, only total/pageInfo
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: {"total": 0, "courseIds": [269231810], "pageInfo": {}} if "qbank/search" in js else {})
+    out = c.textbook_bank_questions("11026")
+    assert out["total"] == 0 and out["items"] == []

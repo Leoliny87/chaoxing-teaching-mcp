@@ -386,3 +386,43 @@ class TextbookOps(XxtBase):
             created += 1
         return {"ok": True, "created": created, "chapters": len(chs),
                 "note": "已按教材目录把每个章节建为知识点，名称带目录编号（如 1.1）以保留层级。新版图谱知识点不能再嵌套子知识点，故为平铺+编号。"}
+
+    # ---------------------------------------------- materials / 资料 (same backend as course materials)
+    def textbook_materials(self, id: str) -> dict:
+        ctx = self._tb_graph_ctx(id)
+        items = self.on(M2, """
+            const d=D(await F('/mooc2-ans/coursedata?courseid=%s&clazzid=0&cpi=%s&ut=t&v=6'));
+            return [...d.querySelectorAll('ul.dataBody_td[id]')].map(u=>{const li=[...u.querySelectorAll(':scope>li')].map(T).filter(x=>x&&x.length<40);
+              return {material_id:u.id,title:u.getAttribute('dataname'),type:u.getAttribute('type'),info:li.slice(-4)}});
+        """ % (ctx["courseid"], ctx["cpi"]))
+        if not isinstance(items, list):
+            raise XxtError("教材资料列表读取失败。")
+        return {"textbook": ctx["_name"], "courseId": ctx["courseid"], "count": len(items), "materials": items}
+
+    # ---------------------------------------------- question bank / 题库 (same backend as course bank)
+    def textbook_bank_questions(self, id: str, keyword: str = "", page: int = 1, size: int = 50) -> dict:
+        import html as _h
+        ctx = self._tb_graph_ctx(id)
+        body = {"courseid": ctx["courseid"], "microTopicId": 0, "cpi": ctx["cpi"], "dirId": "0", "courseIds": ctx["courseid"],
+                "qTypes": "", "eTypes": "", "difficulty": "", "sw": str(keyword or "")[:50], "pageNum": int(page),
+                "orderType": "", "orderByType": "", "orderByRight": "", "orderByName": "", "rightPercentFrom": "", "rightPercentTo": "",
+                "pageSize": int(size), "fromEdit": "", "topicIds": "", "courseTargetIds": "", "labelIds": "", "createrId": "",
+                "needHtml": "", "hideEditBtn": "", "qbanksystem": 0, "hideLockDir": "", "dirCourseId": "", "topicIdStatus": "", "status": "0"}
+        r = self.on(M2, "return await J('/mooc2-ans/qbank/search',POST(%s));" % json.dumps(body, ensure_ascii=False))
+        rows = (r.get("questionBankRelationList") if isinstance(r, dict) else None) or ((r or {}).get("data") or {}).get("questionBankRelationList")
+        if rows is None and isinstance(r, dict) and "total" in r:
+            rows = []  # empty bank: response carries total/pageInfo but no questionBankRelationList
+        if not isinstance(rows, list):
+            raise XxtError("教材题库读取失败：%s" % json.dumps(r, ensure_ascii=False)[:120])
+        out = []
+        for x in rows:
+            qb = x.get("questionBank") or {}
+            if x.get("type") == 0:
+                out.append({"kind": "folder", "id": str(x.get("id")), "name": x.get("dirName"), "questions": x.get("questionCount")})
+            else:
+                stem = _h.unescape(re.sub(r"<[^>]+>", " ", str(qb.get("content") or "")))
+                out.append({"kind": "question", "id": str(x.get("questionId") or qb.get("id")),
+                            "stem": re.sub(r"\s+", " ", stem).strip()[:120],
+                            "type": qb.get("courseQuestionTypeName"), "difficulty": qb.get("difficulty")})
+        return {"textbook": ctx["_name"], "courseId": ctx["courseid"], "total": (r or {}).get("total"),
+                "page": int(page), "items": out}

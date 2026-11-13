@@ -3180,6 +3180,19 @@ def textbook_graph_from_chapters(id: Annotated[str, Field(description="教材 id
     return client().textbook_graph_from_chapters(id)
 
 
+@tool(R, "读取数字教材的资料列表（复用课程资料后端 coursedata）。只读。")
+def textbook_materials(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")]) -> dict:
+    return client().textbook_materials(id)
+
+
+@tool(R, "读取数字教材的题库（复用课程题库后端 qbank/search，返回文件夹与题目）。只读。")
+def textbook_bank_questions(id: Annotated[str, Field(description="教材 id")],
+                            keyword: Annotated[str, Field(description="题干关键词，可留空")] = "",
+                            page: Annotated[int, Field(description="页码")] = 1,
+                            size: Annotated[int, Field(description="每页条数")] = 50) -> dict:
+    return client().textbook_bank_questions(id, keyword, page, size)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
