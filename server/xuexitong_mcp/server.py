@@ -3026,6 +3026,48 @@ def list_review_suggestions(day: Annotated[str, Field(description="日期 YYYY-M
     return {"ok": True, "count": len(rows), "items": rows}
 
 
+# ------------------------------------------------------------------ 数字教材（个人空间）
+@tool(R, "列出个人首页「数字教材」里的全部教材（名称、主编、所属单位、封面、id/courseId）。只读。")
+def list_textbooks() -> list:
+    return client().textbook_list()
+
+
+@tool(R, "读取一本数字教材的详情（先按 id 在列表定位，再取 detailEnc 调详情接口）。只读。")
+def textbook_detail(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")]) -> dict:
+    return client().textbook_detail(id)
+
+
+@tool(W, "新建一本数字教材（个人空间）：上传封面并创建。封面仅支持 PNG/JPG/GIF、1M 以下。先预演，确认后创建。")
+def create_textbook(name: Annotated[str, Field(description="教材名称")],
+                    author: Annotated[str, Field(description="主编")],
+                    cover_path: Annotated[str, Field(description="本机封面图片路径（PNG/JPG/GIF，1M 以下，建议 150*206px）")],
+                    desc: Annotated[str, Field(description="教材简介，可留空")] = "",
+                    deputy: Annotated[str, Field(description="副主编，可留空")] = "",
+                    participate: Annotated[str, Field(description="参编，可留空")] = "",
+                    unit: Annotated[str, Field(description="所属学院，可留空")] = "",
+                    confirm: Confirm = False) -> dict:
+    if not confirm:
+        return _dry(None, "新建数字教材", bind={"name": name, "author": author, "cover_path": cover_path,
+                                              "desc": desc, "deputy": deputy, "participate": participate, "unit": unit},
+                    name=name, author=author, cover_path=cover_path, desc=desc,
+                    limitation="将在个人空间创建一本新教材并上传封面；创建后学生可见，请确认名称与内容无误。")
+    return client().textbook_create(name, author, cover_path, desc, deputy, participate, unit)
+
+
+@tool(W, "删除个人空间的一本数字教材（按 id）。删除后学生将无法学习。先预演，确认后删除。")
+def delete_textbook(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")],
+                    confirm: Confirm = False) -> dict:
+    if not confirm:
+        items = client().textbook_list()
+        target = next((x for x in items if str(x.get("id")) == str(id)), None)
+        if not target:
+            raise XxtError("未找到 id=%s 的教材；请用 list_textbooks 核对。" % id)
+        return _dry(None, "删除数字教材", bind={"id": str(id)},
+                    target=target.get("name"), id=id, author=target.get("author"),
+                    limitation="删除后学生将无法学习该教材；此操作按平台删除流程执行。")
+    return client().textbook_delete(id)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
