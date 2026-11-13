@@ -3068,6 +3068,59 @@ def delete_textbook(id: Annotated[str, Field(description="教材 id（list_textb
     return client().textbook_delete(id)
 
 
+@tool(R, "读取数字教材的知识图谱（知识点列表 + 图谱页签）。教材图谱与课程图谱同一后端，只读。")
+def textbook_graph(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")],
+                   page: Annotated[int, Field(description="页码")] = 1,
+                   size: Annotated[int, Field(description="每页条数")] = 50) -> dict:
+    return client().textbook_graph(id, page, size)
+
+
+@tool(R, "读取数字教材知识图谱中某个知识点的属性（名称/类型/简介/标签/教学目标/学时）。只读。")
+def textbook_graph_point(id: Annotated[str, Field(description="教材 id")],
+                         point_id: Annotated[str, Field(description="知识点 id（textbook_graph 返回的 point_id）")]) -> dict:
+    return client().textbook_graph_point(id, point_id)
+
+
+@tool(W, "在数字教材知识图谱最外层新增一个知识点。先预演，确认后添加。")
+def textbook_graph_add_point(id: Annotated[str, Field(description="教材 id")],
+                             name: Annotated[str, Field(description="知识点名称")],
+                             kind: Annotated[str, Field(description="类型：未设置/事实性/概念性/程序性/元认知")] = "未设置",
+                             description: Annotated[str, Field(description="简介，可留空")] = "",
+                             confirm: Confirm = False) -> dict:
+    if not confirm:
+        return _dry(None, "教材图谱新增知识点", bind={"id": str(id), "name": name, "kind": kind, "description": description},
+                    textbook_id=id, name=name, kind=kind, description=description,
+                    limitation="将在该教材知识图谱最外层新增知识点；学生可见，请确认名称与内容。")
+    return client().textbook_graph_add_point(id, name, kind, description)
+
+
+@tool(W, "修改数字教材知识图谱中某知识点的属性（类型/简介/教学目标/学时，未提供的保持不变）。先预演，确认后保存。")
+def textbook_graph_set_point(id: Annotated[str, Field(description="教材 id")],
+                             point_id: Annotated[str, Field(description="知识点 id")],
+                             kind: Annotated[str, Field(description="类型，可留空=不变")] = "",
+                             description: Annotated[str, Field(description="简介，可留空=不变")] = "",
+                             teaching_target: Annotated[str, Field(description="教学目标，可留空=不变")] = "",
+                             study_hours: Annotated[str, Field(description="学时，可留空=不变")] = "",
+                             confirm: Confirm = False) -> dict:
+    if not confirm:
+        return _dry(None, "教材图谱修改知识点", bind={"id": str(id), "point_id": str(point_id), "kind": kind, "description": description,
+                                                    "teaching_target": teaching_target, "study_hours": study_hours},
+                    textbook_id=id, point_id=point_id, kind=kind or "(不变)", description=description or "(不变)",
+                    limitation="将修改该知识点属性；学生可见，请确认。")
+    return client().textbook_graph_set_point(id, point_id, kind or None, description or None, teaching_target or None, study_hours or None)
+
+
+@tool(W, "删除数字教材知识图谱中的一个知识点（含其子节点）。先预演，确认后删除。")
+def textbook_graph_delete_point(id: Annotated[str, Field(description="教材 id")],
+                                point_id: Annotated[str, Field(description="知识点 id")],
+                                confirm: Confirm = False) -> dict:
+    if not confirm:
+        return _dry(None, "教材图谱删除知识点", bind={"id": str(id), "point_id": str(point_id)},
+                    textbook_id=id, point_id=point_id,
+                    limitation="删除后学生将无法学习该知识点（含子节点）；可在平台图谱回收站恢复。")
+    return client().textbook_graph_delete_point(id, point_id)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),

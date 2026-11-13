@@ -154,3 +154,75 @@ def test_cover_rejects_bad_type_and_size(cfg, monkeypatch, tmp_path):
     big.write_bytes(b"\x89PNG\r\n\x1a\n" + b"0" * (1024 * 1024 + 1))
     with pytest.raises(XxtError):
         c._tb_upload_cover(str(big))
+
+
+# ------------------------------------------------ knowledge graph (course-graph backend reuse)
+CTX = {"courseid": "269231810", "clazzid": "0", "cpi": "14089768", "ut": "t", "_name": "[MCP测试]教材"}
+
+
+def _gclient(cfg, monkeypatch):
+    c = _client(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_tb_graph_ctx", lambda id: dict(CTX))
+    return c
+
+
+def test_graph_reads_list_and_tabs(cfg, monkeypatch):
+    c = _gclient(cfg, monkeypatch)
+    seen = []
+
+    def fake_gget(url, params):
+        seen.append((url, params))
+        if "gettopicwoodsdata" in url:
+            return {"status": True, "data": {"totalCount": 1, "topicWoodsData": [
+                {"topicId": 901, "name": "合成知识点", "topicLabelArray": [{"name": "标签A"}], "citeCount": 2, "topicDesc": "简介"}]}}
+        if "gettopicsetting" in url:
+            return {"status": True, "data": {"topicModelData": [{"name": "知识图谱"}, {"name": "知识列表"}]}}
+        return {}
+
+    monkeypatch.setattr(c, "_gget", fake_gget)
+    out = c.textbook_graph("11026")
+    assert out["total"] == 1 and out["items"][0]["point_id"] == "901"
+    assert out["items"][0]["name"] == "合成知识点" and out["graph_tabs"] == ["知识图谱", "知识列表"]
+    assert seen[0][1]["courseid"] == "269231810" and seen[0][1]["clazzid"] == "0"
+
+
+def test_graph_add_point_success_and_failure(cfg, monkeypatch):
+    c = _gclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_gget", lambda url, p: {"status": True, "data": {"topicId": 902}})
+    out = c.textbook_graph_add_point("11026", "新知识点", kind="概念性")
+    assert out["ok"] is True and out["point_id"] == "902"
+    monkeypatch.setattr(c, "_gget", lambda url, p: {"status": False, "msg": "无权限"})
+    out2 = c.textbook_graph_add_point("11026", "x")
+    assert out2["ok"] is False and out2["write_outcome"] == "not_written"
+    with pytest.raises(XxtError):
+        c.textbook_graph_add_point("11026", "x", kind="不存在的类型")
+
+
+def test_graph_point_properties(cfg, monkeypatch):
+    c = _gclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_gget", lambda url, p: {"status": True, "topicName": "知识点", "classify": 2,
+                                                   "topicDesc": "描述", "topiclabelList": [{"name": "L"}],
+                                                   "teachTarget": "目标", "studyHours": "2"})
+    out = c.textbook_graph_point("11026", "901")
+    assert out["name"] == "知识点" and out["kind"] == "概念性" and out["labels"] == ["L"]
+
+
+def test_graph_set_point_verifies_readback(cfg, monkeypatch):
+    c = _gclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_gget", lambda url, p: {"status": True, "topicName": "知识点", "classify": 3,
+                                                   "topicDesc": "新描述", "topiclabelList": [], "teachTarget": "", "studyHours": ""})
+    posted = {}
+    monkeypatch.setattr(c, "_gpost", lambda url, p: posted.update(p) or {"status": True})
+    out = c.textbook_graph_set_point("11026", "901", kind="程序性", description="新描述")
+    assert out["ok"] is True and posted["classify"] == 3 and posted["topicIds"] == "901"
+
+
+def test_graph_delete_point(cfg, monkeypatch):
+    c = _gclient(cfg, monkeypatch)
+    posted = {}
+    monkeypatch.setattr(c, "_gpost", lambda url, p: posted.update({"url": url, **p}) or {"status": True})
+    out = c.textbook_graph_delete_point("11026", "901")
+    assert out["ok"] is True and "deleteTopic" in posted["url"] and posted["topicId"] == "901"
+    monkeypatch.setattr(c, "_gpost", lambda url, p: {"status": False, "msg": "拒"})
+    out2 = c.textbook_graph_delete_point("11026", "901")
+    assert out2["ok"] is False and out2["write_outcome"] == "not_written"

@@ -6,7 +6,7 @@
 
 ## 0. 当前完成度（2026-11-09，第十轮后）
 
-注册的工具：共 219 个；教师配置 198 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+注册的工具：共 224 个；教师配置 203 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
 - 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。课程设置（学生端配置和课程设置里 20 项开关/选项/文字，含允许学生自测、视频水印、承诺书、课程通知、试读、资源下载、评价、AI 功能、课程说明）；班级设置（允许加入、加入需同意、允许退课、忽略视频拖拽、对学生隐藏、结课/取消结课、人数上限）和班级改名；把学生移出班级、从退课日志恢复、从本课另一个班添加学生；教师团队、成绩权重（经典模式读写）、加班/退课日志。
@@ -19,6 +19,7 @@
 - 通知：发送、删除、按 UUID 补记；讨论：发帖、列表、置顶/加精及取消、教师回复、删除；课程资料：上传、列表、文件夹、移进文件夹、下载权限、删除/还原/彻底删除；成绩：读取、导出 Excel 到本机。
 - 课堂活动（保存为未开始、立即开始都实测）：签到（普通/签到码）、选人、抢答、投票、主题讨论、评分、计时器、随堂练习（单选/多选/填空/判断/简答）、问卷（单选/多选/简答/判断）、分组任务（个人任务，或按分组方案分小组，可设组内/组间互评权重）、学生反馈、白板、抽签、推送课程资料、推送课件、推送教案；结束活动、活动结果。
 - 数字教材（个人首页左侧菜单，2026-11-13 实测）：列表（list_textbooks）、新建（create_textbook，上传封面+创建，预演确认）、删除（delete_textbook，按 id，预演确认）。详情（textbook_detail）返回列表情报；完整章节详情接口 getCourseDetail 尚返回 status:false，需 textbookDetail 页独立加载流程，未接入。接口均在 cv-p.chaoxing.com 同源捕获：checkWfwfid 换取 personalSpace enc、teachMaterialList、uploadFile、addTeachMaterial（表单编码）、deleteTeachMaterial（delEnc）。
+- 数字教材·知识图谱（2026-11-13 实测，教师档 +5）：教材图谱与课程图谱**同一后端**（mooc2-ans.chaoxing.com 的 coursetopic/questionBankTopic 端点，clazzid=0 读课程级结构）。读：textbook_graph（知识点列表+6 图谱页签）、textbook_graph_point（知识点属性）；写：textbook_graph_add_point / textbook_graph_set_point / textbook_graph_delete_point（均预演+确认）。真机净零循环实测：读→增→读→改→删→读全通，无残留。
 - 课件库与教案：把课程资料里的 ppt/pptx/pdf/doc/docx 加入课件库；新建教案（可带 课前/课中/课后 等段落）。
 - 教学任务：新建、发布；任务点 21 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到、自测（新建自测模板：模拟测验或刷题，随机或按题型抽题）。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
 - 读取：课程首页（待办、作业/考试/AI实践预警、学情看板、高风险学生）、学情统计（基础数据、学情统计、学习监控、课堂报告）、教学日历、下载中心、AI 助教（是否开启、知识库设置、会话列表）。
@@ -382,6 +383,13 @@
 - **真机端到端（ai395 实例 c41e7649，教师本人）**：list 返回 2 本；create_textbook 预演→执行 code:200 添加成功；delete_textbook 预演→执行 code:200 删除成功；两本 [MCP测试] 教材均已清理，列表复核仅剩原有教材。
 - **已知限制**：textbook_detail 的 getCourseDetail 返回 status:false（完整章节详情需 textbookDetail 页独立加载流程），工具如实返回列表情报+限制说明，未冒充完整详情。
 - 回归：全套 **310 通过**（含 8 个新教材测试）。教师档工具 194→198。
+
+### 2026-11-13（第十五轮）数字教材·知识图谱接入（教师档 +5，复用课程图谱后端）
+- **关键发现**：教材编辑页「知识图谱」页签打开 mooc2-ans.chaoxing.com/topic-ans/knowgraph 应用，其数据/编辑接口与课程图谱**完全同一后端**（/mooc2-ans/coursetopic/、/mooc2-ans/questionBankTopic/）。用教材 courseId 实测 getframemodeldata/gettopicwoodsdata/getmodelheadlist 均 status:True；clazzid=0 即可读课程级图谱结构（班级只影响统计）。
+- **新工具**：textbook_graph（知识点列表+6 图谱页签：知识图谱/知识列表/学习地图/问题图谱/能力图谱/课程思政图谱）、textbook_graph_point（属性读）、textbook_graph_add_point / set_point / delete_point（写，预演+confirm+plan_id）。cpi 取用户 curPersonId（cfg.cpi 或课程上下文）。
+- **真机端到端（净零循环，无残留）**：读图谱 total=0 → 增知识点 point_id=283865750 → 读属性(概念性) → 改属性(程序性) → 删知识点 → 复核 total=0，全通。
+- 回归：+5 图谱测试，全套 **315 通过**。教师档工具 198→203。
+- **多模态修复**：qwen4-max-preview 配置 input 补 image（此前仅 text 导致 read_image 拒绝）；实测模型确能读图。DSH inputModalities schema 仅 text/image，video 无通道（工具层限制，非模型能力）。
 
 
 
