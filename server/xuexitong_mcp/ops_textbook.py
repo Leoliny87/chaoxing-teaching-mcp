@@ -359,3 +359,30 @@ class TextbookOps(XxtBase):
         out = d / re.sub(r'[\\/:*?"<>|\s]+', "_", f"{ctx['_name']}-教材图谱{ext}")
         out.write_bytes(raw)
         return {"ok": True, "file": str(out), "size": len(raw), "format": fmt}
+
+    # ---------------------------------------------- build graph from the textbook chapter tree
+    # The knowledge graph is fundamentally the chapter/目录 tree set as knowledge points. This reads the
+    # textbook chapter tree and creates one knowledge point per chapter (woodsaddtopic), prefixing the
+    # 目录 number (e.g. "1.1 内容简介") so the hierarchy stays readable. NOTE: the new-version knowgraph
+    # forbids nesting knowledge points under knowledge points ("知识点下面不允许存在子集"); only 分类 can
+    # hold children, and creating 分类 needs a separate mechanism not yet wired — so points are created
+    # flat with their 目录 numbers, which is faithful and works. Uses only verified course-graph endpoints.
+    def textbook_graph_from_chapters(self, id: str) -> dict:
+        ctx = self._tb_graph_ctx(id)
+        chs = self.textbook_chapters(id)["chapters"]
+        if not chs:
+            raise XxtError("教材没有章节，无法生成知识图谱。")
+        created = 0
+        for ch in chs:
+            name = f"{ch['number']} {ch['title']}"
+            r = self._gget("/mooc2-ans/coursetopic/woodsaddtopic",
+                           {"courseid": ctx["courseid"], "cpi": ctx["cpi"], "topic": name,
+                            "classify": 0, "topicLabelIds": "", "topicDesc": ""})
+            pid = str(((r or {}).get("data") or {}).get("topicId") or "") if isinstance(r, dict) else ""
+            if not (isinstance(r, dict) and r.get("status") is True and pid.isdigit()):
+                return {"ok": False, "write_outcome": "partial", "created": created,
+                        "error": "在章节「%s」处创建知识点失败（%s）；已创建 %d 个，请用 textbook_graph 核查，勿盲目重试。"
+                                 % (ch["title"], str((r or {}).get("msg") or "")[:40], created)}
+            created += 1
+        return {"ok": True, "created": created, "chapters": len(chs),
+                "note": "已按教材目录把每个章节建为知识点，名称带目录编号（如 1.1）以保留层级。新版图谱知识点不能再嵌套子知识点，故为平铺+编号。"}

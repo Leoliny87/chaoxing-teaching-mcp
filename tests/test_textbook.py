@@ -359,3 +359,55 @@ def test_graph_export_credential_failure(cfg, monkeypatch, tmp_path):
     monkeypatch.setattr(c, "on", lambda host, js, **kw: {"status": False, "msg": "非教师无查询权限"} if "export" in js else {})
     with pytest.raises(XxtError):
         c.textbook_graph_export("11026", "Excel")
+
+
+# ------------------------------------------------ build graph from chapter tree
+def test_graph_from_chapters_builds_hierarchy(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: _tree() if "get-knowledge-list" in js else {})
+    state = {"names": [], "sort_called": False}
+
+    def fake_gget(url, p):
+        if "woodsaddtopic" in url:
+            state["names"].append(p["topic"])
+            return {"status": True, "data": {"topicId": 900 + len(state["names"])}}
+        return {}
+
+    def fake_gpost(url, p):
+        if "updatetopicsort" in url:
+            state["sort_called"] = True
+        return {"status": True}
+
+    monkeypatch.setattr(c, "_gget", fake_gget)
+    monkeypatch.setattr(c, "_gpost", fake_gpost)
+    out = c.textbook_graph_from_chapters("11026")
+    assert out["ok"] is True and out["created"] == 3 and out["chapters"] == 3
+    # flat + 目录编号, no nesting (new-version graph forbids nested knowledge points)
+    assert state["names"] == ["1 第一章", "1.1 第一节", "2 第二章"]
+    assert state["sort_called"] is False
+
+
+def test_graph_from_chapters_partial_failure(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: _tree() if "get-knowledge-list" in js else {})
+    state = {"n": 0}
+
+    def fake_gget(url, p):
+        if "woodsaddtopic" in url:
+            state["n"] += 1
+            if state["n"] == 2:
+                return {"status": False, "msg": "限流"}
+            return {"status": True, "data": {"topicId": 900 + state["n"]}}
+        return {}
+
+    monkeypatch.setattr(c, "_gget", fake_gget)
+    monkeypatch.setattr(c, "_gpost", lambda url, p: {"status": True})
+    out = c.textbook_graph_from_chapters("11026")
+    assert out["ok"] is False and out["write_outcome"] == "partial" and out["created"] == 1
+
+
+def test_graph_from_chapters_empty_raises(cfg, monkeypatch):
+    c = _chclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: {"success": True, "data": []} if "get-knowledge-list" in js else {})
+    with pytest.raises(XxtError):
+        c.textbook_graph_from_chapters("11026")

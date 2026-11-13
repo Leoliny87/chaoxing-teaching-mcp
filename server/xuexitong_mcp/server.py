@@ -3168,6 +3168,18 @@ def textbook_graph_export(id: Annotated[str, Field(description="教材 id（list
     return client().textbook_graph_export(id, fmt)
 
 
+@tool(W, "按数字教材的目录章节生成知识图谱：每个章节建为一个知识点，名称带目录编号（如 1.1）以保留层级。新版图谱知识点不能嵌套子知识点，故为平铺+编号。先预演，确认后生成。")
+def textbook_graph_from_chapters(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")],
+                                 confirm: Confirm = False) -> dict:
+    if not confirm:
+        chs = client().textbook_chapters(id)["chapters"]
+        return _dry(None, "按教材章节生成知识图谱", bind={"id": str(id)},
+                    textbook_id=id, chapter_count=len(chs),
+                    top_level=[c["title"] for c in chs if c["parent_id"] == "0"][:12],
+                    limitation="将为每个章节创建一个知识点（名称带目录编号，平铺）；学生可见。若图谱已有知识点会叠加，请先确认。")
+    return client().textbook_graph_from_chapters(id)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
