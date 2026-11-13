@@ -76,6 +76,23 @@ def test_list_non200_raises(cfg, monkeypatch):
         c.textbook_list()
 
 
+def test_detail_flat_fields_consistent_with_list(cfg, monkeypatch):
+    c = _client(cfg, monkeypatch)
+
+    def fake_on(host, body, **kw):
+        if "teachMaterialList" in body:
+            return LIST_RESP
+        return {"status": False}  # getCourseDetail limitation path
+
+    monkeypatch.setattr(c, "on", fake_on)
+    out = c.textbook_detail("11027")
+    # flat fields match textbook_list's shape
+    assert out["name"] == "[MCP测试]数字教材" and out["author"] == "林云"
+    assert out["id"] == 11027 and out["courseId"] == 269234271
+    assert out["item"]["courseName"] == "[MCP测试]数字教材"
+    assert "limitation" in out  # getCourseDetail status:false documented
+
+
 def test_enc_exchange(cfg, monkeypatch):
     c = make_client(cfg)
     monkeypatch.setattr(c, "_tb_portal_enc", lambda: "portalenc999")

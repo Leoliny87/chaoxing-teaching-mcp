@@ -417,6 +417,12 @@
 - 实测确认教材资料(coursedata)/题库(qbank/search)与课程同后端，薄封装复用，不重做。
 - 新工具：textbook_materials、textbook_bank_questions（只读）。修复空题库响应缺 questionBankRelationList 键的误判。
 - 回归：+3 测试，全套 **329 通过**。教师档 209→211。教材工具累计 17。
+
+### 2026-11-13（第二十轮）教材工具全面验收 + 一致性优化
+- **全面验收 17/17 真机通过**：6 读工具（列表/详情/章节树/资料/题库/图谱）+ 知识点增改删、章节增改删净零循环 + 章节建图谱(建49→清理归零) + 图谱导出(4099字节有效xlsx) + 建删教材(建id=11042→删→不可见)，全部无残留。
+- **优化**：textbook_detail 原返回嵌套 item.courseName，与 textbook_list 扁平 name 不一致；统一为扁平 id/courseId/name/author/cover/unit（保留嵌套 item/detail），真机验证与 list 完全一致。
+- **待补（真实缺口）**：教材讨论/课件/统计薄封装被"教材班级 id 程序化解析"卡住——数字教材班级是平台自动生成的特殊班级，标准 tcm/clazz-manage 返回空；base-info 需真实 clazzid（图谱 URL 里的 159821665 可用，但无法从教材列表程序化取得）。同步他课导入依赖 createtopictask 运行时参数（动态 knowgraph 子上下文），均暂缓。
+- 回归：+1 detail 一致性测试，全套 **330 通过**。
 - **C2 导入攻坚记录**：完整导入链路已逆向（createtopictask/getimportcoursehead/importknoeledgepoint/syncothercoursetopic+state轮询），但 createtopictask 运行时精确参数在动态载入的 knowgraph 子上下文发出，顶层拦截器/tab捕获够不到，文件类4种导入暂缓；同步他课参数已基本拿全。
 
 

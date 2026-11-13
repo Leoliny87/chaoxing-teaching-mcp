@@ -85,7 +85,9 @@ class TextbookOps(XxtBase):
         de = item.get("detailEnc")
         r = self.on(CV, "return await J('/personalSpace/getCourseDetail?enc=' + encodeURIComponent(%s) + '&code=' + %s + '&courseId=' + %s);"
                     % (json.dumps(de), json.dumps(str(id)), json.dumps(str(item.get("courseId")))))
-        out = {"item": {k: item.get(k) for k in ("id", "courseId", "courseName", "courseAuthor", "coursePic", "courseUnitName")},
+        out = {"id": item.get("id"), "courseId": item.get("courseId"), "name": item.get("courseName"),
+               "author": item.get("courseAuthor"), "cover": item.get("coursePic"), "unit": item.get("courseUnitName"),
+               "item": {k: item.get(k) for k in ("id", "courseId", "courseName", "courseAuthor", "coursePic", "courseUnitName")},
                "detail": r}
         if not (isinstance(r, dict) and r.get("status") is not False):
             out["limitation"] = ("列表级信息已返回；getCourseDetail 未返回完整详情（status:false）。"
