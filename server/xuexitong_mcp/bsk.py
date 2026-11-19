@@ -500,7 +500,7 @@ class Bsk:
     # ------------------------------------------------------------------ action runner
     def _act(self, build, *, retry_safe: bool, need_obs: bool, timeout: float | None = None, full_obs: bool = False):
         last: BskError | None = None
-        for attempt in range(1):
+        for attempt in range(2):
             # Use the latest receipt. An incremental sync need not include text;
             # sync() clears cached labels in that case instead of guessing.
             try:
@@ -522,6 +522,11 @@ class Bsk:
                 last = e
                 e.xxt_stage = "dispatch"
                 e.xxt_operation = args[0] if args and args[0] in ("navigate", "evaluate", "click", "press", "fill") else "other"
+                # A stale-observation denial dispatches NOTHING (effect_state=none),
+                # so re-syncing and retrying once is replay-safe. Every other
+                # denial / error remains final (no blind retries).
+                if attempt == 0 and e.code == "permission_denied" and (e.data or {}).get("reason") == "observation_changed":
+                    continue
                 raise
         raise last  # type: ignore[misc]
 

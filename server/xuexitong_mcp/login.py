@@ -222,17 +222,24 @@ class LoginAutomator:
         # - anywhere else: navigate with the sync-based high-level method
         #   (fresh context per action), never the raw context-less command.
         from urllib.parse import urlsplit
-        if not parked_on_login and not self._on_login_page():
-            cur = ""
+
+        def live_host() -> str:
             try:
-                cur = str(self.b.href() or "")
+                return urlsplit(str(self.b.href() or "")).hostname or ""
             except BskError:
-                cur = ""
-            host = urlsplit(cur).hostname or ""
+                return ""
+
+        # Decide from the LIVE url, never the cached one: after a successful login
+        # the tab redirects home while the cache still says passport/login, which
+        # previously made us fill a non-existent #phone form (selector_not_found).
+        if not parked_on_login:
+            host = live_host()
             if host == HOME_HOST:
-                return
+                return  # profile already logged in; there is no form to fill
             if host != "passport2.chaoxing.com":
                 self.b.navigate(LOGIN_URL, wait="domcontentloaded", readiness=False)
+                if live_host() == HOME_HOST:
+                    return  # login URL bounced home => session already valid
         time.sleep(3.5)
         last = None
         for _ in range(retries):
@@ -243,6 +250,10 @@ class LoginAutomator:
                 return
             except BskError as e:
                 last = e
+                # Form disappeared because the profile is already logged in
+                # (redirect home): that is success, not a failure.
+                if live_host() == HOME_HOST:
+                    return
                 time.sleep(2.0)
         raise last
 
@@ -279,6 +290,16 @@ def _remember_account(cfg, account: str) -> None:
 
 
 def run_login(cfg, bsk, store=None, open_browser: bool = True) -> dict:
+    # Idempotent: if the browser profile is already logged in (cookies persist even
+    # after logout clears the keyring), do NOT open the credential form or touch a
+    # login form — report success immediately.
+    try:
+        cur = str(bsk.href() or "")
+    except Exception:
+        cur = ""
+    if HOME_HOST in cur:
+        return {"ok": True, "account": cfg.login_account, "url": cur,
+                "needs_slider": False, "stage": "already_logged_in"}
     store = store if store is not None else CredentialStore()
     account = cfg.login_account
     password = store.get_password(account) if account else None
