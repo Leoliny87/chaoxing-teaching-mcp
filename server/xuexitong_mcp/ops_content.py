@@ -121,15 +121,22 @@ class ContentOps(XxtBase):
     # ================================================================ assignments
     def assignments(self, course: str) -> list[dict]:
         c = self.ctx(course)
+        # The work/list page scopes by selectClassid (+cpi+status), NOT clazzid: a
+        # clazzid param is ignored and always returns the default class, which made
+        # publish-verification blind to other classes (e.g. "test") and caused false
+        # "unknown" + duplicate publishes. Iterate every class with the real params.
+        us = [f"/mooc2-ans/work/list?courseid={c.id}&selectClassid={x['clazz_id']}&cpi={c.cpi}&status=-1&v=0&ut=t" for x in c.classes] or \
+             [f"/mooc2-ans/work/list?{self.q(c)}"]
         return self.on(M2, f"""
-            const d=D(await F('/mooc2-ans/work/list?{self.q(c)}'));
-            return [...d.querySelectorAll('.taskList li[id^=work]')].map(li=>{{
-              const v=(li.querySelector('.list_li_tit')?.getAttribute('onclick')||'').match(/viewWork\\('([^']*)','([^']*)','([^']*)'\\)/)||[];
-              const cnt=T(li.querySelector('.piyuePcon'));
-              return {{id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),
-                time:T(li.querySelector('.list_li_time')).replace('作答时间：',''),library_id:v[1]||'',relation_id:v[2]||'',clazz_id:v[3]||'',
-                pending:(cnt.match(/(\\d+)\\s*待批/)||[])[1],submitted:(cnt.match(/(\\d+)\\s*已交/)||[])[1],unsubmitted:(cnt.match(/(\\d+)\\s*未交/)||[])[1]}};
-            }});
+            const out=[], seen=new Set();
+            for(const u of {json.dumps(us)}){{ const d=D(await F(u));
+              for(const li of d.querySelectorAll('.taskList li[id^=work]')){{ if(seen.has(li.id)) continue; seen.add(li.id);
+                const v=(li.querySelector('.list_li_tit')?.getAttribute('onclick')||'').match(/viewWork\\('([^']*)','([^']*)','([^']*)'\\)/)||[];
+                const cnt=T(li.querySelector('.piyuePcon'));
+                out.push({{id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),
+                  time:T(li.querySelector('.list_li_time')).replace('作答时间：',''),library_id:v[1]||'',relation_id:v[2]||'',clazz_id:v[3]||'',
+                  pending:(cnt.match(/(\\d+)\\s*待批/)||[])[1],submitted:(cnt.match(/(\\d+)\\s*已交/)||[])[1],unsubmitted:(cnt.match(/(\\d+)\\s*未交/)||[])[1]}}); }} }}
+            return out;
         """)
 
     def _find_assignment(self, c: Course, a: str) -> dict:

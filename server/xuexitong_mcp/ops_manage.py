@@ -97,10 +97,26 @@ class ManageOps(XxtBase):
     def _rows(self, kind: str, c, binned: bool = False, folder: str = "0") -> list[dict]:
         cid, cpi, clz = _safe_id(c.id), _safe_id(c.cpi), _safe_id(c.clazz_id)
         if kind == "作业":
-            u = (f"/mooc2-ans/work/list?courseid={cid}&selectClassid=0&recycle=1&cpi={cpi}&v=0&topicid=0&from=" if binned
-                 else f"/mooc2-ans/work/list?{self.q(c)}")
-            js = """const d=D(await F(%s)); if(!d.querySelector('#recycle')) return null;
-                return [...d.querySelectorAll('.taskList li[id^=work]')].map(li=>({id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class'))}));"""
+            # work/list (and its bin) scope by selectClassid; read every class so
+            # delete/restore/verify are not blind to non-default classes (e.g. "test").
+            # clazz_id comes from the viewWork onclick so delete can target the right class.
+            parse = """const v=(li.querySelector('.list_li_tit')?.getAttribute('onclick')||'').match(/viewWork\\('([^']*)','([^']*)','([^']*)'\\)/)||[];
+                      out.push({id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),clazz_id:v[3]||''});"""
+            if binned:
+                us = [f"/mooc2-ans/work/list?courseid={cid}&selectClassid={_safe_id(x['clazz_id'])}&recycle=1&cpi={cpi}&v=0&topicid=0&from=" for x in c.classes] or \
+                     [f"/mooc2-ans/work/list?courseid={cid}&selectClassid=0&recycle=1&cpi={cpi}&v=0&topicid=0&from="]
+            else:
+                us = [f"/mooc2-ans/work/list?courseid={cid}&selectClassid={_safe_id(x['clazz_id'])}&cpi={cpi}&status=-1&v=0&ut=t" for x in c.classes] or \
+                     [f"/mooc2-ans/work/list?{self.q(c)}"]
+            r = self.on(M2, """
+                const out=[], seen=new Set();
+                for(const u of %s){ const d=D(await F(u)); if(!d.querySelector('#recycle')) return null;
+                  for(const li of d.querySelectorAll('.taskList li[id^=work]')){ if(seen.has(li.id)) continue; seen.add(li.id);
+                    %s } }
+                return out;""" % (json.dumps(us), parse))
+            if not isinstance(r, list):
+                raise XxtError(f"作业{'回收站' if binned else '列表'}读取失败或结构不完整；没有继续。")
+            return r
         elif kind == "考试":
             # the exam list (and its bin) only shows the class named in clazzid: read every class
             us = [(f"/mooc2-ans/exam/test?courseid={cid}&ut=&cpi={cpi}&clazzid={_safe_id(x['clazz_id'])}&recyle=1&topicid=0" if binned
@@ -143,12 +159,14 @@ class ManageOps(XxtBase):
         c = self.ctx(course)
         return {"kind": kind, "items": self._rows(kind, c, binned=True)}
 
-    def _bin_request(self, kind: str, c, item_id: str, action: str) -> str:
+    def _bin_request(self, kind: str, c, item_id: str, action: str, clz_override: str | None = None) -> str:
         """JS for delete (to the bin) / restore / purge of one item."""
-        cid, cpi, clz, i = _safe_id(c.id), _safe_id(c.cpi), _safe_id(c.clazz_id), _safe_id(item_id)
+        cid, cpi, clz, i = _safe_id(c.id), _safe_id(c.cpi), _safe_id(clz_override or c.clazz_id), _safe_id(item_id)
         if kind == "作业":
             flag = {"delete": 1, "restore": 0}[action]
-            return f"return await J('/mooc2-ans/work/delete?courseid={cid}&classid=0&id={i}&recycle={flag}&cpi={cpi}');"
+            # /work/delete requires classid = the work's OWN class (selectClassid);
+            # classid=0 / the default class returns a stub success without deleting.
+            return f"return await J('/mooc2-ans/work/delete?courseid={cid}&classid={clz}&id={i}&recycle={flag}&cpi={cpi}');"
         if kind == "考试":
             flag = {"delete": 1, "restore": 0}[action]
             return f"return await J('/mooc2-ans/exam/test/delete-test?id={i}&courseid={cid}&clazzid={clz}&ut=t&cpi={cpi}&recyle={flag}');"
@@ -171,9 +189,15 @@ class ManageOps(XxtBase):
         c = self.ctx(course)
         before = self._rows(kind, c)
         t = _best(before, target_id, key="title", id_keys=("id",))
-        r = self.on(M2, self._bin_request(kind, c, t["id"], "delete"), retry_safe=False)
-        after, binned = self._rows(kind, c), self._rows(kind, c, binned=True)
-        ok, why = moved_check([x["id"] for x in before], [x["id"] for x in after], [x["id"] for x in binned], str(t["id"]))
+        r = self.on(M2, self._bin_request(kind, c, t["id"], "delete", clz_override=t.get("clazz_id")), retry_safe=False)
+        # Propagation can lag a beat; re-check a few times before declaring unknown.
+        ok, why, after, binned = False, "", [], []
+        for _ in range(3):
+            after, binned = self._rows(kind, c), self._rows(kind, c, binned=True)
+            ok, why = moved_check([x["id"] for x in before], [x["id"] for x in after], [x["id"] for x in binned], str(t["id"]))
+            if ok:
+                break
+            time.sleep(2)
         refused = isinstance(r, dict) and r.get("status") is False and any(x["id"] == t["id"] for x in after)
         out = {"ok": ok, "kind": kind, "deleted": t["title"], "id": t["id"], "in_recycle_bin": ok, "note": "可用 restore_deleted 从回收站还原"}
         if not ok:
@@ -190,7 +214,7 @@ class ManageOps(XxtBase):
         t = _best(before_bin, target_id, key="title", id_keys=("id",))
         if action == "purge" and t.get("purgeable") is False:
             raise XxtError("这份试卷还被考试引用（包括回收站里的考试），平台不允许彻底删除；没有删除。")
-        r = self.on(M2, self._bin_request(kind, c, t["id"], action), retry_safe=False)
+        r = self.on(M2, self._bin_request(kind, c, t["id"], action, clz_override=t.get("clazz_id")), retry_safe=False)
         after_bin, listed = self._rows(kind, c, binned=True), self._rows(kind, c)
         ids_bin = [x["id"] for x in after_bin]
         if action == "restore":
