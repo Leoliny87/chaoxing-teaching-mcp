@@ -215,3 +215,44 @@ def test_collect_credentials_rejects_bad_token(monkeypatch):
     th.join(timeout=6)
     assert isinstance(out.get("error"), L.LoginError)  # timed out, nothing stored
     assert store.creds == {}
+
+
+def test_run_login_not_fooled_by_refer_param(monkeypatch):
+    # The passport login URL carries refer/returnUrl containing i.mooc.chaoxing.com;
+    # a substring match falsely reported already_logged_in (live bug 2026-11-19).
+    cfg = Config()
+    cfg.login_account = "13800000000"
+
+    class Store:
+        def get_password(self, a):
+            return "secret"
+
+        def set_password(self, a, p):
+            pass
+
+        def delete_password(self, a):
+            pass
+
+    class ReferBsk(FakeBsk):
+        def href(self):
+            return "https://passport2.chaoxing.com/login?refer=https%3A%2F%2Fi.mooc.chaoxing.com%2Fspace%2Findex"
+
+        def eval(self, js, **kw):
+            if "location.href" in js:
+                return "https://i.mooc.chaoxing.com/space/index" if self.fills else self.href()
+            return True
+
+    monkeypatch.setattr(L, "collect_credentials", lambda *a, **k: pytest.fail("should not open form"))
+    b = ReferBsk()
+    r = L.run_login(cfg, b, store=Store(), open_browser=False)
+    assert r["stage"] != "already_logged_in"
+    assert ("#phone", "13800000000") in b.fills
+
+
+def test_wait_until_logged_in_ignores_refer_param():
+    class B:
+        def eval(self, js, **kw):
+            return "https://passport2.chaoxing.com/login?refer=https://i.mooc.chaoxing.com/space/index"
+
+    r = L.LoginAutomator(B()).wait_until_logged_in(timeout=0.1, poll=0.05)
+    assert r["ok"] is False

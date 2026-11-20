@@ -258,11 +258,12 @@ class LoginAutomator:
         raise last
 
     def wait_until_logged_in(self, timeout: float = 180, poll: float = 2) -> dict:
+        from urllib.parse import urlsplit
         deadline = time.time() + timeout
         url = ""
         while time.time() < deadline:
             url = self.b.eval("return location.href") or ""
-            if HOME_HOST in url:
+            if urlsplit(url).hostname == HOME_HOST:
                 return {"ok": True, "url": url, "needs_slider": False}
             time.sleep(poll)
         return {"ok": False, "url": url, "needs_slider": "passport2" in url}
@@ -297,7 +298,10 @@ def run_login(cfg, bsk, store=None, open_browser: bool = True) -> dict:
         cur = str(bsk.href() or "")
     except Exception:
         cur = ""
-    if HOME_HOST in cur:
+    # Compare the HOSTNAME, not a substring: the passport login URL carries a
+    # refer/returnUrl param containing i.mooc.chaoxing.com, which substring-matched
+    # and falsely reported "already logged in" while parked on the login page.
+    if urllib.parse.urlsplit(cur).hostname == HOME_HOST:
         return {"ok": True, "account": cfg.login_account, "url": cur,
                 "needs_slider": False, "stage": "already_logged_in"}
     store = store if store is not None else CredentialStore()
