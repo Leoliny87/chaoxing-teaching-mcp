@@ -73,18 +73,39 @@ class ReviewOps(XxtBase):
             const top=[...d.querySelectorAll('.mark_item1[id^=index_]')];
             if(!top.length) return null;
             const txt=e=>(e.innerText||e.textContent||'').replace(/[ \\t]+/g,' ');
+            // Attachment answers (video/audio/file via insertCloud iframe, or inline img)
+            // carry no text; capture them so they are not reported as an empty answer.
+            const atts=e=>{const out=[];
+              e.querySelectorAll('iframe').forEach(f=>{const src=f.getAttribute('src')||'';
+                const m=src.match(/objectid=([0-9a-f]{32})/i);
+                const oid=f.getAttribute('objectid')||(m?m[1]:'')||((f.getAttribute('data')||'').match(/^[0-9a-f]{32}$/i)?f.getAttribute('data'):'');
+                if(!oid) return;
+                const fname=f.getAttribute('filename')||f.getAttribute('name')||'';
+                const ftype=f.getAttribute('filetype')||((fname.split('.').pop()||'').toLowerCase());
+                out.push({kind:'cloud',objectid:oid,filename:fname,filetype:ftype});});
+              e.querySelectorAll('.stuAnswerWords img, .studentAns img').forEach(i=>{const s=i.getAttribute('src')||''; if(s&&!/\\/images\\/|popClose|eidt\\.png/.test(s)) out.push({kind:'image',url:s});});
+              return out;};
             const one=e=>({name:T(e.querySelector('.mark_name')),text:txt(e).slice(0,20000),
-              score:(e.querySelector('.questionScore')||{}).value||'',children:[]});
-            return top.map(e=>{const o=one(e); const kids=[...e.querySelectorAll('.mark_item1')].filter(k=>k!==e);
-              if(kids.length){o.children=kids.map(one); o.text=txt(e.querySelector('.mark_name')||e).slice(0,2000)} return o});
+              score:(e.querySelector('.questionScore')||{}).value||'',attachments:atts(e),children:[]});
+            const objs=top.map(e=>{const o=one(e); const kids=[...e.querySelectorAll('.mark_item1')].filter(k=>k!==e);
+              if(kids.length){o.children=kids.map(one); o.text=txt(e.querySelector('.mark_name')||e).slice(0,2000); o.attachments=[];} return o});
+            for(const o of objs){ for(const a of [...o.attachments, ...o.children.flatMap(k=>k.attachments)]){
+              if(a.kind==='cloud'){ try{ const j=await (await fetch('/ananas/status/'+a.objectid,{credentials:'include'})).json();
+                a.download_url=j.http||j.mp3||j.download||''; a.screenshot=j.screenshot||''; a.duration=j.duration||null; }catch(err){ a.download_url=''; } } } }
+            return objs;
         """ % url)
         if not isinstance(raw, list):
             raise XxtError("批阅页结构不完整，没有读到题目。")
         qs = []
         for x in raw:
             q = parse_item(x.get("name") or "", x.get("text") or "")
+            if x.get("attachments"):
+                q["attachments"] = x["attachments"]
             if x.get("children"):
                 q["children"] = [parse_item(k.get("name") or "", k.get("text") or "") for k in x["children"]]
+                for kq, kx in zip(q["children"], x["children"]):
+                    if kx.get("attachments"):
+                        kq["attachments"] = kx["attachments"]
                 q.pop("student_answer", None)
                 q.pop("reference_answer", None)
             if str(x.get("score") or "").strip():
