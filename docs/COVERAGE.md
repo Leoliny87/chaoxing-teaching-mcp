@@ -434,6 +434,13 @@
 - **新工具**：textbook_discussions / textbook_coursewares / textbook_learning_stats（只读，复用课程后端，班级上下文带缓存）。
 - **真机实测**：班级解析 clazzid=159821665/bbsid=14399ace；讨论 count=10 真实帖子；课件端点通（该教材空）；统计基础数据/课堂报告均返回数据。
 - 回归：+6 测试，全套 **337 通过**。教师档 211→214，教材工具累计 20。
+
+### 2026-11-22（第二十二轮）浏览器会话用完即关（清理固化）
+- **问题**：探索自建会话与 MCP 会话用后未关，留下多余浏览器窗口。
+- **根因**：__main__ 已接 atexit/finally 调 shutdown()，但 Bsk.stop() 只关 owned 标签、从不停会话，且多处提前 return → 会话滞留到闲置回收。
+- **修复**：Bsk.stop() 关标签后一并 session stop（preserve_tab 时保留以便对账）；已清理本次全部自建会话（joqp/qami 等，实例会话数归 0，用户 GUI 标签未动）。
+- **固化**：README 增「浏览器会话清理（用完即关）」约定——服务退出自动清理 + 手动探索会话必须 bsk session stop 收尾 + 不碰 user 标签。
+- 回归：+2 stop 测试，全套 **339 通过**。
 - **仍待补**：同步他课导入（createtopictask 运行时参数在动态 knowgraph 子上下文）。
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。

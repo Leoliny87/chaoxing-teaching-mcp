@@ -99,3 +99,40 @@ def test_live_tab_error_still_protected_by_preserve_tab(cfg, monkeypatch, code, 
         b.ensure_session(renew_idle_readonly=True)
     assert b.session == "sessOLD"
     assert b.preserve_tab is True
+
+
+def test_stop_closes_tab_and_stops_session(cfg, monkeypatch):
+    b = Bsk(cfg)
+    b.session = "sessOLD1"
+    b.tab = 42
+    calls = []
+
+    def run(args, timeout=None, session=True):
+        calls.append(args)
+        if args[:2] == ["tab", "list"]:
+            return {"tabs": [{"tab_id": 42, "scope": "agent"}]}
+        if args[:2] == ["cooperate", "sync"]:
+            return {"tab_id": 42, "state": {"mode": "ready"}, "context_id": "c1", "observation_id": "o1"}
+        if args[:2] == ["tab", "close"]:
+            return {"tab_id": 42}
+        if args[:2] == ["session", "stop"]:
+            return {"stopped": ["sessOLD1"]}
+        return {}
+
+    monkeypatch.setattr(b, "run", run)
+    b.stop()
+    assert ["tab", "close", "42", "--context", "c1", "--observation", "o1"] in calls
+    assert ["session", "stop", "sessOLD1"] in calls  # session must not linger
+    assert b.session is None and b.tab is None
+
+
+def test_stop_preserve_tab_keeps_session(cfg, monkeypatch):
+    b = Bsk(cfg)
+    b.session = "sessOLD2"
+    b.tab = 43
+    b.preserve_tab = True
+    calls = []
+    monkeypatch.setattr(b, "run", lambda args, timeout=None, session=True: calls.append(args) or {})
+    b.stop()
+    assert not any(a[:2] == ["session", "stop"] for a in calls)
+    assert b.session == "sessOLD2"  # preserved for reconciliation

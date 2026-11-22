@@ -406,31 +406,34 @@ class Bsk:
         return self.tab
 
     def stop(self):
-        """Close only this owned tab once, using current normal control receipts."""
+        """On shutdown: close the owned tab AND stop the session so no automation window lingers.
+
+        Both are left intact when preserve_tab is set (a write outcome / editor state still needs
+        deliberate reconciliation). Tab close and session stop are each best-effort and never retried.
+        """
         with self.lock:
             if self._shutdown_attempted or not self.session:
                 return
             self._shutdown_attempted = True
             if self.preserve_tab:
-                self.log.warning("Leaving owned task tab available: write outcome or editor state needs reconciliation")
+                self.log.warning("Leaving owned task tab/session available: write outcome or editor state needs reconciliation")
                 return
-            if not isinstance(self.tab, int):
-                return
+            sess = self.session
+            if isinstance(self.tab, int):
+                try:
+                    tabs = self.run(["tab", "list", "--scope", "agent"]).get("tabs", [])
+                    if any(x.get("tab_id") == self.tab and x.get("scope") == "agent" for x in tabs if isinstance(x, dict)):
+                        d = self.run(["cooperate", "sync", "--tab-id", str(self.tab)])
+                        state = d.get("state") or {}
+                        if (d.get("tab_id") == self.tab and state.get("mode") == "ready" and not state.get("editing")
+                                and not d.get("activity") and d.get("context_id") and d.get("observation_id")):
+                            self.run(["tab", "close", str(self.tab), "--context", d["context_id"], "--observation", d["observation_id"]])
+                except BskError as e:
+                    self.log.warning("Tab cleanup stopped without retry: %s", e.code)
             try:
-                tabs = self.run(["tab", "list", "--scope", "agent"]).get("tabs", [])
-                if not any(x.get("tab_id") == self.tab and x.get("scope") == "agent" for x in tabs if isinstance(x, dict)):
-                    return
-                d = self.run(["cooperate", "sync", "--tab-id", str(self.tab)])
-                state = d.get("state") or {}
-                if (d.get("tab_id") != self.tab or state.get("mode") != "ready" or state.get("editing") or d.get("activity")
-                        or not d.get("context_id") or not d.get("observation_id")):
-                    return
-                closed = self.run(["tab", "close", str(self.tab), "--context", d["context_id"], "--observation", d["observation_id"]])
-                if closed.get("tab_id") != self.tab:
-                    return
+                self.run(["session", "stop", sess], session=False, timeout=20)
             except BskError as e:
-                self.log.warning("Cleanup stopped without retry: %s", e.code)
-                return
+                self.log.warning("Session cleanup stopped without retry: %s", e.code)
             self.session = None
             self.tab = None
             self._save_state()

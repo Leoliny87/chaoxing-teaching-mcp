@@ -78,6 +78,15 @@ python -I scripts/launch_stdio.py schedule         # 打印每日自动更新要
 
 `python -m xuexitong_mcp --list-tools` 会按当前角色列出工具。
 
+## 浏览器会话清理（用完即关）
+
+本 MCP 经 BrowserSkill（bsk）驱动本机 Chrome，会创建自动化会话与标签。为避免留下多余的浏览器窗口：
+
+- **服务退出自动清理**：`Bsk.stop()` 在服务器退出（atexit / finally）时关闭自有标签并 `session stop` 停止会话；仅当 `preserve_tab`（写结果/编辑态待对账）时保留。
+- **手动探索会话必须收尾**：凡用 `bsk session start` 自建的探索会话，任务结束后务必 `bsk session stop <session_id>` 归还；不要遗留。可用 `bsk session list` 核对活跃会话，`bsk status` 查看实例会话数。
+- **不碰用户标签**：清理只针对 agent 自建会话/标签；用户自己的窗口与标签（scope=user，如宿主 GUI）绝不关闭。
+- 会话另有约 5 分钟闲置自动回收兜底，但不应依赖它——主动收尾是约定。
+
 ## 文件与许可证
 
 `MANIFEST.sha256` 列出本次发布文件的 SHA256（不包含清单自身）。除本 README 与新清单外，运行代码及模板均保持交接快照中的原字节，本次未修复或替换运行逻辑。
