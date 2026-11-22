@@ -78,17 +78,17 @@ python -I scripts/launch_stdio.py schedule         # 打印每日自动更新要
 
 `python -m xuexitong_mcp --list-tools` 会按当前角色列出工具。
 
-## 浏览器自动重连（Wayland 会话必读）
+## 浏览器自动重连（官方启动入口）
 
-Chrome 158 在 Wayland 会话默认走 Wayland 原生窗口，BrowserSkill 扩展的 MV3 service worker 在该模式下不主动连 daemon，导致 bsk 实例反复掉线、重启也不自动重连。**根治办法：以 `--ozone-platform=x11`（Xwayland）启动 Chrome**，扩展启动即自动连 daemon，免人工点扩展弹窗。
-
-`scripts/browser_watchdog.py` 守护脚本据此自动重连：周期检查所需 bsk 实例，缺失时以 X11 重开对应 profile。可注册为 systemd 用户服务持久运行：
+教师/学生 Chrome 由本机官方入口补开，遵循 `$DSH_HOME/AGENTS.md`「ai395 上打开教师和学生 Chrome」：
 
 ```
-systemctl --user enable --now xuexitong-browser-watchdog.service
+/home/linyun/.local/bin/ai395-open-learning-chrome both      # 或 teacher / student 只补开一个
 ```
 
-守护仅管理本 MCP 自建的自动化 profile（教师 dsh-browser-skill-profile / 学生 dsh-browser-skill-profile-student），不触碰用户自己的浏览器。学生 profile 需用 `--load-extension` 加载 BSK 扩展副本（bsk-student-ext）。
+该入口用桌面用户 systemd + 原有独立 Chrome 资料（教师 dsh-browser-skill-profile、学生 dsh-browser-skill-profile-student），由本机 Wayland 桌面打开，已运行的资料直接复用。**不要**用 `--ozone-platform=x11`、`--restart-stale`，也不要杀 Chrome 或删资料锁来排查扩展（Chrome 158 会忽略旧学生配置的 `--load-extension`）。
+
+`scripts/browser_watchdog.py`（systemd 用户服务 `xuexitong-browser-watchdog.service`）周期调用官方入口补开缺失 Chrome；扩展掉线时保留已有窗口。Chrome 启动与 BrowserSkill 接入分别核验：教师历史实例 `c41e7649`、学生 `1e1e4951`，先核对 `bsk browsers --json`；目标离线时停止该角色自动化，不以其他同名实例替代。
 
 ## 浏览器会话清理（用完即关）
 
