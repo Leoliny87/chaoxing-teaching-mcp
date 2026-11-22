@@ -78,6 +78,18 @@ python -I scripts/launch_stdio.py schedule         # 打印每日自动更新要
 
 `python -m xuexitong_mcp --list-tools` 会按当前角色列出工具。
 
+## 浏览器自动重连（Wayland 会话必读）
+
+Chrome 158 在 Wayland 会话默认走 Wayland 原生窗口，BrowserSkill 扩展的 MV3 service worker 在该模式下不主动连 daemon，导致 bsk 实例反复掉线、重启也不自动重连。**根治办法：以 `--ozone-platform=x11`（Xwayland）启动 Chrome**，扩展启动即自动连 daemon，免人工点扩展弹窗。
+
+`scripts/browser_watchdog.py` 守护脚本据此自动重连：周期检查所需 bsk 实例，缺失时以 X11 重开对应 profile。可注册为 systemd 用户服务持久运行：
+
+```
+systemctl --user enable --now xuexitong-browser-watchdog.service
+```
+
+守护仅管理本 MCP 自建的自动化 profile（教师 dsh-browser-skill-profile / 学生 dsh-browser-skill-profile-student），不触碰用户自己的浏览器。学生 profile 需用 `--load-extension` 加载 BSK 扩展副本（bsk-student-ext）。
+
 ## 浏览器会话清理（用完即关）
 
 本 MCP 经 BrowserSkill（bsk）驱动本机 Chrome，会创建自动化会话与标签。为避免留下多余的浏览器窗口：

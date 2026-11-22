@@ -429,6 +429,13 @@
 
 
 
+### 2026-11-23（第二十四轮）环境 bug 根治：Chrome Wayland→X11 自动重连 + 作业删除班级修复
+- **环境 bug 根因（用户授权全自动修复）**：Chrome 158 在 Wayland 会话默认走 Wayland 原生窗口，BrowserSkill 扩展 MV3 service worker 该模式下不主动连 daemon，致 bsk 实例反复掉线、重启 Chrome 也不自动重连（须人工点扩展弹窗）。CDP 远程调试被此 Chrome 构建禁用、Xlib 因 Wayland 看不到窗口，均无法自动唤醒。
+- **根治**：强制 `--ozone-platform=x11`（Xwayland）启动 Chrome，扩展启动即自动连 daemon，免人工弹窗。实测教师 c41e7649、学生 1e1e4951 均 X11 启动即在线，实例 ID 跨重启稳定。
+- **守护服务**：scripts/browser_watchdog.py + systemd 用户服务 xuexitong-browser-watchdog.service（每 20s 检查所需实例，缺失/掉线自动以 X11 重开对应 profile，--restart-stale 强制重启 Wayland 残留进程）。仅管理两个自动化 profile，不碰用户浏览器。
+- **bug3 作业删除班级**：ops_manage._rows() 作业 clazz_id 仅从 viewWork onclick 解析，答题卡作业（h2 无 onclick）致 clazz_id 空、delete_to_bin 用默认班删除失败。修复同 assignments：us 带班级 id、clazz_id 回退遍历班级。真机验证 delete_to_bin ok=True 入回收站、零残留。
+- 师生闭环全通：教师发布→学生提交→教师批改 ok=True→学生端可见→教师删除清理。回归 **341 通过**。
+
 ### 2026-11-22（第二十三轮）师生闭环真机跑通 + 两处批阅 bug 修复
 - **师生闭环验证**：教师发布答题卡作业→学生号15399935687提交→教师批改 ok=True(total 53.3,已完成)。学生端 my_courses/my_assignments/read_my_assignment 均通。
 - **bug1 assignments() relation_id 空**：答题卡作业标题是 h2 无 viewWork onclick，致 relation_id/clazz_id 全空、submissions 查 mark-list「参数异常」看不到提交。修复：clazz_id 用遍历班级(selectClassid 权威)、relation_id 回退到 li id（piyueBtn href 证实 workid=id）。真机验证 submissions 返回学生「测试号」待批阅。

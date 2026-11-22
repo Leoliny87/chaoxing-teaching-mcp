@@ -99,18 +99,21 @@ class ManageOps(XxtBase):
         if kind == "作业":
             # work/list (and its bin) scope by selectClassid; read every class so
             # delete/restore/verify are not blind to non-default classes (e.g. "test").
-            # clazz_id comes from the viewWork onclick so delete can target the right class.
-            parse = """const v=(li.querySelector('.list_li_tit')?.getAttribute('onclick')||'').match(/viewWork\\('([^']*)','([^']*)','([^']*)'\\)/)||[];
-                      out.push({id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),clazz_id:v[3]||''});"""
+            # clazz_id uses the iterated class (authoritative): answer-card works render
+            # the title as <h2> with NO viewWork onclick, so onclick-only parsing left
+            # clazz_id empty and delete targeted the wrong class (observed 2026-11-23).
+            parse = """const oc=li.querySelector('.list_li_tit')?.getAttribute('onclick')||'';
+                      const v=oc.match(/viewWork\\(\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*\\)/)||oc.match(/viewWork\\(\\s*"([^"]*)"\\s*,\\s*"([^"]*)"\\s*,\\s*"([^"]*)"\\s*\\)/)||[];
+                      out.push({id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),clazz_id:v[3]||item.clz||''});"""
             if binned:
-                us = [f"/mooc2-ans/work/list?courseid={cid}&selectClassid={_safe_id(x['clazz_id'])}&recycle=1&cpi={cpi}&v=0&topicid=0&from=" for x in c.classes] or \
-                     [f"/mooc2-ans/work/list?courseid={cid}&selectClassid=0&recycle=1&cpi={cpi}&v=0&topicid=0&from="]
+                us = [{"u": f"/mooc2-ans/work/list?courseid={cid}&selectClassid={_safe_id(x['clazz_id'])}&recycle=1&cpi={cpi}&v=0&topicid=0&from=", "clz": x['clazz_id']} for x in c.classes] or \
+                     [{"u": f"/mooc2-ans/work/list?courseid={cid}&selectClassid=0&recycle=1&cpi={cpi}&v=0&topicid=0&from=", "clz": "0"}]
             else:
-                us = [f"/mooc2-ans/work/list?courseid={cid}&selectClassid={_safe_id(x['clazz_id'])}&cpi={cpi}&status=-1&v=0&ut=t" for x in c.classes] or \
-                     [f"/mooc2-ans/work/list?{self.q(c)}"]
+                us = [{"u": f"/mooc2-ans/work/list?courseid={cid}&selectClassid={_safe_id(x['clazz_id'])}&cpi={cpi}&status=-1&v=0&ut=t", "clz": x['clazz_id']} for x in c.classes] or \
+                     [{"u": f"/mooc2-ans/work/list?{self.q(c)}", "clz": c.clazz_id}]
             r = self.on(M2, """
                 const out=[], seen=new Set();
-                for(const u of %s){ const d=D(await F(u)); if(!d.querySelector('#recycle')) return null;
+                for(const item of %s){ const d=D(await F(item.u)); if(!d.querySelector('#recycle')) return null;
                   for(const li of d.querySelectorAll('.taskList li[id^=work]')){ if(seen.has(li.id)) continue; seen.add(li.id);
                     %s } }
                 return out;""" % (json.dumps(us), parse))
