@@ -85,6 +85,30 @@ def test_courses_empty_result_raises(cfg, monkeypatch):
         c.courses(refresh=True)
 
 
+def test_courses_merges_ct0_ct1_so_student_courses_not_missed(cfg, monkeypatch):
+    # Regression (live 2026-11-22): courseType=0 alone returned only 3 courses for a
+    # student enrolled in 助手; courseType=1 listed all (incl. 助手, role=0). courses()
+    # must request BOTH and merge so no enrolled course is missed for either role.
+    c = _client(cfg)
+    seen = {}
+
+    def fake_on(host, body, **kw):
+        seen["body"] = body
+        # shape of the in-browser merge result: CT0 role-bearing + CT1-only (role=0)
+        return [
+            {"id": "100", "cpi": "9", "role": "2", "name": "课A", "info": ""},
+            {"id": "249359480", "cpi": "53693048", "role": "0", "name": "助手", "info": ""},
+        ]
+
+    monkeypatch.setattr(c, "on", fake_on)
+    monkeypatch.setattr(c.b, "navigate", lambda *a, **k: "")
+    out = c.courses(refresh=True)
+    assert "courseType=0" in seen["body"] and "courseType=1" in seen["body"]
+    ids = [x.id for x in out]
+    assert "249359480" in ids  # the student's 助手 must not be dropped
+    assert [x for x in out if x.id == "249359480"][0].name == "助手"
+
+
 def test_health_detects_language_via_static_portal_fetch(cfg, monkeypatch):
     from xuexitong_mcp.xxt import NOTICE
     c = _client(cfg)

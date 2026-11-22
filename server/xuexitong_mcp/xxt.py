@@ -252,16 +252,26 @@ class XxtBase:
         # Read the course-list HTML with a same-origin fetch from the host's
         # static base page, not by navigating to the live Vue portal: the portal
         # keeps re-rendering and BrowserSkill rejects navigation/observation there
-        # (observation_changed). courselistdata?courseType=0 returns the same
-        # div.course cards (courseId/curPersonId/role hidden fields) the portal renders.
+        # (observation_changed). courselistdata returns div.course cards
+        # (courseId/curPersonId/role hidden fields). courseType=0 carries proper
+        # roles but is INCOMPLETE for student accounts (observed live 2026-11-22:
+        # a student enrolled in 助手 got only 3 courses from CT0 while CT1 listed
+        # all 43 including 助手). Merge CT0 (role-bearing, preferred) with CT1
+        # (complete, role=0) so no enrolled course is missed for either role.
         data = self.on(M2, """
-            const h=await F('/mooc2-ans/visit/courselistdata?courseType=0');
-            const cs=[...D(h).querySelectorAll('div.course[id^=c_]')];
-            return cs.map(e=>{const ne=e.querySelector('.course-name')||e.querySelector('.course-info h3');
+            const parse=h=>[...D(h).querySelectorAll('div.course[id^=c_]')].map(e=>{const ne=e.querySelector('.course-name')||e.querySelector('.course-info h3');
               return {id:e.querySelector('.courseId')?.value,cpi:e.querySelector('.curPersonId')?.value,
                 role:e.querySelector('.role')?.value,
                 name:((ne&&ne.getAttribute('title'))||T(ne)).replace(/置顶/g,'').trim(),
                 info:T(e.querySelector('.course-info'))};});
+            const a=parse(await F('/mooc2-ans/visit/courselistdata?courseType=0'));
+            const b=parse(await F('/mooc2-ans/visit/courselistdata?courseType=1'));
+            const byId={};
+            for(const c of a){if(c.id)byId[c.id]=c;}
+            for(const c of b){if(!c.id)continue;
+              if(!byId[c.id])byId[c.id]=c;
+              else if((!byId[c.id].role||byId[c.id].role==='0')&&c.role&&c.role!=='0')byId[c.id].role=c.role;}
+            return Object.values(byId);
         """)
         if not data:
             raise XxtError("课程列表为空或页面未加载")
