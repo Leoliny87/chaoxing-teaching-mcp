@@ -125,16 +125,20 @@ class ContentOps(XxtBase):
         # clazzid param is ignored and always returns the default class, which made
         # publish-verification blind to other classes (e.g. "test") and caused false
         # "unknown" + duplicate publishes. Iterate every class with the real params.
-        us = [f"/mooc2-ans/work/list?courseid={c.id}&selectClassid={x['clazz_id']}&cpi={c.cpi}&status=-1&v=0&ut=t" for x in c.classes] or \
-             [f"/mooc2-ans/work/list?{self.q(c)}"]
+        # Each URL carries its class so clazz_id is authoritative even when the
+        # viewWork onclick is absent/non-standard (answer-card works observed
+        # 2026-11-22 to yield empty library_id/relation_id/clazz_id from onclick).
+        us = [{"u": f"/mooc2-ans/work/list?courseid={c.id}&selectClassid={x['clazz_id']}&cpi={c.cpi}&status=-1&v=0&ut=t", "clz": x['clazz_id']} for x in c.classes] or \
+             [{"u": f"/mooc2-ans/work/list?{self.q(c)}", "clz": c.clazz_id}]
         return self.on(M2, f"""
             const out=[], seen=new Set();
-            for(const u of {json.dumps(us)}){{ const d=D(await F(u));
+            for(const item of {json.dumps(us)}){{ const d=D(await F(item.u));
               for(const li of d.querySelectorAll('.taskList li[id^=work]')){{ if(seen.has(li.id)) continue; seen.add(li.id);
-                const v=(li.querySelector('.list_li_tit')?.getAttribute('onclick')||'').match(/viewWork\\('([^']*)','([^']*)','([^']*)'\\)/)||[];
+                const oc=li.querySelector('.list_li_tit')?.getAttribute('onclick')||'';
+                const v=oc.match(/viewWork\\(\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*\\)/)||oc.match(/viewWork\\(\\s*"([^"]*)"\\s*,\\s*"([^"]*)"\\s*,\\s*"([^"]*)"\\s*\\)/)||[];
                 const cnt=T(li.querySelector('.piyuePcon'));
                 out.push({{id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),
-                  time:T(li.querySelector('.list_li_time')).replace('作答时间：',''),library_id:v[1]||'',relation_id:v[2]||'',clazz_id:v[3]||'',
+                  time:T(li.querySelector('.list_li_time')).replace('作答时间：',''),library_id:v[1]||'',relation_id:v[2]||li.getAttribute('data')||'',clazz_id:v[3]||item.clz||'',
                   pending:(cnt.match(/(\\d+)\\s*待批/)||[])[1],submitted:(cnt.match(/(\\d+)\\s*已交/)||[])[1],unsubmitted:(cnt.match(/(\\d+)\\s*未交/)||[])[1]}}); }} }}
             return out;
         """)
