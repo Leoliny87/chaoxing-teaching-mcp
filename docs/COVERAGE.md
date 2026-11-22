@@ -6,7 +6,7 @@
 
 ## 0. 当前完成度（2026-11-09，第十轮后）
 
-注册的工具：共 232 个；教师配置 211 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
+注册的工具：共 235 个；教师配置 214 个、学生配置 21 个（可再开讨论四项）、预审配置 63 个。学生端的每一次写入（暂存、提交作业、提交活动作答、回复讨论）都必须带学生本人的「确认提交」，注册时就检查。2026-11-07 曾通过真实 MCP stdio 连接实测，均能被 agent 调用（list_courses、list_my_assignments 实时返回数据；学生调用 publish_notice 得到 Unknown tool）。下面是按「能不能用 MCP 完成」的总览，细节见后文各节。
 
 **已做成工具并在测试课实测**
 - 课程与班级：课程列表、打开课程、模块/仪表盘/资源概览、学生名单、新建班级、调班、班级分组（查看方案和小组、新建小组、把学生分到小组）。课程设置（学生端配置和课程设置里 20 项开关/选项/文字，含允许学生自测、视频水印、承诺书、课程通知、试读、资源下载、评价、AI 功能、课程说明）；班级设置（允许加入、加入需同意、允许退课、忽略视频拖拽、对学生隐藏、结课/取消结课、人数上限）和班级改名；把学生移出班级、从退课日志恢复、从本课另一个班添加学生；教师团队、成绩权重（经典模式读写）、加班/退课日志。
@@ -24,6 +24,7 @@
 - 数字教材·图谱导出（2026-11-13 实测，教师档 +1）：textbook_graph_export（Excel .xlsx / Xmind），复用课程图谱 questionBankTopic/export-knowledge-points、exportcoursetopicxmind 端点（新版 knowgraph 下凭据已通，C2 导出受阻解决）。真机实测：临时知识点→导出 4137 字节有效 xlsx（PK 魔数）→清理归零。空图谱/索引未更新时返回提示而非假文件。
 - 数字教材·章节建图谱（2026-11-13 实测，教师档 +1）：textbook_graph_from_chapters 按教材目录把每章建为知识点，名称带目录编号（如 1.1）保留层级。**新版 knowgraph 限制：知识点下不能再嵌套子知识点（updatetopicsort 报"知识点下面不允许存在子集"），只有「分类」(nodeDataType=1)能含子级**；分类创建机制未接入，故平铺+编号。真机净零：建49点→批量删→total=0。
 - 数字教材·资料/题库薄封装（2026-11-13 实测，教师档 +2）：textbook_materials（复用课程 coursedata）、textbook_bank_questions（复用课程 qbank/search，文件夹+题目）。教材与课程同后端，实测确认。空题库响应不含 questionBankRelationList 键（仅 total/pageInfo），已按空列表处理。该教材资料/题库当前为空，读工具正常返回。
+- 数字教材·讨论/课件/统计（2026-11-22 实测，教师档 +3）：textbook_discussions（groupweb getTopicList）、textbook_coursewares（mobilelearn getCourseWareList）、textbook_learning_stats（基础数据/学情统计/学习监控/课堂报告）。**教材班级 id 程序化解析已破解**：教材班级是平台自动生成、tcm/clazz-manage 返回空；详情 SPA 加载时调 /api/v1/createEnc（会话首次生成、后续直调返回{}）把 enc 存入 Vue 状态——导航教材详情页读 Vue enc，再调 personalSpace/getCatalogueUrl+getDiscussUrl，返回 URL 携带 clazzid/cpi/bbsid。真机实测：讨论返回真实帖子、课件/统计端点通。
 - 课件库与教案：把课程资料里的 ppt/pptx/pdf/doc/docx 加入课件库；新建教案（可带 课前/课中/课后 等段落）。
 - 教学任务：新建、发布；任务点 21 类都已实测添加：作业、考试、章节、知识点、主题讨论、分组任务、任务、仿真、视频、文档、音频、电子书、问卷、审批、测验、自定义、线下课堂、线上课堂、AI实践、签到、自测（新建自测模板：模拟测验或刷题，随机或按题型抽题）。视频/文档/音频可直接引用课程资料；问卷/审批/测验/知识点/自定义/线下线上课堂/AI实践/签到可在添加时新建（AI实践会把任务要求、角色、对话要求、评分标准一起写好）。
 - 读取：课程首页（待办、作业/考试/AI实践预警、学情看板、高风险学生）、学情统计（基础数据、学情统计、学习监控、课堂报告）、教学日历、下载中心、AI 助教（是否开启、知识库设置、会话列表）。
@@ -427,6 +428,13 @@
 
 
 
+
+### 2026-11-22（第二十一轮）数字教材·讨论/课件/统计接入（教师档 +3，破解教材班级 id 解析）
+- **缺口1破解**：教材班级 clazzid 程序化解析。链路：导航 textbookDetail 详情页→读 Vue 组件 enc（createEnc 会话级端点，页面加载首次生成）→personalSpace/getCatalogueUrl/getDiscussUrl?courseId&enc→URL 含 clazzid/cpi/bbsid。关键 bug 修复：b.eval 把 JS 当 async 函数体包裹（需 return），误用 IIFE 表达式致恒返回 null。
+- **新工具**：textbook_discussions / textbook_coursewares / textbook_learning_stats（只读，复用课程后端，班级上下文带缓存）。
+- **真机实测**：班级解析 clazzid=159821665/bbsid=14399ace；讨论 count=10 真实帖子；课件端点通（该教材空）；统计基础数据/课堂报告均返回数据。
+- 回归：+6 测试，全套 **337 通过**。教师档 211→214，教材工具累计 20。
+- **仍待补**：同步他课导入（createtopictask 运行时参数在动态 knowgraph 子上下文）。
 ### 讨论（groupweb）
 - 发帖：`POST /pc/topic/{bbsid}/addTopic?uuid=<客户端生成的话题uuid>`，表单字段：`topicTitle`、`topicContent`、`rtf_content`、`isRichText=1`、`files_url`/`files_attr`（附件）、`tags=classId<班级ID>,classId<班级ID>`（发布班级）、`folder_uuid`、`label`、`anonymous`、`bbsid`、`courseId`、`urlToken`（页面变量）、`managerNeedAiReply`（AI助教回复）。回复设置：`deadline`、`replyWordsLimit`、`replyWordsMax`、`replyTimesLimit`、`allowViewReply`、`replyCanAnonymous`、`recordAnonymousScore`、`sendNoticeToStu`。
 - 发帖页还提供：附件、图片、云盘、笔记、录音、网页链接、公式/LaTeX、表格、思维导图、白板、导入文档、选择讨论区、关联知识点。发帖后页面会整体刷新。

@@ -456,3 +456,56 @@ def test_bank_questions_empty_bank(cfg, monkeypatch):
     monkeypatch.setattr(c, "on", lambda host, js, **kw: {"total": 0, "courseIds": [269231810], "pageInfo": {}} if "qbank/search" in js else {})
     out = c.textbook_bank_questions("11026")
     assert out["total"] == 0 and out["items"] == []
+
+
+# ------------------------------------------------ discussion / courseware / stats (clazzid resolution)
+CLAZZ_CTX = {"courseid": "269231810", "clazzid": "159821665", "cpi": "14089768",
+             "bbsid": "14399ace75a8b45a6a2abeb6158be3f2", "discuss_url": "https://groupweb.chaoxing.com/x",
+             "catalogue_url": "https://mooc2-ans.chaoxing.com/y", "_name": "[MCP测试]教材", "_spa_enc": "9074b5c9"}
+
+
+def _clzclient(cfg, monkeypatch):
+    c = _client(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_tb_clazz_ctx", lambda id: dict(CLAZZ_CTX))
+    return c
+
+
+def test_discussions_reads_topics(cfg, monkeypatch):
+    c = _clzclient(cfg, monkeypatch)
+    # on() runs JS that transforms getTopicList into {valid,items,lastPage}; mock that shape
+    resp = {"valid": True, "items": [{"topic_id": "u1", "id": "1", "title": "讨论A", "content": "内容",
+                                      "author": "林云", "replies": 2, "reads": 5, "time": "2026"}],
+            "lastPage": 1, "lastValue": "", "lastAuxValue": ""}
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: resp if "getTopicList" in js else {})
+    out = c.textbook_discussions("11026", limit=10)
+    assert out["count"] == 1 and out["discussions"][0]["title"] == "讨论A" and out["clazzid"] == "159821665"
+
+
+def test_discussions_no_bbsid_raises(cfg, monkeypatch):
+    c = _client(cfg, monkeypatch)
+    ctx = dict(CLAZZ_CTX)
+    ctx["bbsid"] = ""
+    monkeypatch.setattr(c, "_tb_clazz_ctx", lambda id: ctx)
+    with pytest.raises(XxtError):
+        c.textbook_discussions("11026")
+
+
+def test_coursewares_reads_list(cfg, monkeypatch):
+    c = _clzclient(cfg, monkeypatch)
+    resp = {"result": 1, "data": {"list": [{"title": "课件A"}], "page": 1, "totalCount": 1}}
+    monkeypatch.setattr(c, "on", lambda host, js, **kw: resp if "getCourseWareList" in js else {})
+    out = c.textbook_coursewares("11026")
+    assert out["total"] == 1 and out["items"][0]["title"] == "课件A"
+
+
+def test_learning_stats_basic(cfg, monkeypatch):
+    c = _clzclient(cfg, monkeypatch)
+    monkeypatch.setattr(c, "_get_many", lambda host, paths, params: {p: {"status": True, "data": {"k": 1}} for p in paths})
+    out = c.textbook_learning_stats("11026", "基础数据")
+    assert out["clazzid"] == "159821665" and "resInfo" in out["data"]
+
+
+def test_learning_stats_bad_section(cfg, monkeypatch):
+    c = _clzclient(cfg, monkeypatch)
+    with pytest.raises(XxtError):
+        c.textbook_learning_stats("11026", "不存在的_section")

@@ -3193,6 +3193,25 @@ def textbook_bank_questions(id: Annotated[str, Field(description="教材 id")],
     return client().textbook_bank_questions(id, keyword, page, size)
 
 
+@tool(R, "读取数字教材的讨论区帖子（复用课程讨论后端 groupweb getTopicList；班级/bbsid 由教材详情页自动解析）。只读。")
+def textbook_discussions(id: Annotated[str, Field(description="教材 id（list_textbooks 返回的 id）")],
+                         limit: Annotated[int, Field(description="最多返回几条")] = 30) -> dict:
+    return client().textbook_discussions(id, limit)
+
+
+@tool(R, "读取数字教材的课件库（复用课程课件后端 mobilelearn getCourseWareList）。只读。")
+def textbook_coursewares(id: Annotated[str, Field(description="教材 id")],
+                         page: Annotated[int, Field(description="页码")] = 1,
+                         size: Annotated[int, Field(description="每页条数")] = 50) -> dict:
+    return client().textbook_coursewares(id, page, size)
+
+
+@tool(R, "读取数字教材的统计（基础数据/学情统计/学习监控/课堂报告，复用课程统计后端）。只读。")
+def textbook_learning_stats(id: Annotated[str, Field(description="教材 id")],
+                            section: Annotated[str, Field(description="基础数据/学情统计/学习监控/课堂报告")] = "基础数据") -> dict:
+    return client().textbook_learning_stats(id, section)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),
