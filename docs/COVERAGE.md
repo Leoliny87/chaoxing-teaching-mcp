@@ -429,6 +429,13 @@
 
 
 
+### 2026-11-22（第二十三轮）师生闭环真机跑通 + 两处批阅 bug 修复
+- **师生闭环验证**：教师发布答题卡作业→学生号15399935687提交→教师批改 ok=True(total 53.3,已完成)。学生端 my_courses/my_assignments/read_my_assignment 均通。
+- **bug1 assignments() relation_id 空**：答题卡作业标题是 h2 无 viewWork onclick，致 relation_id/clazz_id 全空、submissions 查 mark-list「参数异常」看不到提交。修复：clazz_id 用遍历班级(selectClassid 权威)、relation_id 回退到 li id（piyueBtn href 证实 workid=id）。真机验证 submissions 返回学生「测试号」待批阅。
+- **bug2 grade_submission 客观题误报 unknown**：选择/判断题系统自动判分、mark 视图不暴露 score_given，读回校验拿 -1 比对误报不一致（批改实际成功）。修复：仅对 score_given 非空的题读回比对，客观题由总分+状态+unscored 校验。真机验证 ok=True confirmed。
+- 回归：+1 grade 校验测试，全套 **341 通过**。
+- **环境注意**：BrowserSkill 扩展 MV3 service worker 闲置休眠/Chrome 窗口退出会致 bsk 实例断连，需点扩展弹窗重连；扩展自带 1 分钟 keepalive alarm 但 Chrome 整个退出则失效。
+
 ### 2026-11-22（第二十一轮）数字教材·讨论/课件/统计接入（教师档 +3，破解教材班级 id 解析）
 - **缺口1破解**：教材班级 clazzid 程序化解析。链路：导航 textbookDetail 详情页→读 Vue 组件 enc（createEnc 会话级端点，页面加载首次生成）→personalSpace/getCatalogueUrl/getDiscussUrl?courseId&enc→URL 含 clazzid/cpi/bbsid。关键 bug 修复：b.eval 把 JS 当 async 函数体包裹（需 return），误用 IIFE 表达式致恒返回 null。
 - **新工具**：textbook_discussions / textbook_coursewares / textbook_learning_stats（只读，复用课程后端，班级上下文带缓存）。

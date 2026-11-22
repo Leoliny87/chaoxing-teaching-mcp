@@ -138,7 +138,7 @@ class ContentOps(XxtBase):
                 const v=oc.match(/viewWork\\(\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*,\\s*'([^']*)'\\s*\\)/)||oc.match(/viewWork\\(\\s*"([^"]*)"\\s*,\\s*"([^"]*)"\\s*,\\s*"([^"]*)"\\s*\\)/)||[];
                 const cnt=T(li.querySelector('.piyuePcon'));
                 out.push({{id:li.id.replace('work',''),title:T(li.querySelector('.list_li_tit')),class:T(li.querySelector('.list_class')),
-                  time:T(li.querySelector('.list_li_time')).replace('作答时间：',''),library_id:v[1]||'',relation_id:v[2]||li.getAttribute('data')||'',clazz_id:v[3]||item.clz||'',
+                  time:T(li.querySelector('.list_li_time')).replace('作答时间：',''),library_id:v[1]||'',relation_id:v[2]||li.id.replace('work',''),clazz_id:v[3]||item.clz||'',
                   pending:(cnt.match(/(\\d+)\\s*待批/)||[])[1],submitted:(cnt.match(/(\\d+)\\s*已交/)||[])[1],unsubmitted:(cnt.match(/(\\d+)\\s*未交/)||[])[1]}}); }} }}
             return out;
         """)

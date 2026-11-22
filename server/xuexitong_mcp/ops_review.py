@@ -161,7 +161,13 @@ class ReviewOps(XxtBase):
                 raise XxtError(f"总分 {res.get('total')} 超过满分 {res.get('full')}；没有提交。")
             raise XxtError(f"批阅页面结构不符（{stage}）；没有提交。")
         back = {str(q.get("no")): q for q in self.student_answers(course, assignment, student)["questions"]}
+        # Only read-back-compare questions that expose score_given (subjective/manual marks).
+        # Objective questions (选择/判断) are auto-graded by the platform and their score is
+        # not exposed via score_given in the mark view (observed live 2026-11-22); comparing
+        # them against -1 falsely flagged mismatch even though the total/status confirm the
+        # grade was applied. Server status + total + unscored + status_after still verify it.
         mismatch = [k for k, v in scores.items() if not isinstance(v, list) and
+                    str(back.get(str(k), {}).get("score_given") or "").strip() and
                     abs(float(back.get(str(k), {}).get("score_given") or -1) - float(v)) > 0.05]
         row = [x for x in self._mark_rows(c, a) if x["answer_id"] == r["answer_id"]]
         status = row[0]["cells"][5] if row and len(row[0]["cells"]) > 5 else None

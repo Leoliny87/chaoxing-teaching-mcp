@@ -47,3 +47,36 @@ def test_grade_preview_validates_scores(monkeypatch):
     for bad in ({"5": 6}, {"5": -1}, {"14": [5]}, {"14": [6, 0]}, {"9": 1}, {"5": "满分"}):
         with pytest.raises(XxtError):
             srv.grade_submission("课", "作业", "张三", bad)
+
+
+def test_grade_objective_questions_no_false_mismatch(tmp_path, monkeypatch):
+    # Regression (live 2026-11-22): objective questions (选择/判断) are auto-graded by the
+    # platform and expose no score_given in the mark view. The read-back check must skip
+    # them (not compare against -1) so a successful grade is not falsely flagged unknown.
+    import logging
+    from xuexitong_mcp import bsk as bsk_mod
+    from xuexitong_mcp.config import Config
+    from xuexitong_mcp.xxt import make_client
+    lg = logging.getLogger("xuexitong_mcp.bsk")
+    for h in list(lg.handlers):
+        lg.removeHandler(h); h.close()
+    monkeypatch.setattr(bsk_mod, "STATE_FILE", tmp_path / "state.json")
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "inst0001")
+    cfg = Config(); cfg.log_dir = tmp_path / "logs"; cfg.log_level = "WARNING"; cfg.settle = 0
+    c = make_client(cfg)
+    monkeypatch.setattr(c, "_review_row", lambda *a: (None, {"title": "作业"}, {"answer_id": "9", "name": "测试号"}, "/mark"))
+    monkeypatch.setattr(c.b, "navigate", lambda *a, **k: "")
+    monkeypatch.setattr(c, "here", lambda *a, **k: {"stage": "done", "status": True, "total": 53.3, "full": 100, "unscored": []})
+    # Q1/Q2 objective: no score_given; Q3 subjective: score_given matches request
+    monkeypatch.setattr(c, "student_answers", lambda *a: {"questions": [
+        {"no": 1, "type": "选择题", "full_score": 33.3},
+        {"no": 2, "type": "判断题", "full_score": 33.3},
+        {"no": 3, "type": "简答题", "full_score": 33.4, "score_given": "20"}]})
+    monkeypatch.setattr(c, "_mark_rows", lambda *a: [{"answer_id": "9", "cells": ["", "", "", "", "", "已完成"]}])
+    out = c.grade_submission("课", "作业", "测试号", {"1": 33.3, "2": 0, "3": 20}, "批语")
+    assert out["ok"] is True and out["total"] == 53.3 and "write_outcome" not in out
+    # a genuinely wrong subjective score must still be flagged
+    monkeypatch.setattr(c, "student_answers", lambda *a: {"questions": [
+        {"no": 3, "type": "简答题", "full_score": 33.4, "score_given": "5"}]})
+    out2 = c.grade_submission("课", "作业", "测试号", {"3": 20}, "批语")
+    assert out2["ok"] is False and out2["write_outcome"] == "unknown"
