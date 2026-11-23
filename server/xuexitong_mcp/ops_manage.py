@@ -486,7 +486,7 @@ class ManageOps(XxtBase):
         # the page's date pickers use yyyy-MM-dd HH:mm:ss; a value without seconds is stored as "no end time"
         end = norm_time(end_time)
         st = norm_time(start_time, 0) if start_time else ""
-        self.b.navigate(f"https://{M2}/mooc2-ans/work/rePublishSetting?courseid={_safe_id(c.id)}&classid=0&cpi={_safe_id(c.cpi)}"
+        self.b.navigate(f"https://{M2}/mooc2-ans/work/rePublishSetting?courseid={_safe_id(c.id)}&classid={_safe_id(a.get('clazz_id') or c.clazz_id)}&cpi={_safe_id(c.cpi)}"
                         f"&id={_safe_id(a['id'])}&from=", settle=0.8)
         if not self.wait_for("return typeof rePublicWork==='function' && !!document.getElementById('endTime')", timeout=20):
             raise XxtError("修改设置页没有加载；没有修改。")

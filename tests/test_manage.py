@@ -107,3 +107,29 @@ def test_no_preview_only_tools_left():
     names = {n for n, *_ in srv.TOOLS}
     assert {"get_course_settings", "set_course_setting", "list_recycle_bin", "restore_deleted", "purge_deleted", "moderate_discussion",
             "reply_discussion", "create_material_folder", "set_material_download", "move_material", "list_folder_materials"} <= names
+
+
+def test_update_assignment_times_uses_own_class(monkeypatch):
+    # Regression (live 2026-11-23): rePublishSetting with classid=0 returned "作业不存在"
+    # for an assignment published to a non-default class. Must use the assignment's clazz_id.
+    import xuexitong_mcp.ops_manage as om
+    from xuexitong_mcp.config import Config
+    from xuexitong_mcp.xxt import make_client, Course
+    import xuexitong_mcp.bsk as bsk_mod
+    monkeypatch.setattr(bsk_mod, "STATE_FILE", Path("/tmp/xxt-test-state.json"))
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "inst0001")
+    cfg = Config(); cfg.settle = 0
+    c = make_client(cfg)
+    course = Course(id="1", name="课", cpi="3", clazz_id="2", enc="E", t="9",
+                    classes=[{"clazz_id": "2", "name": "默认"}, {"clazz_id": "7", "name": "测试班"}])
+    monkeypatch.setattr(c, "ctx", lambda q, refresh=False: course)
+    monkeypatch.setattr(c, "_find_assignment", lambda ctx, a: {"id": "555", "clazz_id": "7", "title": "作业"})
+    nav = []
+    monkeypatch.setattr(c.b, "navigate", lambda url, **k: nav.append(url))
+    monkeypatch.setattr(c, "wait_for", lambda *a, **k: False)  # stop before the write JS
+    from xuexitong_mcp.xxt import XxtError
+    try:
+        c.update_assignment_times("课", "555", "2026-12-01 23:59:59")
+    except XxtError:
+        pass
+    assert nav and "classid=7" in nav[0] and "classid=0" not in nav[0]
