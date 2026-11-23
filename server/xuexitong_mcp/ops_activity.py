@@ -235,15 +235,29 @@ class ActivityOps(XxtBase):
 
     def delete_activity(self, course: str, activity: str) -> dict:
         c = self.ctx(course)
-        a = self._find_activity(c, activity)
-        self.b.navigate(self._act_list_url(c), settle=1.5)
+        # Activities are class-scoped: search every class so an activity started in a
+        # non-default class is found, and delete/verify in THAT class's list (the
+        # default-class-only search reported "找不到" for non-default-class activities).
+        a, ac = None, c
+        for cl in c.classes:
+            cc = replace(c, clazz_id=_safe_id(cl["clazz_id"]))
+            try:
+                hit = _best(self.activities(c.id, limit=1000, class_id=cc.clazz_id), activity, id_keys=("activity_id",))
+            except XxtError:
+                continue
+            if hit:
+                a, ac = hit, cc
+                break
+        if a is None:
+            a = self._find_activity(c, activity)
+        self.b.navigate(self._act_list_url(ac), settle=1.5)
         if not self.wait_for("return typeof app!=='undefined' && typeof app.deleteActive==='function'", timeout=15):
             raise XxtError("活动列表未加载")
         self.here(f"app.deleteActive({json.dumps(_safe_id(a['activity_id']))}); return true;", retry_safe=False)
         still = [1]
         for _ in range(4):
             time.sleep(1.5)
-            still = [x for x in self.activities(c.id, limit=1000) if x["activity_id"] == a["activity_id"]]
+            still = [x for x in self.activities(c.id, limit=1000, class_id=ac.clazz_id) if x["activity_id"] == a["activity_id"]]
             if not still:
                 break
         return {"ok": not still, "deleted": a["title"], "note": "已移入活动回收站，可还原"}

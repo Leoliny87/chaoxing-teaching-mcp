@@ -86,3 +86,34 @@ def test_delete_general_activity_verifies_recycle(client, monkeypatch):
     assert r["absent_from_active_list"] is True
     assert r["recycle_row_verified"] is True
     assert any("setdel" in js and "status=1" in js for js in calls)
+
+def test_delete_activity_finds_non_default_class(client, monkeypatch):
+    # Regression (live 2026-11-23): activities are class-scoped; an activity started in
+    # a non-default class was reported "找不到" because the search only read the default
+    # class. delete_activity must iterate every class and delete in the found class.
+    act = {"activity_id": "555", "title": "测试班签到", "active_type": 2, "type": "签到"}
+    course = Course(id="1", name="课", cpi="3", clazz_id="2", enc="E", t="9",
+                    classes=[{"clazz_id": "2", "name": "默认"}, {"clazz_id": "7", "name": "测试班"}])
+    monkeypatch.setattr(client, "ctx", lambda q, refresh=False: course)
+
+    state = {"deleted": False}
+
+    def acts(course_id, status="", limit=50, *, class_id=""):
+        if state["deleted"]:
+            return []
+        return [act] if str(class_id) == "7" else []
+
+    monkeypatch.setattr(client, "activities", acts)
+    nav = []
+    monkeypatch.setattr(client.b, "navigate", lambda url, **k: nav.append(url))
+    monkeypatch.setattr(client, "wait_for", lambda *a, **k: True)
+    deleted = []
+    def _here(js, **k):
+        deleted.append(js)
+        state["deleted"] = True  # app.deleteActive removed it
+        return True
+    monkeypatch.setattr(client, "here", _here)
+    out = client.delete_activity("1", "555")
+    assert out["ok"] is True
+    assert nav and "clazzId=7" in nav[0]  # deleted in the activity's own class
+    assert deleted and "555" in deleted[0]
