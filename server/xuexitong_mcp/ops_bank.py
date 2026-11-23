@@ -195,6 +195,21 @@ class BankOps(XxtBase):
             out.update(write_outcome="unknown", error="新建后标签列表里没有它。", server=r if isinstance(r, dict) else None)
         return out
 
+    def delete_bank_label(self, course: str, label: str) -> dict:
+        c = self.course(course)
+        allx = self.bank_labels(c.id)
+        hit = [x for x in allx if x["id"] == str(label) or x["name"] == label]
+        if len(hit) != 1:
+            raise XxtError(f"没有唯一的标签「{label}」。")
+        t = hit[0]
+        r = self.on(M2, "return await J('/mooc2-ans/question-label/delete?'+new URLSearchParams(%s));"
+                    % json.dumps({"courseid": c.id, "cpi": c.cpi, "labelid": t["id"]}), retry_safe=False)
+        gone = not any(x["id"] == t["id"] for x in self.bank_labels(c.id))
+        out = {"ok": gone, "label": t["name"], "label_id": t["id"]}
+        if not gone:
+            out.update(write_outcome="unknown", error="删除后标签列表里仍有它。", server=r if isinstance(r, dict) else None)
+        return out
+
     def label_bank_questions(self, course: str, qids: list[str], labels: list[str]) -> dict:
         c = self.course(course)
         ids = _qids(qids)

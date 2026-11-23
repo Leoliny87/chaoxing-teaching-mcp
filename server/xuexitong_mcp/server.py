@@ -1553,6 +1553,14 @@ def create_bank_label(course: Course_, name: Annotated[str, Field(description="�
     return client().create_bank_label(course, name)
 
 
+@tool(D, "删除题库标签（标签名或ID）。先预演，确认后删除并读回核对。")
+def delete_bank_label(course: Course_, label: Annotated[str, Field(description="标签名或ID")], confirm: Confirm = False) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        return _dry(c, "删除题库标签", label=label)
+    return client().delete_bank_label(course, label)
+
+
 @tool(W, "给题库题目打标签（会替换这些题现有的标签）。先预演，确认后保存并逐题读回。")
 def label_bank_questions(course: Course_, question_ids: QIds_, labels: Annotated[list[str], Field(description="标签名或ID")],
                          confirm: Confirm = False) -> dict:
