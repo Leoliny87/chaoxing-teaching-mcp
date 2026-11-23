@@ -43,3 +43,30 @@ def test_new_graph_tools_and_policy():
     assert "list_my_graph" in STUDENT_BASE and "get_question_map" not in STUDENT_BASE
     assert set(SWITCHES) == {"问题图谱", "能力图谱", "课程思政图谱"}
     assert para("a<b\nc") == "<p>a&lt;b</p><p>c</p>" and plain("<p>x&amp;y</p> <p>z</p>") == "x&y z"
+
+
+def test_delete_knowledge_points_resolves_names_on_confirm(monkeypatch):
+    # Regression (live 2026-11-23): the confirm path passed raw names to the client,
+    # which only accepts point_id, so deleting by name falsely reported "已不在图谱".
+    # The tool must resolve names -> IDs on confirm just like the preview path.
+    from xuexitong_mcp import server as srv
+    pts = [{"point_id": "111", "name": "甲", "parent_id": "0"},
+           {"point_id": "222", "name": "乙", "parent_id": "0"}]
+    got = {}
+
+    class Fake:
+        def knowledge_points(self, course, query=""):
+            return pts
+        def find_point(self, course, point, pts=None):
+            for p in (pts if pts is not None else self.knowledge_points(course)):
+                if p["name"] == point or p["point_id"] == str(point):
+                    return p
+            raise ValueError(point)
+        def delete_knowledge_points(self, course, ids):
+            got["ids"] = ids
+            return {"ok": True, "deleted": ids}
+
+    monkeypatch.setattr(srv, "client", lambda: Fake())
+    monkeypatch.setattr(srv, "_check_write", lambda c: type("C", (), {"id": "1", "name": "课"})())
+    out = srv.delete_knowledge_points("课", ["甲", "乙"], confirm=True)
+    assert out["ok"] and got["ids"] == ["111", "222"]

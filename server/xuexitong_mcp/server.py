@@ -1761,7 +1761,9 @@ def delete_knowledge_points(course: Course_, points: Annotated[list[str], Field(
         kids = [p["name"] for p in pts if p["parent_id"] in ids and p["point_id"] not in ids]
         return _dry(c, "删除知识点（进图谱回收站）", bind={"points": sorted(ids)}, points=[p["name"] for p in sel],
                     children_also_deleted=kids or None)
-    return client().delete_knowledge_points(course, points)
+    pts = client().knowledge_points(c.id)
+    ids = [client().find_point(c.id, x, pts)["point_id"] for x in points]
+    return client().delete_knowledge_points(course, ids)
 
 
 @tool(W, "从图谱回收站还原知识点（get_course_graph 的 recycle_bin 里的 log_id）。注意：只还原上级时平台不会把子级一起还原，子级要一并选上。先预演，确认后还原并核对。")
