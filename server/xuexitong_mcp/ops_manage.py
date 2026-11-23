@@ -412,7 +412,12 @@ class ManageOps(XxtBase):
 
         new = [chapter for chapter in after if chapter["chapter_id"] not in before_ids]
         original_unchanged = after[:len(before)] == before
-        matches_outline = [(int(chapter["layer"]) - 1, chapter["title"]) for chapter in new] == rows
+        # Numbering follows the actual tree traversal. A server-reported layer
+        # alone can misidentify a node attached to the wrong parent.
+        actual_outline = [(chapter["number"].count("."), chapter["title"]) for chapter in new]
+        matches_outline = actual_outline == rows and all(
+            str(chapter["layer"]) == str(depth + 1) for chapter, (depth, _) in zip(new, rows)
+        )
         rejected = ack.get("success") is False or ack.get("status") is False
         ok = not rejected and original_unchanged and matches_outline
         out = {"ok": ok, "created": [{"number": x["number"], "title": x["title"], "layer": x["layer"]} for x in new]}
