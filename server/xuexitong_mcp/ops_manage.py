@@ -121,16 +121,18 @@ class ManageOps(XxtBase):
                 raise XxtError(f"作业{'回收站' if binned else '列表'}读取失败或结构不完整；没有继续。")
             return r
         elif kind == "考试":
-            # the exam list (and its bin) only shows the class named in clazzid: read every class
-            us = [(f"/mooc2-ans/exam/test?courseid={cid}&ut=&cpi={cpi}&clazzid={_safe_id(x['clazz_id'])}&recyle=1&topicid=0" if binned
-                   else f"/mooc2-ans/exam/test?courseid={cid}&clazzid={_safe_id(x['clazz_id'])}&cpi={cpi}&ut=t&enc={c.enc}&t={c.t}")
-                  for x in c.classes]
+            # the exam list (and its bin) only shows the class named in clazzid: read every class.
+            # Carry the iterated class id so delete targets the exam's OWN class (the list
+            # rows expose no clazz_id; without it delete used the default class and failed).
+            us = [{"u": (f"/mooc2-ans/exam/test?courseid={cid}&ut=&cpi={cpi}&clazzid={_safe_id(x['clazz_id'])}&recyle=1&topicid=0" if binned
+                         else f"/mooc2-ans/exam/test?courseid={cid}&clazzid={_safe_id(x['clazz_id'])}&cpi={cpi}&ut=t&enc={c.enc}&t={c.t}"),
+                   "clz": x['clazz_id']} for x in c.classes]
             r = self.on(M2, """
                 const out=[], seen=new Set();
-                for(const u of %s){ const d=D(await F(u)); if(!d.querySelector('#recyle')) return null;
+                for(const item of %s){ const d=D(await F(item.u)); if(!d.querySelector('#recyle')) return null;
                   for(const l of d.querySelectorAll('li[data]')){ if(!l.querySelector('.list_li_tit')||seen.has(l.getAttribute('data'))) continue; seen.add(l.getAttribute('data'));
                     out.push({id:l.getAttribute('data'),title:T(l.querySelector('.list_li_tit')),paper_id:(l.querySelector('.list_li_content')||{getAttribute:()=>null}).getAttribute('data'),
-                      class:T(l.querySelector('.list_class')),time:T(l.querySelector('p.list_li_time span')).replace('考试时间：','')}); } }
+                      class:T(l.querySelector('.list_class')),clazz_id:item.clz||'',time:T(l.querySelector('p.list_li_time span')).replace('考试时间：','')}); } }
                 return out;""" % json.dumps(us))
             if not isinstance(r, list):
                 raise XxtError(f"考试{'回收站' if binned else '列表'}读取失败或结构不完整；没有继续。")
