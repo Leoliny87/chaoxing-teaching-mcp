@@ -595,3 +595,23 @@ def test_start_session_purges_state_when_stop_fails(cfg, tmp_path, monkeypatch):
     with pytest.raises(BskError):
         b.start_session()
     assert b.session is None and b.tab is None and not sf.exists()
+
+@pytest.mark.parametrize("editing", [False, True])
+def test_sync_settles_new_document_and_checks_its_control_state(cfg, monkeypatch, editing):
+    browser = Bsk(cfg)
+    browser.tab = 17
+    monkeypatch.setattr(browser, "ensure_session", lambda: None)
+
+    def run(args):
+        assert args[:2] == ["cooperate", "sync"]
+        assert "--settle" in args and args[args.index("--tab-id") + 1] == "17"
+        return {"tab_id": 17, "context_id": "ctx", "observation_id": "obs",
+                "state": {"mode": "ready", "editing": editing}}
+
+    monkeypatch.setattr(browser, "run", run)
+    if editing:
+        with pytest.raises(BskError) as error:
+            browser.sync()
+        assert error.value.code == "control_not_ready"
+    else:
+        assert browser.sync() == ("ctx", "obs")

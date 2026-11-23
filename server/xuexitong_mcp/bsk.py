@@ -619,7 +619,8 @@ class Bsk:
         last: Exception | None = None
         for i in range(1):
             try:
-                args = ["cooperate", "sync"]
+                # Wait for the new document before requesting its guarded control receipt.
+                args = ["cooperate", "sync", "--settle"]
                 if isinstance(getattr(self, "tab", None), int):
                     args += ["--tab-id", str(self.tab)]
                 if max_tokens:
