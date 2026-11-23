@@ -257,6 +257,11 @@ def _course_chapter_link_markup(course_id: str, card_id: str, target_id: str, ti
             f'{_h.escape(title)}</a></p>'), f"mcp{key}"
 
 
+def chapter_link_source_digest(card: dict) -> str:
+    source = json.dumps([card["title"], card["content_html"]], ensure_ascii=False)
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
 class WriteOps(XxtBase):
     # ================================================================ requests
     def _call(self, host: str, path: str, method: str = "GET", form: dict | list | None = None) -> dict:
@@ -401,8 +406,12 @@ class WriteOps(XxtBase):
             raise XxtError("章节链接仅支持正文可完整读取的文本卡片；请选择没有嵌入项的卡片。")
         return source, target, cards, card
 
-    def insert_course_chapter_link(self, c: Course, chapter_id: str, card_id: str, target_id: str, title: str) -> dict:
+    def insert_course_chapter_link(self, c: Course, chapter_id: str, card_id: str, target_id: str, title: str,
+                                   *, source_digest: str | None = None) -> dict:
         _, _, cards, card = self._course_chapter_link_context(c, chapter_id, card_id, target_id)
+        if source_digest is not None and chapter_link_source_digest(card) != source_digest:
+            return {"ok": False, "write_outcome": "not_written",
+                    "error": "源卡片标题或正文在预演后已变化；没有写入。", "hint": "请重新预演并确认。"}
         if not title.strip() or len(title) > 200:
             raise XxtError("章节链接标题需为 1–200 字。")
         body = card["content_html"]

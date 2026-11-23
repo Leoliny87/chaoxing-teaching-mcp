@@ -378,5 +378,30 @@ def test_course_chapter_link_tool_requires_exact_confirmation_and_scope(client, 
     approved = tool(**args)
     assert tool(**args, confirm=True, plan_id=approved["plan_id"])["ok"] and len(writes) == 1
     assert not tool(**args, confirm=True, plan_id=approved["plan_id"])["ok"]
+    duplicate = tool(**args)
+    assert tool(**args, confirm=True, plan_id=duplicate["plan_id"])["already_present"]
     cfg.write_allow_courses = []
     assert not tool(**args)["ok"] and len(writes) == 1
+
+
+@pytest.mark.parametrize(("field", "updated"), [("title", "新标题"), ("content_html", "<p>新正文</p>")])
+def test_course_chapter_link_refuses_changed_card_since_preview(client, chapter_link_editor, monkeypatch, field, updated):
+    from xuexitong_mcp import server
+
+    cards, _, writes = chapter_link_editor
+    cfg = Config(write_allow_courses=["1"])
+    monkeypatch.setattr(server, "_state", {"client": client, "cfg": cfg, "allowed": None, "budget": None, "profile": "teacher"})
+    monkeypatch.setattr(server, "_PLANS", {})
+    fn = next(f for name, kind, _, f in server.TOOLS if name == "insert_course_chapter_link" and kind == "write")
+    tool = server._wrap(fn, server.W)
+    args = {"course": "1", "chapter": "10", "card_id": "5", "target_chapter": "20"}
+    preview = tool(**args)
+    cards[0][field] = updated
+
+    refused = tool(**args, confirm=True, plan_id=preview["plan_id"])
+    assert refused["ok"] is False and refused["write_outcome"] == "not_written"
+    assert not writes
+
+    current = tool(**args)
+    assert tool(**args, confirm=True, plan_id=current["plan_id"])["ok"]
+    assert len(writes) == 1
