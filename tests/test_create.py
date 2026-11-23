@@ -36,6 +36,68 @@ def test_merge_lets_type_fields_win_and_keeps_repeats():
     assert out == [("a", 1), ("b", 2), ("answerForTF", "false"), ("d", "A"), ("d", "C")]
 
 
+@pytest.mark.parametrize(("qid", "score", "expected_score"), [("4321", None, 0), ("ab" * 16, 8, 8)])
+def test_bank_edit_preserves_native_metadata_and_checks_the_result(client, monkeypatch, qid, score, expected_score):
+    from xuexitong_mcp.ops_bank import _edit_metadata
+
+    native = {"type": 1, "score": 0, "difficulty": 0.2, "isOpen": 1, "easy": 2, "chapterId": 92,
+              "courseQuestionTypeId": 641, "courseTargetId": 41, "topicId": 17, "topicList": [{"id": 17}, {"id": 18}]}
+    metadata = _edit_metadata(native)
+    saved = {}
+
+    def all_questions(course, detail_id=""):
+        assert detail_id == qid
+        row = {"type_id": 1, "folder_id": "55", "stem": "原题", "full_stem": "原题", "analysis": "", "edit_metadata": metadata}
+        if saved:
+            row.update(stem="新题", full_stem="新题", analysis="过程", edit_metadata={**metadata, "score": expected_score})
+        return {qid: row}
+
+    def submit(host, js, retry_safe=True):
+        assert retry_safe is False and "edit-question?" in js and "create-question?" not in js
+        assert "updateExamWord=false" in js and "dirId=55" in js and "saveAsNew=false" in js
+        pairs, _ = json.JSONDecoder().raw_decode(js.split("const pairs=", 1)[1])
+        saved.update(pairs)
+        assert [value for name, value in pairs if name == "defAnswer"] == ["A", "C"]
+        assert saved["score"] == expected_score and saved["difficulty"] == 0.2 and saved["chapterId"] == 92
+        assert saved["isOpen"] == saved["isopen"] == 1 and saved["courseQuestionTypeId"] == 641
+        assert saved["labelIdArr"] == "11,12" and saved["topicId"] == "17,18" and saved["courseTargetId"] == 41
+        assert saved["qbankScoreEdit"] == ("true" if score is not None else "false")
+        return {"qid": qid, "status": True}
+
+    monkeypatch.setattr(client, "_all_questions", all_questions)
+    monkeypatch.setattr(client, "_bank_label_data", lambda *args: {"checkedIds": [12, 11]})
+    monkeypatch.setattr(client, "on", submit)
+    question = {"type": "多选", "stem": "新题", "options": ["甲", "乙", "丙"], "answer": "AC", "analysis": "过程"}
+    if score is not None:
+        question["score"] = score
+    assert client.add_bank_question("1", question, edit_id=qid)["ok"]
+    saved.clear()
+    monkeypatch.setattr(client, "_bank_label_data", lambda *args: {"checkedIds": [] if saved else [11, 12]})
+    assert client.edit_bank_question("1", qid, question)["write_outcome"] == "unknown"
+
+
+def test_bank_edit_missing_score_metadata_refuses_to_post(client, monkeypatch):
+    row = {"type_id": 3, "folder_id": "0", "edit_metadata": {"isOpen": 1, "difficulty": 0.8}}
+    monkeypatch.setattr(client, "_all_questions", lambda *args, **kwargs: {"274": row})
+    monkeypatch.setattr(client, "on", lambda *a, **kw: pytest.fail("unexpected write"))
+    with pytest.raises(XxtError, match="原题分值"):
+        client.edit_bank_question("1", "274", {"type": "判断", "stem": "甲", "answer": True})
+
+
+@pytest.mark.parametrize(("specified", "expected"), [({}, 5), ({"score": 7}, 7)])
+def test_create_bank_question_posts_its_declared_score(client, monkeypatch, specified, expected):
+    monkeypatch.setattr(client.b, "navigate", lambda *a, **kw: None)
+    monkeypatch.setattr(client, "here", lambda *a, **kw: {"enc": "test", "ts": "123"})
+
+    def submit(path, method, fields):
+        data = dict(fields)
+        assert data["score"] == expected and data["qbankScoreEdit"] == "true" and data["isEdit"] == "false"
+        return {"http": 200, "json": {"qid": "52", "status": True}}
+
+    monkeypatch.setattr(client, "_call_here", submit)
+    assert client.add_bank_question("1", {"type": "判断", "stem": "甲", "answer": True, **specified})["ok"]
+
+
 def test_create_work_chain_reuses_type_groups(client, monkeypatch):
     calls = []
 

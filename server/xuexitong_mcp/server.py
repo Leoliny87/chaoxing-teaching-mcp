@@ -1789,9 +1789,9 @@ def smart_import_bank_text(course: Course_, text: Annotated[str, Field(descripti
     return client().smart_import_bank_text(course, text, parsed_sha256, folder)
 
 
-@tool(W, "修改题库里的一道题（题干、选项、答案等整题重写，格式同 add_question_to_bank）。先预演，确认后保存并读回题干。")
+@tool(W, "修改题库里的一道题。保留原目录、难度、练习权限及图谱和标签关联，确认后读回核对。")
 def edit_bank_question(course: Course_, question_id: Annotated[str, Field(description="题目ID")],
-                       question: Annotated[dict, Field(description="新的整题内容。" + QUESTION_DOC)], confirm: Confirm = False) -> dict:
+                       question: Annotated[dict, Field(description="新的整题内容。编辑时省略 score 沿用原分值。" + QUESTION_DOC)], confirm: Confirm = False) -> dict:
     from .questions import normalize_list, summary
     c = _check_write(course)
     q = normalize_list([question], "bank")[0]
@@ -1799,7 +1799,10 @@ def edit_bank_question(course: Course_, question_id: Annotated[str, Field(descri
         have = client()._all_questions(client().course(c.id))
         if question_id not in have:
             raise XxtError("题库里没有这道题。")
-        return _dry(c, "修改题库题目（作业、试卷里引用它的题不一定同步）", question_id=question_id, old_stem=have[question_id]["stem"], new=summary(q))
+        preview = summary(q)
+        if question.get("score") in (None, ""):
+            preview["score"] = "沿用原分值"
+        return _dry(c, "修改题库原题（保留作业、试卷中的既有版本）", question_id=question_id, old_stem=have[question_id]["stem"], new=preview)
     return client().edit_bank_question(course, question_id, question)
 
 

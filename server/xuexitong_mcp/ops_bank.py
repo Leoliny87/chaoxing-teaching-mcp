@@ -8,19 +8,32 @@ Delete: POST batch-updatestatus {courseid, cpi, questionIds, dirIds, status: 2} 
         restore with status 0.  Difficulty: update-difficulty {courseid, cpi, qids, difficulty}.
 Labels: question-label/add {courseid, cpi, parentId, labelname}, /list {courseid, cpi, qid}, /delete {labelid};
         apply POST update-label?courseid&cpi&labelIds=<a,b,>&updateExamWord=false {qids}.
-Edit:   the create form posted to qbank/add_question with questionBankId=<id> and isEdit=true.
+Edit:   the question's edit-question page, posted to qbank/add_question with updateExamWord=false.
 """
 from __future__ import annotations
 
 import html as _h
 import json
 import re
+from urllib.parse import urlencode
 
-from .questions import LABEL
+from .questions import LABEL, content_html, normalize, num, p, type_fields
 from .xxt import M1, M2, XxtBase, XxtError, _safe_id
 
 _QID = re.compile(r"\d{1,20}|[0-9a-f]{32}")
 DIFFICULTY = {"易": 0.8, "中": 0.5, "难": 0.2}
+
+
+def _text(value) -> str:
+    return " ".join(_h.unescape(re.sub(r"<[^>]+>", " ", str(value or ""))).split())
+
+
+def _edit_metadata(qb: dict) -> dict:
+    fields = ("score", "difficulty", "easy", "isOpen", "chapterId", "courseTargetId", "schoolTopicIds", "courseQuestionTypeId")
+    data = {key: qb[key] for key in fields if qb.get(key) is not None}
+    topics = [str(item["id"]) for item in qb.get("topicList") or []]
+    data["topicId"] = ",".join(topics) if topics else str(qb.get("topicId") or "")
+    return data
 
 
 def _qids(ids: list[str]) -> list[str]:
@@ -36,7 +49,7 @@ EXPORT_FORMATS = {"Excel": ("excel", "xlsx", (b"PK", b"\xd0\xcf\x11\xe0")), "Wor
 
 
 class BankOps(XxtBase):
-    def _bank_rows(self, c, dir_id: str = "0", keyword: str = "", status: str = "") -> list[dict]:
+    def _bank_rows(self, c, dir_id: str = "0", keyword: str = "", status: str = "", detail_id: str = "") -> list[dict]:
         """All rows of one folder (the search pages cap at 100 rows; read every page up to 20)."""
         body = {"courseid": c.id, "microTopicId": 0, "cpi": c.cpi, "dirId": _safe_id(dir_id or "0"), "courseIds": c.id, "qTypes": "", "eTypes": "",
                 "difficulty": "", "sw": str(keyword or "")[:50], "pageNum": 1, "orderType": "", "orderByType": "", "orderByRight": "",
@@ -66,13 +79,17 @@ class BankOps(XxtBase):
                 out.append({"kind": "folder", "id": str(x.get("id")), "name": name,
                             "questions": x.get("questionCount"), "pid": str(x.get("pid"))})
             else:
-                stem = _h.unescape(re.sub(r"<[^>]+>", " ", str(qb.get("content") or "")))
-                out.append({"kind": "question", "id": str(x.get("questionId") or qb.get("id")), "stem": re.sub(r"\s+", " ", stem).strip()[:120],
+                stem = _text(qb.get("content"))
+                qid = str(x.get("questionId") or qb.get("id"))
+                out.append({"kind": "question", "id": qid, "stem": stem[:120],
                             "type": LABEL.get(qb.get("type"), qb.get("courseQuestionTypeName")),
                             "difficulty": qb.get("difficulty"), "folder_id": str(qb.get("directoryId") or x.get("pid") or "0")})
+                if qid == detail_id:
+                    out[-1].update(edit_metadata=_edit_metadata(qb), type_id=qb.get("type"), full_stem=stem,
+                                   analysis=_text(qb.get("analysis")))
         return out
 
-    def _all_questions(self, c) -> dict[str, dict]:
+    def _all_questions(self, c, detail_id: str = "") -> dict[str, dict]:
         """Questions in the root and in every folder below it (a folder's own list holds only its items)."""
         out, todo, seen = {}, ["0"], set()
         while todo and len(seen) < 60:
@@ -80,7 +97,7 @@ class BankOps(XxtBase):
             if d in seen:
                 continue
             seen.add(d)
-            for x in self._bank_rows(c, d):
+            for x in self._bank_rows(c, d, detail_id=detail_id):
                 if x["kind"] == "question":
                     out[x["id"]] = {**x, "folder_id": d}
                 else:
@@ -160,8 +177,7 @@ class BankOps(XxtBase):
             out.update(write_outcome="unknown", error="读回的难度不一致。", server=r if isinstance(r, dict) else None)
         return out
 
-    def bank_labels(self, course: str, qid: str = "") -> list[dict]:
-        c = self.course(course)
+    def _bank_label_data(self, c, qid: str) -> dict:
         r = self.on(M2, "return await F('/mooc2-ans/question-label/list?'+new URLSearchParams(%s));"
                     % json.dumps({"courseid": c.id, "cpi": c.cpi, "qid": qid or ""}))
         try:
@@ -170,6 +186,10 @@ class BankOps(XxtBase):
             j = None
         if not isinstance(j, dict) or j.get("status") is not True or not isinstance(j.get("data"), list):
             raise XxtError("题库标签读取失败。")
+        return j
+
+    def bank_labels(self, course: str, qid: str = "") -> list[dict]:
+        j = self._bank_label_data(self.course(course), qid)
         checked = {str(x) for x in j.get("checkedIds") or []}
         out = []
 
@@ -285,17 +305,55 @@ class BankOps(XxtBase):
 
     def edit_bank_question(self, course: str, qid: str, question: dict) -> dict:
         c = self.course(course)
-        ids = _qids([qid])
-        before = self._all_questions(c)
-        if ids[0] not in before:
+        qid = _qids([qid])[0]
+        q = normalize(question, "bank")
+        before = self._all_questions(c, detail_id=qid)
+        if qid not in before:
             raise XxtError("题库里没有这道题。")
-        r = self.add_bank_question(c.id, question, edit_id=ids[0], dir_id=before[ids[0]]["folder_id"])
-        rows = self._all_questions(c)
-        want = re.sub(r"\s+", " ", str(question.get("stem") or "")).strip()[:60]
-        now = (rows.get(ids[0]) or {}).get("stem") or ""
-        ok = bool(r.get("ok")) and want[:30] in now and len(rows) == len(before)
-        out = {"ok": ok, "question_id": ids[0], "stem_now": now[:120]}
+        original = before[qid]
+        metadata = original["edit_metadata"].copy()
+        if not {"isOpen", "difficulty", "score"} <= metadata.keys():
+            raise XxtError("无法读取原题分值、难度或练习权限，未提交修改。")
+        label_ids = sorted(str(i) for i in self._bank_label_data(c, qid).get("checkedIds") or [])
+        score_given = question.get("score") not in (None, "")
+        if score_given:
+            metadata["score"] = num(q.score)
+        if q.t != original["type_id"]:
+            metadata["courseQuestionTypeId"] = 0
+        folder = original["folder_id"]
+        params = {"courseid": c.id, "cpi": c.cpi, "questionBankId": qid, "microTopicId": 0}
+        edit = "/mooc2-ans/qbank/edit-question?" + urlencode({**params, "dirId": folder, "indexNum": 0,
+                                                               "pageNum": 1, "curCourseId": c.id, "qbanksystem": 0})
+        save = "/mooc2-ans/qbank/add_question?" + urlencode({**params, "saveAsNew": "false", "promptId": -1,
+                                                              "useAi": 0, "autoScore": 0, "updateExamWord": "false"})
+        fields = {**metadata, "isopen": metadata["isOpen"], "qbankScoreEdit": "true" if score_given else "false",
+                  "labelIdArr": ",".join(label_ids), "qType": q.t, "originType": q.t, "systemType": 1,
+                  "content": content_html(q), "answerAnalysis": p(q.analysis), "microTopicId": 0,
+                  "updateExamWord": "false", "updateSignal": "true"}
+        # Composite types supply their normalized default score in type_fields. An omitted score retains the original.
+        pairs = list(fields.items()) + [(k, v) for k, v in type_fields(q, "bank") if k != "score"]
+        result = self.on(M2, """
+            const doc=D(await F(%s)), form=new URLSearchParams();
+            for(const el of doc.querySelectorAll('input[type="hidden"][name]')){
+                if(!el.disabled) form.append(el.name,el.value);
+            }
+            if(form.get('questionBankId')!==%s || form.get('dirId')!==%s || form.get('courseid')!==%s ||
+               form.get('isEdit')!=='true' || !form.get('uploadEnc')) throw Error('无法核实原题编辑页，未提交修改');
+            const pairs=%s;
+            for(const key of new Set(pairs.map(([key])=>key))) form.delete(key);
+            for(const [key,value] of pairs) form.append(key,value);
+            const response=await J(%s,POST(form));
+            return {status:response.status, qid:response.qid};
+        """ % (json.dumps(edit), json.dumps(qid), json.dumps(folder), json.dumps(c.id),
+               json.dumps(pairs, ensure_ascii=False), json.dumps(save)), retry_safe=False)
+        rows = self._all_questions(c, detail_id=qid)
+        now = rows.get(qid) or {}
+        labels_now = sorted(str(i) for i in self._bank_label_data(c, qid).get("checkedIds") or [])
+        ok = (isinstance(result, dict) and result.get("status") is not False and str(result.get("qid")) == qid
+              and rows.keys() == before.keys() and now.get("folder_id") == folder and now.get("type_id") == q.t
+              and now.get("full_stem") == _text(content_html(q)) and now.get("analysis") == _text(p(q.analysis))
+              and now.get("edit_metadata") == metadata and labels_now == label_ids)
+        out = {"ok": ok, "question_id": qid, "type": q.label, "stem_now": now.get("stem", "")}
         if not ok:
-            out.update(write_outcome="unknown", error="保存后读回的题干不一致，或题目数变了（可能新建了一道）；请用 list_bank_questions 核查。",
-                       server=r)
+            out.update(write_outcome="unknown", error="保存后原题内容、属性、标签或题目清单核对不一致，请核查原题后再操作。")
         return out
