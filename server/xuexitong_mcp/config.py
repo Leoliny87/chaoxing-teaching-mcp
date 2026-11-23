@@ -51,6 +51,7 @@ class Config:
     browser_opener: str = ""
     browser_opener_role: str = ""
     browser_opener_wait: float = 60
+    browser_display_preflight: str = ""
     path: Path | None = None
 
     def bsk(self) -> str:
@@ -111,6 +112,10 @@ def load(path: str | os.PathLike | None = None) -> Config:
         cfg.browser_opener = str(br.get("opener", "") or "")
         cfg.browser_opener_role = str(br.get("opener_role", "") or "")
         cfg.browser_opener_wait = float(br.get("opener_wait", cfg.browser_opener_wait))
+        preflight = br.get("display_preflight", "")
+        if not isinstance(preflight, str):
+            raise ValueError("browser.display_preflight 必须是可执行文件路径或空字符串。")
+        cfg.browser_display_preflight = preflight.strip()
     # The environment can narrow the explicitly configured allowlist, never
     # create or broaden authority.  An explicitly empty variable denies all.
     if "XUEXITONG_MCP_WRITE_ALLOW" in os.environ:

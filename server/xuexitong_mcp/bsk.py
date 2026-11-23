@@ -9,8 +9,8 @@ Implements the internal helpers from mcp-tool-proposal.md / bsk-workarounds.md:
   * download helper (fetch_export) and verify-after-write hooks (done in client)
 
 Every failed sync or action stops immediately. Successful passive observations
-may be compared by readiness.py, but no error triggers a replacement session,
-tab, repeated navigation or write. retry_safe is retained as API metadata only.
+may be compared by readiness.py. Explicit health checks can renew a dead
+session, but do not repeat the failed operation.
 """
 from __future__ import annotations
 
@@ -283,22 +283,21 @@ class Bsk:
                 if isinstance(s, dict) and isinstance(s.get("session_id"), str) and s["session_id"]
                 and s.get("browser_instance_id") == FIXED_BROWSER_INSTANCE]
 
-    def ensure_session(self, *, renew_idle_readonly: bool = False):
+    def ensure_session(self, *, renew_idle_readonly: bool = False, renew_disconnected_readonly: bool = False):
         with self.lock:
-            if self.session and renew_idle_readonly:
-                # Health checks may begin a new read-only session only after the
-                # CLI confirms the session is definitively dead (idle expiry or a
-                # closed window). In those cases the owned tab no longer exists,
-                # so there is nothing to preserve and recovery proceeds even when
-                # preserve_tab was set by an earlier error. Any other failure
-                # (permission, transport, unknown) keeps preserve_tab's protection
-                # and is never turned into recovery.
+            if self.session and (renew_idle_readonly or renew_disconnected_readonly):
+                # Only a session tombstone confirms that its owned tab is gone.
+                # Permission, transport and unknown failures preserve the session.
                 try:
                     self.run(["tab", "list", "--scope", "agent"])
                 except BskError as e:
-                    dead = e.code == "not_found" and e.data.get("reason") in (
-                        "session_idle_timeout", "session_window_closed")
-                    if not dead:
+                    reason = e.data.get("reason")
+                    if e.code != "not_found":
+                        raise
+                    if renew_disconnected_readonly and reason == "browser_disconnected":
+                        self.start_session(replacing_disconnected=True)
+                        return
+                    if not renew_idle_readonly or reason not in ("session_idle_timeout", "session_window_closed"):
                         raise
                     self.session = None
                     self.tab = None
@@ -332,11 +331,14 @@ class Bsk:
                 pass
             self.start_session()
 
-    def _browser_online(self) -> bool:
+    def _browser_online(self, *, require_responsive: bool = False) -> bool:
         browsers = self.run(["browsers"], session=False)
         instances = browsers.get("value", browsers) if isinstance(browsers, dict) else browsers
         matches = [b for b in instances if isinstance(b, dict) and b.get("instance_id") == FIXED_BROWSER_INSTANCE] if isinstance(instances, list) else []
-        return len(matches) == 1 and matches[0].get("unresponsive") is not True
+        if len(matches) != 1:
+            return False
+        unresponsive = matches[0].get("unresponsive")
+        return unresponsive is False if require_responsive else unresponsive is not True
 
     def _auto_open_browser(self) -> None:
         """On-demand: open the bound Chrome profile via the host's official launcher.
@@ -355,12 +357,27 @@ class Bsk:
             self.log.info("browser opener_role not recorded for instance %s; skip auto-open "
                           "(agent should set [browser] opener_role in config.toml)", FIXED_BROWSER_INSTANCE)
             return
+        failure = None
         try:
-            self.log.info("auto-opening Chrome via launcher role=%s", role)
-            subprocess.run([opener, role], capture_output=True, text=True, timeout=90)
-        except Exception as e:  # noqa: BLE001
-            self.log.warning("chrome auto-open launcher failed: %s", e)
-            return
+            self.log.info("opening configured Chrome profile")
+            result = subprocess.run([opener, role], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+        except subprocess.TimeoutExpired:
+            failure = BskError("browser_opener_timeout", "等待 Chrome 启动器返回超时。")
+        except OSError:
+            failure = BskError("browser_opener_unavailable", "无法运行配置指定的 Chrome 启动器。")
+        else:
+            if result.returncode != 0:
+                failure = BskError("browser_opener_failed", f"Chrome 启动器执行失败（退出码 {result.returncode}）。")
+        if failure is not None:
+            # Another client can connect this same profile while the launcher exits.
+            # Check its registration once before reporting the failure.
+            try:
+                if self._browser_online(require_responsive=True):
+                    return
+            except BskError as error:
+                if error.code == "permission_denied":
+                    raise
+            raise failure
         deadline = time.time() + (self.cfg.browser_opener_wait or BROWSER_OPENER_WAIT)
         while time.time() < deadline:
             if self._browser_online():
@@ -368,20 +385,52 @@ class Bsk:
                 return
             time.sleep(3)
 
-    def start_session(self):
+    def _ensure_display(self) -> None:
+        helper = self.cfg.browser_display_preflight
+        if not helper:
+            return
+        if not Path(helper).is_absolute():
+            raise BskError("display_preflight_unavailable", "显示器预检必须配置可执行文件的绝对路径。")
+        try:
+            # The GNOME helper allows two 8s probes around a 14s systemd call.
+            result = subprocess.run([helper, "--ensure"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=32)
+        except subprocess.TimeoutExpired:
+            raise BskError("display_preflight_timeout", "等待显示器预检超时。") from None
+        except (OSError, ValueError):
+            raise BskError("display_preflight_unavailable", "无法运行配置指定的显示器预检。") from None
+        if result.returncode != 0:
+            raise BskError("display_preflight_failed", f"显示器预检失败（退出码 {result.returncode}）。")
+
+    def start_session(self, *, replacing_disconnected: bool = False):
         if not FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_unconfigured", "Set XUEXITONG_MCP_BROWSER to your explicitly selected local BrowserSkill instance; no fallback is allowed.")
-        if not self._browser_online():
+        if replacing_disconnected:
+            if not self._browser_online(require_responsive=True):
+                raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
+        elif not self._browser_online():
             self._auto_open_browser()
             if not self._browser_online():
                 raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
+        self._ensure_display()
         d = self.run(["session", "start", "--browser", FIXED_BROWSER_INSTANCE], session=False)
         if d.get("browser_instance_id") != FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_mismatch", "新会话未确认绑定 配置指定的浏览器实例，停止操作。")
+        if replacing_disconnected:
+            session_id = d.get("session_id")
+            if not isinstance(session_id, str) or not session_id or session_id == self.session:
+                raise BskError("session_rebuild_unconfirmed", "未确认固定浏览器的新会话，请先核对连接状态。")
+            self.url = ""
+            self.obs_text = ""
+            self.preserve_tab = False
+            self._login_handoff = False
         self.session = d["session_id"]
         self.tab = None
         try:
-            self._initialize_owned_tab()
+            window_id = d.get("agent_window_id")
+            if type(window_id) is int and window_id > 0:
+                self._initialize_owned_tab(window_id)
+            else:
+                self._initialize_owned_tab()
         except BskError as e:
             if e.code != "login_required":
                 # Init failed before a valid owned tab was confirmed. Drop the
@@ -413,19 +462,43 @@ class Bsk:
             raise
         self.log.info("started session")
 
-    def _initialize_owned_tab(self):
+    def _initial_agent_tab(self, window_id: int | None, timeout: float | None = None) -> dict:
+        reply = self.run(["tab", "list", "--scope", "agent"], timeout=timeout)
+        tabs = reply.get("tabs") if isinstance(reply, dict) else None
+        tab = tabs[0] if isinstance(tabs, list) and len(tabs) == 1 else None
+        if (not isinstance(tab, dict) or tab.get("scope") != "agent" or tab.get("borrowed")
+                or (type(window_id) is int and (type(tab.get("window_id")) is not int or tab["window_id"] != window_id))):
+            raise BskError("initial_tab_unexpected", "新会话的初始标签不是唯一任务标签，已停止。")
+        return tab
+
+    def _initialize_owned_tab(self, window_id: int | None = None):
         """Navigate the one session-created blank tab before attempting a sync.
 
         Do not create or take control of a page-opened popup.  A refused or
-        unexpected initial state ends startup without a fallback or retry.
+        unexpected initial state ends startup without a fallback.
         """
-        d = self.run(["tab", "list", "--scope", "agent"])
-        tabs = d.get("tabs") if isinstance(d, dict) else None
-        if (not isinstance(tabs, list) or len(tabs) != 1 or not isinstance(tabs[0], dict)
-                or tabs[0].get("scope") != "agent" or tabs[0].get("url") != "about:blank"
-                or tabs[0].get("tab_id") is None):
+        tab = self._initial_agent_tab(window_id)
+        tab_id = tab.get("tab_id")
+        if (tab.get("url") in (None, "") and tab.get("title") in (None, "") and tab.get("active") is True
+                and type(window_id) is int and window_id > 0 and type(tab_id) is int and tab_id > 0):
+            # BrowserSkill lists only the committed URL. A newly created blank
+            # may have a pending URL before Chrome commits its first document.
+            deadline = time.monotonic() + 1.0
+            for _ in range(5):
+                time.sleep(min(0.15, max(0, deadline - time.monotonic())))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                tab = self._initial_agent_tab(window_id, timeout=remaining)
+                if type(tab.get("tab_id")) is not int or tab["tab_id"] != tab_id or tab.get("active") is not True:
+                    raise BskError("initial_tab_unexpected", "等待初始空白标签期间任务标签变更，已停止。")
+                if tab.get("url") not in (None, "") or tab.get("title") not in (None, ""):
+                    break
+        if isinstance(tab_id, str) and tab_id.isdecimal():
+            tab_id = int(tab_id)
+        if tab.get("url") != "about:blank" or type(tab_id) is not int or tab_id <= 0:
             raise BskError("initial_tab_unexpected", "新会话的初始标签不是唯一空白任务标签，已停止。")
-        self.tab = int(tabs[0]["tab_id"])
+        self.tab = tab_id
         result = self.run(["navigate", FIXED_HOMEPAGE, "--tab-id", str(self.tab),
                            "--wait-until", "load"], timeout=self.cfg.t_navigate + 10)
         if result.get("tab_id") != self.tab:

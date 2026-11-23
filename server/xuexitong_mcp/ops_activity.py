@@ -376,7 +376,7 @@ class ActivityOps(XxtBase):
             res["chrome_policy"] = {"present": False, "hint": "未安装全局 Chrome 策略；可单独检查防弹窗扩展与浏览器语言。"}
         try:
             step = "session"
-            self.b.ensure_session(renew_idle_readonly=True)
+            self.b.ensure_session(renew_idle_readonly=True, renew_disconnected_readonly=True)
             # Report only that control is bound; session/tab handles stay internal.
             res["session"] = {"bound": isinstance(self.b.session, str) and isinstance(self.b.tab, int)}
             step = "login"
