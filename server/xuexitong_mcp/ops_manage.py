@@ -149,10 +149,9 @@ class ManageOps(XxtBase):
                 js = """const r=await fetch(%s,{credentials:'include'}); if(!r.ok) return null; const d=D(await r.text());
                     return [...d.querySelectorAll('ul.recycle_div[kid]')].map(u=>({id:u.getAttribute('kid'),title:T(u.querySelector('.ul_text'))}));"""
             else:
-                u = f"/mooc2-ans/coursedata?{self.q(c)}&v=6" + (f"&dataId={_safe_id(folder)}" if folder and folder != "0" else "")
-                js = """const d=D(await F(%s)); if(!d.querySelector('#dataId')) return null;
-                    return [...d.querySelectorAll('ul.dataBody_td[id]')].map(u=>({id:u.id,title:u.getAttribute('dataname'),folder:u.getAttribute('type')==='afolder',
-                      download:u.getAttribute('isdown')==='1',open:u.getAttribute('isopen')}));"""
+                return [{"id": row["id"], "title": row["title"], "folder": row["type"] == "afolder",
+                         "download": row["download"], "open": row["open"]}
+                        for row in self._material_rows(c, folder)]
         else:
             raise XxtError(f"只支持：{'、'.join(BIN_KINDS)}。")
         r = self.on(M2, js % json.dumps(u))

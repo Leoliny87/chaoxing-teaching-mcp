@@ -2568,7 +2568,7 @@ def delete_material(course: Course_, material: Annotated[str, Field(description=
     return client().delete_to_bin(course, "资料", material)
 
 
-@tool(R, "列出课程资料某个文件夹里的内容（folder 留空=根目录），含是否允许下载。")
+@tool(R, "逐页列出课程资料某个文件夹里的全部内容（folder 留空=根目录），含是否允许下载。")
 def list_folder_materials(course: Course_, folder: Annotated[str, Field(description="文件夹名或ID，留空=根目录")] = "") -> dict:
     return {"items": client().folder_materials(course, folder or "0")}
 
