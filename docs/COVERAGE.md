@@ -429,6 +429,22 @@
 
 
 
+### 2026-11-23（第二十六轮）全部 12 模块真机复测完成 + 4 处 bug 修复 + 1 工具补全
+**复测范围**：教师档全部工具按 12 模块逐个真机验证（读工具批量、写工具预演+确认+净零清理），师生闭环（教师发布作业→学生提交→教师批改 ok=True）已跑通。回归 **350 通过**。
+
+**本轮修复的真实 bug**：
+1. **考试删除班级**（ops_manage._rows 考试）：考试列表行无 clazz_id，delete_to_bin 用默认班致删除失败。修复：遍历班级 URL 带 clazz_id。真机验证删除入回收站零残留。
+2. **知识点按名删除**（server.delete_knowledge_points）：预演解析名称→ID，确认路径却把原始名称传给只认 ID 的客户端，误报"已不在图谱"。修复：确认路径同样解析。真机验证按名删 ok=True。
+3. **活动跨班级删除**（ops_activity.delete_activity）：活动按班级作用域，只读默认班致非默认班活动"找不到"。修复：遍历所有班级（捕获 _best 的 XxtError 继续）、在所在班级导航/删除/核对。真机验证 3 个测试班活动全删零残留。
+4. **题库标签删除工具缺失**：有 create_bank_label 无 delete，测试标签无法净零清理。新增 delete_bank_label（question-label/delete?labelid，从页面内联 dropAction 函数实证）。真机验证增删净零。
+
+**环境性限制（非 MCP 代码 bug，如实记录）**：
+- **资料上传**：bsk upload 经 CDP setFileInputFiles 在此 Chrome 158 环境报 "Not allowed"（注入可见 input 与真实 input 均失败），上传类工具受阻；其余资料工具（读/文件夹增删/下载权限/移动）全过。
+- **嵌套知识点**：平台拒绝"知识点无法添加子集"，单层添加正常；MCP 正确 surfaced 平台错误。
+- **题库文件夹删除**：平台 qbank UI 不暴露文件夹删除端点（questionList.js 26 个 ajax 仅 insertdir/update-dirname），空文件夹无法删，改名标记。
+
+**各模块结果**：A 基础 11/11；B 通知讨论净零；C 作业师生闭环；D 考试试卷净零；E 章节内容净零；F 题库净零；G 资料净零（上传受限）；H 图谱净零；I 活动净零；J 班级成绩设置净零；K 课件学情读+查重校验；L 教材读+章节/知识点净零。
+
 ### 2026-11-23（第二十五轮）MCP 内置 Chrome 按需自启（全关也能自开）+ 实例映射纠正
 - **用户纠正启动入口**：要开的是 Chrome 本体已登录的两个 Google 主帐号 yun lin(Default)/erwen xiao(Profile 1)（~/.config/google-chrome），旧专用资料根指导作废。官方入口 ai395-open-learning-chrome both/--status 已按此改好。实例映射按用户给定：教师 ai395=c41e7649、学生 test_chrome=1e1e4951。
 - **MCP 自启修复（方案B）**：bsk.start_session 检测绑定实例离线时，调官方入口 ai395-open-learning-chrome <role> 打开对应 profile（复用已运行、补开缺失），轮询等扩展接入（默认60s，XUEXITONG_MCP_BROWSER_OPENER_WAIT 可调）后开会话；超时仍离线则报 browser_profile_unavailable 请用户重连。不杀 Chrome/删锁。XUEXITONG_MCP_BROWSER_OPENER="" 可禁用；角色经 XUEXITONG_MCP_BROWSER_OPENER_ROLE 或实例映射(c41e7649→teacher/1e1e4951→student)。
