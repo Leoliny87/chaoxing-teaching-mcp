@@ -105,8 +105,12 @@ class CourseOps(XxtBase):
             if not isinstance(result, dict) or result.get("course_id") != course_id or result.get("folder_id") != folder_id:
                 raise XxtError(f"资料列表第 {page} 页读取失败或范围不符；未返回不完整列表。")
             items, pages = result.get("items"), result.get("pages")
+            reported_page, size = result.get("page"), result.get("size")
+            # A genuinely empty listing can report zero pages and page zero.
+            empty_listing = page == 1 and reported_page == pages == 0 and items == []
             if (not isinstance(items, list) or type(pages) is not int or pages < 0
-                    or result.get("page") != page or result.get("size") != len(items)
+                    or type(reported_page) is not int or (reported_page != page and not empty_listing)
+                    or type(size) is not int or size != len(items)
                     or (not items and pages > 1) or (items and pages < page)):
                 raise XxtError(f"资料列表第 {page} 页分页或条目数不一致；未返回不完整列表。")
             if total_pages is None:

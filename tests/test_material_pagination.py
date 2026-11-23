@@ -93,11 +93,42 @@ def test_verified_empty_folder(monkeypatch, client, total):
     assert calls == [("0", 1)]
 
 
+def test_verified_subfolder_accepts_official_zero_page_tuple(monkeypatch, client):
+    folder = _item(100, typ="afolder")
+    calls = _mock_listing(monkeypatch, client, {
+        ("0", 1): _page("0", 1, 1, [folder]),
+        ("100", 1): _page("100", 0, 0, []),
+    })
+
+    assert client.folder_materials("1", "100") == []
+    assert calls == [("0", 1), ("100", 1)]
+
+
+@pytest.mark.parametrize("overrides", [
+    {"course_id": "999"},
+    {"folder_id": "999"},
+    {"course_id": None},
+    {"folder_id": None},
+    {"page": None},
+    {"page": False},
+    {"pages": 1},
+    {"size": None},
+    {"size": 1},
+    {"items": [_item(7)], "size": 1},
+])
+def test_zero_page_tuple_rejects_unverified_identity_or_contradictory_fields(monkeypatch, client, overrides):
+    calls = _mock_listing(monkeypatch, client, {("0", 1): {**_page("0", 0, 0, []), **overrides}})
+    with pytest.raises(XxtError, match="未返回不完整列表"):
+        client.folder_materials("1")
+    assert calls == [("0", 1)]
+
+
 @pytest.mark.parametrize("second", [
     None,  # HTTP failure or unsigned page
     _page("0", 1, 2, [_item(11)]),  # server ignored the page number
     _page("0", 2, 2, [_item(10)]),  # overlapping IDs from a changing listing
     _page("0", 2, 2, []),
+    _page("0", 0, 0, []),  # never an empty first page when requested page 2
     _page("999", 2, 2, [_item(11)]),
     {**_page("0", 2, 2, [_item(11)]), "course_id": "999"},
     {**_page("0", 2, 2, [_item(11)]), "size": 30},
