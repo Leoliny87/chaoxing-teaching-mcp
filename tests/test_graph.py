@@ -70,3 +70,57 @@ def test_delete_knowledge_points_resolves_names_on_confirm(monkeypatch):
     monkeypatch.setattr(srv, "_check_write", lambda c: type("C", (), {"id": "1", "name": "课"})())
     out = srv.delete_knowledge_points("课", ["甲", "乙"], confirm=True)
     assert out["ok"] and got["ids"] == ["111", "222"]
+
+
+@pytest.mark.parametrize("modern", [True, False], ids=["native-categories", "legacy-form"])
+def test_import_nested_outline_uses_the_graph_versions_form(modern):
+    import json
+
+    from xuexitong_mcp.ops_graph import GraphOps
+    from xuexitong_mcp.xxt import Course
+
+    class OutlineGraph(GraphOps):
+        def __init__(self):
+            self.nodes = {"100": dict(point_id="100", parent_id="0", name="根", level=1,
+                                     node_type="1" if modern else None)}
+
+        def ctx(self, course):
+            return Course(id="1", name="课", cpi="2", clazz_id="3")
+
+        def on(self, host, script, retry_safe=True):
+            if "coursetopic/outlinemodedata" in script:
+                assert "knowNumbar" in script and "topicCount" in script
+                return {"modern": modern, "points": list(self.nodes.values())}
+
+            assert retry_safe is False
+            raw = script.split("POST(", 1)[1].removesuffix("));")
+            form = json.loads(raw)
+            fields = {"courseid", "cpi", "topic", "addTopicType", "curOperateTopicId"}
+            if modern:
+                assert set(form) == fields | {"clazzId", "topicModelId", "addNodeType", "citeTopicId"}
+                assert form["clazzId"] == "3" and form["topicModelId"] == form["citeTopicId"] == 0
+            else:
+                assert set(form) == fields
+
+            anchor = self.nodes[form["curOperateTopicId"]]
+            pid = anchor["point_id"] if form["addTopicType"] else anchor["parent_id"]
+            if modern:
+                assert self.nodes[pid]["node_type"] == "1"
+            tid = str(100 + len(self.nodes))
+            self.nodes[tid] = dict(point_id=tid, parent_id=pid, name=form["topic"],
+                                   level=self.nodes[pid]["level"] + 1,
+                                   node_type=str(form["addNodeType"]) if modern else None)
+            return {"status": True, "topicId": tid}
+
+    graph = OutlineGraph()
+    result = graph.add_knowledge_points("1", "工序\n  判断\n    证据\n  验收\n交付", "100")
+    assert result["ok"] is True
+    added = list(graph.nodes.values())[1:]
+    assert [p["parent_id"] for p in added] == ["100", "101", "102", "101", "100"]
+    assert [p["level"] for p in added] == [2, 3, 4, 3, 2]
+    assert [p["node_type"] for p in added] == (["1", "1", "0", "0", "0"] if modern else [None] * 5)
+    if modern:
+        with pytest.raises(XxtError, match="只能向分类"):
+            graph.add_knowledge_points("1", "额外节点", "103")
+    else:
+        assert graph.add_knowledge_points("1", "额外节点", "103")["ok"] is True

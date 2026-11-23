@@ -46,26 +46,29 @@ class GraphOps(XxtBase):
     def _gq(self, c) -> str:
         return f"courseid={_safe_id(c.id)}&cpi={_safe_id(c.cpi)}"
 
-    def knowledge_points(self, course: str, query: str = "") -> list[dict]:
-        c = self.ctx(course)
-        # The new UI's outline editor (知识图谱「编辑」 -> coursetopic/outlinemodehead) loads coursetopic/outlinemodedata; the old
-        # frame page's questionBankTopic/knowledgepointsdata has the same markup and is only a fallback.
+    def _knowledge_outline(self, c, query: str = "") -> tuple[bool, list[dict]]:
+        # Only the new outline uses native categories. Keep its version signal even when the list is empty.
         r = self.on(M2, r"""
             const q='%s&clazzid=%s&searchType=&query='+encodeURIComponent(%s);
             let h=''; try{h=await F('/mooc2-ans/coursetopic/outlinemodedata?topicModelId=0&'+q)}catch(e){}
-            let d=D(h); const okNew=h.includes('knowNumbar')||h.includes('topicList');
-            if(!okNew){ d=D(await F('/mooc2-ans/questionBankTopic/knowledgepointsdata?ut=t&'+q)); if(!d.getElementById('topicCount')) return null; }
-            return [...d.querySelectorAll('li.topicList')].map(li=>{const id=li.getAttribute('data');
+            let d=D(h);
+            const modern=h.includes('knowNumbar')||Boolean(d.querySelector('li.topicList[type="0"], li.topicList[type="1"]'));
+            if(!modern){ d=D(await F('/mooc2-ans/questionBankTopic/knowledgepointsdata?ut=t&'+q)); if(!d.getElementById('topicCount')) return null; }
+            const points=[...d.querySelectorAll('li.topicList')].map(li=>{const id=li.getAttribute('data');
               const box=[...li.querySelector('.tree_main').querySelectorAll(':scope>.tree_tags_box')].map(b=>{const c=b.cloneNode(true);
                 const k=c.querySelector('.dataName'); if(k) k.remove(); return [...c.querySelectorAll('span')].map(T).filter(Boolean)});
               const lab=li.querySelector('.tree_main .labelList'); const vis=li.querySelector('#showhidestatus_'+id);
               return {point_id:id,name:T(li.querySelector('#listtopicname_'+id)),parent_id:li.getAttribute('parentId'),level:Number(li.getAttribute('level')),
                 related:box[0]||[],prerequisites:box[1]||[],followups:box[2]||[],labels:lab?[...lab.querySelectorAll('span')].map(T).filter(Boolean):[],
-                visible:vis?!/隐藏/.test(T(vis)):null,node_type:li.getAttribute('type')}});
+                visible:vis?!/隐藏/.test(T(vis)):null,node_type:modern?li.getAttribute('type'):null}});
+            return {modern,points};
         """ % (self._gq(c), _safe_id(c.clazz_id), json.dumps(str(query or "")[:50], ensure_ascii=False)))
-        if not isinstance(r, list):
+        if not isinstance(r, dict) or not isinstance(r.get("modern"), bool) or not isinstance(r.get("points"), list):
             raise XxtError("课程图谱读取失败；不能视为没有知识点。")
-        return r
+        return r["modern"], r["points"]
+
+    def knowledge_points(self, course: str, query: str = "") -> list[dict]:
+        return self._knowledge_outline(self.ctx(course), query)[1]
 
     def course_graph(self, course: str) -> dict:
         pts = self.knowledge_points(course)
@@ -83,17 +86,24 @@ class GraphOps(XxtBase):
         return _best(pts if pts is not None else self.knowledge_points(course), str(point), key="name", id_keys=("point_id",))
 
     # ------------------------------------------------------------------ writes
-    def _add(self, c, name: str, add_type: int, cur: str) -> dict:
-        r = self.on(M2, "return await J('/mooc2-ans/questionBankTopic/addtopic',POST(%s));" % json.dumps({
-            "courseid": _safe_id(c.id), "cpi": _safe_id(c.cpi), "topic": name, "addTopicType": add_type, "curOperateTopicId": _safe_id(cur)},
-            ensure_ascii=False), retry_safe=False)
+    def _add(self, c, name: str, add_type: int, cur: str, *, node_type: int | None = None) -> dict:
+        form = {
+            "courseid": _safe_id(c.id), "cpi": _safe_id(c.cpi), "topic": name,
+            "addTopicType": add_type, "curOperateTopicId": _safe_id(cur),
+        }
+        if node_type is not None:
+            form.update(clazzId=_safe_id(c.clazz_id), topicModelId=0, addNodeType=node_type, citeTopicId=0)
+        r = self.on(M2, "return await J('/mooc2-ans/questionBankTopic/addtopic',POST(%s));" %
+                    json.dumps(form, ensure_ascii=False), retry_safe=False)
         return r if isinstance(r, dict) else {}
 
     def add_knowledge_points(self, course: str, outline: str, parent: str = "") -> dict:
         rows = graph_outline(outline)
         c = self.ctx(course)
-        pts = self.knowledge_points(c.id)
+        modern, pts = self._knowledge_outline(c)
         par = self.find_point(c.id, parent, pts) if parent else None
+        if modern and par and par.get("node_type") == "0":
+            raise XxtError("新图谱只能向分类添加子节点，请选择一个分类作为上级。")
         base_level = par["level"] if par else 0
         if base_level + max(lv for lv, _ in rows) > 7:
             raise XxtError("加上上级知识点后超过 7 级。")
@@ -103,25 +113,32 @@ class GraphOps(XxtBase):
         parent_at: dict[int, str] = {0: par["point_id"] if par else "0"}
         made, expected = [], []
         for i, (lv, name) in enumerate(rows):
+            has_children = i + 1 < len(rows) and rows[i + 1][0] > lv
+            node_type = int(has_children) if modern else None
             if lv == 1 and 1 not in last_at and siblings:
                 last_at[1] = siblings[-1]["point_id"]
             if lv in last_at:
-                r = self._add(c, name, 0, last_at[lv])          # sibling right after the previous one
+                r = self._add(c, name, 0, last_at[lv], node_type=node_type)        # sibling right after the previous one
             else:
-                r = self._add(c, name, 1, parent_at[lv - 1])    # first child of its parent
+                r = self._add(c, name, 1, parent_at[lv - 1], node_type=node_type)  # first child of its parent
             tid = str(r.get("topicId") or "")
             if r.get("status") is not True or not tid.isdigit():
                 return {"ok": False, "write_outcome": "unknown" if made else "not_written", "added": made,
                         "error": f"第 {i + 1} 行「{name}」没有加上（{str(r.get('msg') or '')[:60]}）；前面 {len(made)} 个已加，请用 get_course_graph 核查。"}
             made.append({"point_id": tid, "name": name, "level": base_level + lv})
-            expected.append((tid, name, parent_at[lv - 1]))
+            expected.append((tid, name, parent_at[lv - 1], base_level + lv, str(node_type)))
             last_at[lv] = tid
             parent_at[lv] = tid
             for deeper in [k for k in last_at if k > lv]:
                 last_at.pop(deeper)
-        after = {p["point_id"]: p for p in self.knowledge_points(c.id)}
-        bad = [n for tid, n, pid in expected if tid not in after or after[tid]["name"] != n or after[tid]["parent_id"] != pid]
-        ok = not bad and all(p["point_id"] in after for p in pts)
+        modern_after, readback = self._knowledge_outline(c)
+        after = {p["point_id"]: p for p in readback}
+        bad = [
+            name for tid, name, pid, level, kind in expected
+            if tid not in after or after[tid]["name"] != name or after[tid]["parent_id"] != pid
+            or after[tid]["level"] != level or (modern and after[tid].get("node_type") != kind)
+        ]
+        ok = modern_after == modern and not bad and all(p["point_id"] in after for p in pts)
         return {"ok": ok, "added": made, **({} if ok else {"write_outcome": "unknown", "error": f"核对不一致：{bad[:5]}；请用 get_course_graph 核查。"})}
 
     def rename_knowledge_point(self, course: str, point_id: str, new_name: str) -> dict:
