@@ -1066,6 +1066,28 @@ def insert_chapter_link(course: Course_, chapter: Chapter_, card_id: Annotated[s
 CardId_ = Annotated[str, Field(description="卡片ID（read_chapter_content 可查）")]
 
 
+@tool(W, "在可完整读取的文本卡片末尾添加本课程的原生章节目录链接。无任务点。先预演，再确认并核对原正文及同章卡片。")
+def insert_course_chapter_link(
+    course: Course_,
+    chapter: Annotated[str, Field(description="源章节的数字 ID（list_chapters 可查）")],
+    card_id: CardId_,
+    target_chapter: Annotated[str, Field(description="同一课程下目标章节的数字 ID（list_chapters 可查）")],
+    title: Annotated[str, Field(description="可见链接文字，留空使用目标章节标题，最多 200 字")] = "",
+    confirm: Confirm = False,
+) -> dict:
+    c = _check_write(course)
+    if not confirm:
+        source, target, _, card = client()._course_chapter_link_context(c, chapter, card_id, target_chapter)
+        label = title or target["title"]
+        if not label.strip() or len(label) > 200:
+            raise XxtError("章节链接标题需为 1–200 字。")
+        return _dry(c, "插入同课程章节的文本链接（学生可见）", bind={"title": label},
+                    chapter=f"{source['number']} {source['title']}", card_id=card_id, card_title=card.get("title"),
+                    target_chapter=f"{target['number']} {target['title']}", target_chapter_id=target_chapter,
+                    title=label, task_point=False)
+    return client().insert_course_chapter_link(c, chapter, card_id, target_chapter, title)
+
+
 def _chapter_dry(c, chapter: str, action: str, **details) -> dict:
     ch = client().find_chapter(c.id, chapter)
     if int(ch.get("layer") or 1) <= 1:
