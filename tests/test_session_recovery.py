@@ -176,3 +176,35 @@ def test_start_session_offline_no_opener_raises(cfg, monkeypatch):
     with pytest.raises(BskError) as ei:
         b.start_session()
     assert ei.value.code == "browser_profile_unavailable"
+
+
+def test_auto_open_role_from_per_user_config(cfg, monkeypatch):
+    # The opener role is recorded per-user in config ([browser] opener_role), not
+    # hardcoded per instance. cfg.browser_opener_role drives the launcher role.
+    import subprocess as sp
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "instUSER99")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER_ROLE", "")
+    cfg.browser_opener = "/fake/opener"
+    cfg.browser_opener_role = "student"
+    cfg.browser_opener_wait = 5
+    b = Bsk(cfg)
+    state = {"opener": [], "browsers": 0}
+
+    def fake_run(args, timeout=None, session=True):
+        if args[0] == "browsers":
+            state["browsers"] += 1
+            if state["browsers"] >= 2:
+                return {"value": [{"instance_id": "instUSER99", "unresponsive": False}]}
+            return {"value": []}
+        if args[:2] == ["session", "start"]:
+            return {"session_id": "s2", "browser_instance_id": "instUSER99"}
+        return {}
+
+    monkeypatch.setattr(b, "run", fake_run)
+    monkeypatch.setattr(b, "_initialize_owned_tab", lambda: None)
+    monkeypatch.setattr(bsk_mod.subprocess, "run",
+                        lambda *a, **k: state["opener"].append(a[0]) or sp.CompletedProcess(a[0], 0))
+    b.start_session()
+    assert state["opener"] and state["opener"][0] == ["/fake/opener", "student"]
+    assert b.session == "s2"

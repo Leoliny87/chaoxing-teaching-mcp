@@ -41,12 +41,12 @@ FIXED_BOOTSTRAP_COURSE = os.environ.get("XUEXITONG_MCP_BOOTSTRAP_COURSE", "").st
 # On-demand Chrome auto-open: when the bound instance is offline (e.g. Chrome fully
 # closed), call the host's official launcher to open the matching profile, then wait
 # for the BrowserSkill extension to attach. Never kills Chrome / removes profile locks.
-# Set XUEXITONG_MCP_BROWSER_OPENER="" to disable. Role defaults to the instance mapping
-# below and can be overridden with XUEXITONG_MCP_BROWSER_OPENER_ROLE=teacher|student|both.
+# The launcher path defaults to the host opener; the ROLE is per-user and must be
+# recorded by the agent in config.toml [browser] opener_role (instance IDs / profiles
+# differ per user, so nothing here hardcodes a user's instance). Env overrides config.
 BROWSER_OPENER = os.environ.get("XUEXITONG_MCP_BROWSER_OPENER", "/home/linyun/.local/bin/ai395-open-learning-chrome").strip()
 BROWSER_OPENER_ROLE = os.environ.get("XUEXITONG_MCP_BROWSER_OPENER_ROLE", "").strip()
 BROWSER_OPENER_WAIT = float(os.environ.get("XUEXITONG_MCP_BROWSER_OPENER_WAIT", "60"))
-BROWSER_OPENER_INSTANCE_ROLE = {"c41e7649": "teacher", "1e1e4951": "student"}
 
 BLANK_URL = "https://mooc2-ans.chaoxing.com/mooc2-ans/js/ServerHost.js"
 
@@ -347,19 +347,21 @@ class Bsk:
         removes profile locks; if the extension does not attach in time the caller
         reports browser_profile_unavailable so the user can reconnect the popup.
         """
-        if not BROWSER_OPENER:
+        if not BROWSER_OPENER and not self.cfg.browser_opener:
             return
-        role = BROWSER_OPENER_ROLE or BROWSER_OPENER_INSTANCE_ROLE.get(FIXED_BROWSER_INSTANCE, "")
+        opener = self.cfg.browser_opener or BROWSER_OPENER
+        role = self.cfg.browser_opener_role or BROWSER_OPENER_ROLE
         if not role:
-            self.log.info("no opener role mapped for instance %s; skip auto-open", FIXED_BROWSER_INSTANCE)
+            self.log.info("browser opener_role not recorded for instance %s; skip auto-open "
+                          "(agent should set [browser] opener_role in config.toml)", FIXED_BROWSER_INSTANCE)
             return
         try:
             self.log.info("auto-opening Chrome via launcher role=%s", role)
-            subprocess.run([BROWSER_OPENER, role], capture_output=True, text=True, timeout=90)
+            subprocess.run([opener, role], capture_output=True, text=True, timeout=90)
         except Exception as e:  # noqa: BLE001
             self.log.warning("chrome auto-open launcher failed: %s", e)
             return
-        deadline = time.time() + BROWSER_OPENER_WAIT
+        deadline = time.time() + (self.cfg.browser_opener_wait or BROWSER_OPENER_WAIT)
         while time.time() < deadline:
             if self._browser_online():
                 self.log.info("chrome auto-open: instance %s attached", FIXED_BROWSER_INSTANCE)

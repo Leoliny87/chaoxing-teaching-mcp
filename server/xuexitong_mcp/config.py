@@ -44,6 +44,13 @@ class Config:
     update: dict = field(default_factory=dict)   # [update]: remote, channel, require_signed_tags, allowed_signers
     auto_login: bool = True
     login_account: str = ""
+    # On-demand Chrome auto-open (per-user; the agent records these when binding a
+    # browser instance, since instance IDs / profiles differ per user). [browser] in
+    # config.toml. browser_opener_role is the launcher role for THIS bound instance
+    # (teacher|student|both); empty = auto-open disabled until recorded.
+    browser_opener: str = ""
+    browser_opener_role: str = ""
+    browser_opener_wait: float = 60
     path: Path | None = None
 
     def bsk(self) -> str:
@@ -100,6 +107,10 @@ def load(path: str | os.PathLike | None = None) -> Config:
         li = d.get("login", {}) or {}
         cfg.auto_login = bool(li.get("auto_login", True))
         cfg.login_account = str(li.get("login_account", "") or "")
+        br = d.get("browser", {}) or {}
+        cfg.browser_opener = str(br.get("opener", "") or "")
+        cfg.browser_opener_role = str(br.get("opener_role", "") or "")
+        cfg.browser_opener_wait = float(br.get("opener_wait", cfg.browser_opener_wait))
     # The environment can narrow the explicitly configured allowlist, never
     # create or broaden authority.  An explicitly empty variable denies all.
     if "XUEXITONG_MCP_WRITE_ALLOW" in os.environ:
@@ -109,4 +120,10 @@ def load(path: str | os.PathLike | None = None) -> Config:
         cfg.bsk_path = os.environ["XUEXITONG_MCP_BSK"]
     if os.environ.get("XUEXITONG_MCP_AUTO_LOGIN") == "0":
         cfg.auto_login = False
+    if "XUEXITONG_MCP_BROWSER_OPENER" in os.environ:
+        cfg.browser_opener = os.environ["XUEXITONG_MCP_BROWSER_OPENER"].strip()
+    if os.environ.get("XUEXITONG_MCP_BROWSER_OPENER_ROLE"):
+        cfg.browser_opener_role = os.environ["XUEXITONG_MCP_BROWSER_OPENER_ROLE"].strip()
+    if os.environ.get("XUEXITONG_MCP_BROWSER_OPENER_WAIT"):
+        cfg.browser_opener_wait = float(os.environ["XUEXITONG_MCP_BROWSER_OPENER_WAIT"])
     return cfg
