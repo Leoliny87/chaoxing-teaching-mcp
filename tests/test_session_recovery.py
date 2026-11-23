@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 from xuexitong_mcp import bsk as bsk_mod  # noqa: E402
 from xuexitong_mcp.bsk import Bsk, BskError  # noqa: E402
 from xuexitong_mcp.config import Config  # noqa: E402
+from xuexitong_mcp.xxt import NOTICE, make_client  # noqa: E402
 
 NEW_SESSION = "sessNEW123"
 
@@ -99,6 +100,98 @@ def test_live_tab_error_still_protected_by_preserve_tab(cfg, monkeypatch, code, 
         b.ensure_session(renew_idle_readonly=True)
     assert b.session == "sessOLD"
     assert b.preserve_tab is True
+
+
+def test_health_recovers_disconnected_owned_session_on_same_reconnected_browser(cfg, monkeypatch):
+    client = make_client(cfg)
+    b = client.b
+    b.session, b.tab = "sessOLD", 5
+    b.preserve_tab = b._login_handoff = True
+    b.obs_text = "previous observation"
+    b.doctor = lambda: [{"name": "extension connected", "ok": True}]
+    b.wait_readiness = lambda *args: None
+    b.navigate = lambda *args, **kwargs: ""
+    client.on = lambda host, *args: {"ok": True} if host == NOTICE else {"zh": True}
+    client.courses = lambda **kwargs: [object()]
+    client.here = lambda *args: {"guard": True, "lang": "zh-CN"}
+    calls = []
+    fake = _fake_run("browser_disconnected")
+
+    def run(args, timeout=None, session=True):
+        calls.append(args)
+        return fake(args, timeout=timeout, session=session)
+
+    monkeypatch.setattr(b, "run", run)
+    result = client.health()
+    assert result["ok"] is True and result["session"] == {"bound": True}
+    assert b.session == NEW_SESSION and b.tab == 77
+    assert not b.preserve_tab and not b._login_handoff and not b.obs_text
+    assert all(NEW_SESSION not in str(value) for value in result.values())
+    assert calls[:3] == [["tab", "list", "--scope", "agent"], ["browsers"],
+                         ["session", "start", "--browser", "inst0001"]]
+    assert not any(args[:2] == ["session", "stop"] for args in calls)
+
+
+@pytest.mark.parametrize("browsers", [
+    [],
+    [{"instance_id": "different", "unresponsive": False}],
+    [{"instance_id": "inst0001", "unresponsive": True}],
+    [{"instance_id": "inst0001"}],
+    [{"instance_id": "inst0001", "unresponsive": False}] * 2,
+])
+def test_disconnected_health_keeps_state_when_fixed_profile_is_unavailable(cfg, monkeypatch, browsers):
+    b = Bsk(cfg)
+    b.session, b.tab, b.preserve_tab = "sessOLD", 5, True
+    b._save_state()
+    saved = bsk_mod.STATE_FILE.read_text()
+
+    def run(args, timeout=None, session=True):
+        if args == ["tab", "list", "--scope", "agent"]:
+            raise BskError("not_found", "synthetic", {"reason": "browser_disconnected"})
+        assert args == ["browsers"] and session is False
+        return {"value": browsers}
+
+    monkeypatch.setattr(b, "run", run)
+    monkeypatch.setattr(b, "_auto_open_browser", lambda: pytest.fail("offline Chrome must stay untouched"))
+    with pytest.raises(BskError) as caught:
+        b.ensure_session(renew_disconnected_readonly=True)
+    assert caught.value.code == "browser_profile_unavailable"
+    assert (b.session, b.tab, b.preserve_tab) == ("sessOLD", 5, True)
+    assert bsk_mod.STATE_FILE.read_text() == saved
+
+
+@pytest.mark.parametrize(("code", "health"), [("not_found", False), ("permission_denied", True)])
+def test_disconnected_recovery_requires_health_and_exact_tombstone(cfg, monkeypatch, code, health):
+    b = Bsk(cfg)
+    b.session, b.tab = "sessOLD", 5
+    failure = BskError(code, "synthetic", {"reason": "browser_disconnected"})
+
+    def run(args, timeout=None, session=True):
+        assert args == ["tab", "list", "--scope", "agent"]
+        raise failure
+
+    monkeypatch.setattr(b, "run", run)
+    with pytest.raises(BskError) as caught:
+        b.ensure_session(renew_idle_readonly=True, renew_disconnected_readonly=health)
+    assert caught.value is failure
+    assert (b.session, b.tab) == ("sessOLD", 5)
+
+
+def test_disconnected_health_does_not_replace_state_on_wrong_session_browser(cfg, monkeypatch):
+    b = Bsk(cfg)
+    b.session, b.tab = "sessOLD", 5
+    fake = _fake_run("browser_disconnected")
+
+    def run(args, timeout=None, session=True):
+        if args[:2] == ["session", "start"]:
+            return {"session_id": NEW_SESSION, "browser_instance_id": "different"}
+        return fake(args, timeout=timeout, session=session)
+
+    monkeypatch.setattr(b, "run", run)
+    with pytest.raises(BskError) as caught:
+        b.ensure_session(renew_disconnected_readonly=True)
+    assert caught.value.code == "browser_profile_mismatch"
+    assert (b.session, b.tab) == ("sessOLD", 5)
 
 
 def test_stop_closes_tab_and_stops_session(cfg, monkeypatch):

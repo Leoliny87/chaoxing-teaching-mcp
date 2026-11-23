@@ -9,8 +9,8 @@ Implements the internal helpers from mcp-tool-proposal.md / bsk-workarounds.md:
   * download helper (fetch_export) and verify-after-write hooks (done in client)
 
 Every failed sync or action stops immediately. Successful passive observations
-may be compared by readiness.py, but no error triggers a replacement session,
-tab, repeated navigation or write. retry_safe is retained as API metadata only.
+may be compared by readiness.py. Explicit health checks can renew a dead
+session, but do not repeat the failed operation.
 """
 from __future__ import annotations
 
@@ -283,22 +283,21 @@ class Bsk:
                 if isinstance(s, dict) and isinstance(s.get("session_id"), str) and s["session_id"]
                 and s.get("browser_instance_id") == FIXED_BROWSER_INSTANCE]
 
-    def ensure_session(self, *, renew_idle_readonly: bool = False):
+    def ensure_session(self, *, renew_idle_readonly: bool = False, renew_disconnected_readonly: bool = False):
         with self.lock:
-            if self.session and renew_idle_readonly:
-                # Health checks may begin a new read-only session only after the
-                # CLI confirms the session is definitively dead (idle expiry or a
-                # closed window). In those cases the owned tab no longer exists,
-                # so there is nothing to preserve and recovery proceeds even when
-                # preserve_tab was set by an earlier error. Any other failure
-                # (permission, transport, unknown) keeps preserve_tab's protection
-                # and is never turned into recovery.
+            if self.session and (renew_idle_readonly or renew_disconnected_readonly):
+                # Only a session tombstone confirms that its owned tab is gone.
+                # Permission, transport and unknown failures preserve the session.
                 try:
                     self.run(["tab", "list", "--scope", "agent"])
                 except BskError as e:
-                    dead = e.code == "not_found" and e.data.get("reason") in (
-                        "session_idle_timeout", "session_window_closed")
-                    if not dead:
+                    reason = e.data.get("reason")
+                    if e.code != "not_found":
+                        raise
+                    if renew_disconnected_readonly and reason == "browser_disconnected":
+                        self.start_session(replacing_disconnected=True)
+                        return
+                    if not renew_idle_readonly or reason not in ("session_idle_timeout", "session_window_closed"):
                         raise
                     self.session = None
                     self.tab = None
@@ -332,11 +331,14 @@ class Bsk:
                 pass
             self.start_session()
 
-    def _browser_online(self) -> bool:
+    def _browser_online(self, *, require_responsive: bool = False) -> bool:
         browsers = self.run(["browsers"], session=False)
         instances = browsers.get("value", browsers) if isinstance(browsers, dict) else browsers
         matches = [b for b in instances if isinstance(b, dict) and b.get("instance_id") == FIXED_BROWSER_INSTANCE] if isinstance(instances, list) else []
-        return len(matches) == 1 and matches[0].get("unresponsive") is not True
+        if len(matches) != 1:
+            return False
+        unresponsive = matches[0].get("unresponsive")
+        return unresponsive is False if require_responsive else unresponsive is not True
 
     def _auto_open_browser(self) -> None:
         """On-demand: open the bound Chrome profile via the host's official launcher.
@@ -368,16 +370,27 @@ class Bsk:
                 return
             time.sleep(3)
 
-    def start_session(self):
+    def start_session(self, *, replacing_disconnected: bool = False):
         if not FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_unconfigured", "Set XUEXITONG_MCP_BROWSER to your explicitly selected local BrowserSkill instance; no fallback is allowed.")
-        if not self._browser_online():
+        if replacing_disconnected:
+            if not self._browser_online(require_responsive=True):
+                raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
+        elif not self._browser_online():
             self._auto_open_browser()
             if not self._browser_online():
                 raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
         d = self.run(["session", "start", "--browser", FIXED_BROWSER_INSTANCE], session=False)
         if d.get("browser_instance_id") != FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_mismatch", "新会话未确认绑定 配置指定的浏览器实例，停止操作。")
+        if replacing_disconnected:
+            session_id = d.get("session_id")
+            if not isinstance(session_id, str) or not session_id or session_id == self.session:
+                raise BskError("session_rebuild_unconfirmed", "未确认固定浏览器的新会话，请先核对连接状态。")
+            self.url = ""
+            self.obs_text = ""
+            self.preserve_tab = False
+            self._login_handoff = False
         self.session = d["session_id"]
         self.tab = None
         try:
