@@ -93,12 +93,12 @@ def test_save_my_answers_checks_reopened_draft(question, answer, current, saved)
         assert "暂存后未能核实作答" in result["error"]
 
 
-def test_save_my_answers_needs_readable_page_even_without_new_answers():
+def test_save_my_answers_requires_a_readable_page_after_save():
     student = _answer_page(QS[3], None)
     pages = iter(({"state": "ok", "questions": [QS[3]]}, {"state": "noform"}))
     student.wait_for = lambda script, *, timeout: next(pages)
 
-    result = student.answer_my_assignment("助手", "42", {}, submit=False)
+    result = student.answer_my_assignment("助手", "42", {"4": "测试回答"}, submit=False)
 
     assert result["ok"] is False
     assert result["write_outcome"] == "unknown"
