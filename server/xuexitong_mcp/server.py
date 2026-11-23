@@ -2818,7 +2818,7 @@ def create_teaching_plan(course: Course_, title: Annotated[str, Field(descriptio
     return client().create_teaching_plan(c.id, title, list(sections))
 
 
-@tool(W, "把课件库或教案库里的一项作为活动发到一个明确的班级（学生可见）。先预演，确认后发起并在活动列表核实。")
+@tool(W, "把课件库或教案库里的一项作为活动发到一个明确的班级（学生可见）。预演核对并锁定资源和班级 ID，确认后发起并在活动列表核实。")
 def push_teaching_resource_activity(course: Course_, kind: Annotated[str, Field(description="课件 或 教案")],
                                     item: Annotated[str, Field(description="课件/教案的名称或ID")], class_name: Class_ = "",
                                     confirm: Confirm = False) -> dict:
@@ -2827,7 +2827,10 @@ def push_teaching_resource_activity(course: Course_, kind: Annotated[str, Field(
         raise XxtError("kind 只能是 课件 或 教案。")
     if not confirm:
         target = _preview_publish_class(c.id, class_name)
-        return _dry(c, f"把{kind}作为活动发到班级（学生可见）", bind={"class_name": target["id"]}, kind=kind, item=item, classes=[target])
+        resource = client()._teaching_resource(c, target["id"], kind, item)
+        item_id = str(resource["aid"])
+        return _dry(c, f"把{kind}作为活动发到班级（学生可见）", bind={"class_name": target["id"], "item": item_id},
+                    kind=kind, item=resource.get("title") or item_id, item_id=item_id, classes=[target])
     return client().push_plan_activity(c.id, class_name, kind, item)
 
 

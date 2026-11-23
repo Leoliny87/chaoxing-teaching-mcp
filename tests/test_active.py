@@ -11,6 +11,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from xuexitong_mcp import bsk as bsk_mod  # noqa: E402
+from xuexitong_mcp import server as srv  # noqa: E402
 from xuexitong_mcp.config import Config  # noqa: E402
 from xuexitong_mcp.ops_active import (KINDS, build_request, group_task_form, questionnaire_form, quiz_form,  # noqa: E402
                                       quiz_questions, resource_entry)
@@ -31,6 +32,72 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(c, "ctx", lambda q, refresh=False: course)
     monkeypatch.setattr(c, "course", lambda q: course)
     return c
+
+
+@pytest.fixture()
+def teaching_resource_tool(client, monkeypatch):
+    course = client.ctx("1")
+    course.classes.append({"clazz_id": "7", "name": "资源测试班"})
+    client.cfg.write_allow_courses = [course.id]
+    monkeypatch.setattr(srv, "_state", dict(srv._state, client=client, cfg=client.cfg, budget=None,
+                                            allowed={"push_teaching_resource_activity"}, profile="teacher"))
+    monkeypatch.setattr(srv, "_PLANS", {})
+    resources = []
+    published = []
+    activity = {"activity_id": "90", "title": "合成课件"}
+
+    def plan_list(ctx, class_id, kind):
+        assert (ctx.id, class_id, kind) == (course.id, "7", "课件")
+        return resources
+
+    def push_request(host, javascript, *, retry_safe):
+        assert host == "mobilelearn.chaoxing.com" and not retry_safe
+        assert "/v2/apis/active/createTeachPlanActive" in javascript
+        form = json.loads(javascript.split("POST(", 1)[1].split("));", 1)[0])
+        published.append(form)
+        return {"j": {"result": 1}}
+
+    monkeypatch.setattr(client, "_plan_list", plan_list)
+    monkeypatch.setattr(client, "on", push_request)
+    monkeypatch.setattr(client, "activities", lambda *args, **kwargs: [activity] if published else [])
+    return srv._wrap(srv.push_teaching_resource_activity, srv.W), resources, published
+
+
+@pytest.mark.parametrize("item", ["合成课件", "17"])
+def test_teaching_resource_preview_locks_item_and_selected_class(teaching_resource_tool, item):
+    push, resources, published = teaching_resource_tool
+    original = {"aid": 17, "title": "合成课件"}
+    resources.append(original)
+
+    preview = push("合成课程", "课件", item, "资源测试班")
+
+    assert preview["dry_run"] and not published
+    assert preview["details"]["item_id"] == "17" and preview["details"]["item"] == "合成课件"
+    assert preview["details"]["classes"] == [{"id": "7", "name": "资源测试班"}]
+    result = push("合成课程", "课件", item, "资源测试班", confirm=True, plan_id=preview["plan_id"])
+    assert result["ok"] and result["item_id"] == "17"
+    assert published == [{"classId": "7", "courseId": "1", "teachPlanData": json.dumps([original], ensure_ascii=False)}]
+
+
+@pytest.mark.parametrize("resources_before", [[], [{"aid": 17}, {"aid": 18}], [{"aid": None}]])
+def test_teaching_resource_preview_rejects_missing_ambiguous_or_invalid_target(teaching_resource_tool, resources_before):
+    push, resources, published = teaching_resource_tool
+    resources.extend({**item, "title": "合成课件"} for item in resources_before)
+
+    preview = push("合成课程", "课件", "合成课件", "资源测试班")
+
+    assert not preview["ok"] and "plan_id" not in preview and not published
+
+
+def test_teaching_resource_confirmation_never_falls_back_to_a_name(teaching_resource_tool):
+    push, resources, published = teaching_resource_tool
+    resources.append({"aid": 17, "title": "合成课件"})
+    preview = push("合成课程", "课件", "合成课件", "资源测试班")
+    resources[:] = [{"aid": 18, "title": "合成课件"}, {"aid": 19, "title": "17"}]
+
+    result = push("合成课程", "课件", "合成课件", "资源测试班", confirm=True, plan_id=preview["plan_id"])
+
+    assert not result["ok"] and not published
 
 
 # ---------------------------------------------------------------- simple activities
