@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from xuexitong_mcp import bsk as bsk_mod  # noqa: E402
 from xuexitong_mcp.bsk import Bsk, BskError  # noqa: E402
-from xuexitong_mcp.config import Config  # noqa: E402
+from xuexitong_mcp.config import Config, load  # noqa: E402
 from xuexitong_mcp.xxt import NOTICE, make_client  # noqa: E402
 
 NEW_SESSION = "sessNEW123"
@@ -350,6 +350,77 @@ def test_start_session_auto_opens_chrome_when_offline(cfg, monkeypatch):
     b.start_session()
     assert state["opener"] and state["opener"][0] == ["/fake/opener", "teacher"]
     assert b.session == "s1"
+
+
+def test_display_preflight_configuration_is_opt_in(tmp_path):
+    p = tmp_path / "config.toml"
+    p.write_text('[browser]\nopener_role = "teacher"\n')
+    assert load(p).browser_display_preflight == ""
+    p.write_text('[browser]\ndisplay_preflight = "/trusted/display helper"\n')
+    assert load(p).browser_display_preflight == "/trusted/display helper"
+
+
+@pytest.mark.parametrize("replacing", [False, True])
+def test_display_preflight_precedes_agent_window_creation_with_online_browser(cfg, monkeypatch, tmp_path, replacing):
+    helper = str(tmp_path / "display helper")
+    cfg.browser_display_preflight = helper
+    b = Bsk(cfg)
+    calls = []
+    if replacing:
+        b.session, b.tab, b.preserve_tab = "sessOLD", 5, True
+
+    def run(args, timeout=None, session=True):
+        calls.append(args)
+        if args == ["tab", "list", "--scope", "agent"]:
+            raise BskError("not_found", "synthetic", {"reason": "browser_disconnected"})
+        if args == ["browsers"]:
+            return {"value": [{"instance_id": "inst0001", "unresponsive": False}]}
+        assert args == ["session", "start", "--browser", "inst0001"] and session is False
+        return {"session_id": NEW_SESSION, "browser_instance_id": "inst0001"}
+
+    def preflight(args, *, stdout, stderr, timeout):
+        calls.append(args)
+        assert args == [helper, "--ensure"]
+        assert stdout == stderr == subprocess.DEVNULL and timeout == 32
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(b, "run", run)
+    monkeypatch.setattr(b, "_initialize_owned_tab", lambda: None)
+    monkeypatch.setattr(bsk_mod.subprocess, "run", preflight)
+    b.ensure_session(renew_disconnected_readonly=replacing)
+    expected = [["browsers"], [helper, "--ensure"], ["session", "start", "--browser", "inst0001"]]
+    assert calls == ([["tab", "list", "--scope", "agent"]] + expected if replacing else expected)
+    assert b.session == NEW_SESSION
+
+
+@pytest.mark.parametrize(("outcome", "code"), [
+    (subprocess.CompletedProcess([], 7, stdout="private-display-output", stderr="private-display-output"),
+     "display_preflight_failed"),
+    (subprocess.TimeoutExpired(["private-display-output"], 32), "display_preflight_timeout"),
+    (FileNotFoundError("private-display-output"), "display_preflight_unavailable"),
+])
+def test_display_preflight_failure_stops_before_new_session(cfg, monkeypatch, tmp_path, outcome, code):
+    cfg.browser_display_preflight = str(tmp_path / "display-helper")
+    b = Bsk(cfg)
+    b.session, b.tab, b.preserve_tab = "sessOLD", 5, True
+
+    def run(args, timeout=None, session=True):
+        assert args == ["browsers"] and session is False
+        return {"value": [{"instance_id": "inst0001", "unresponsive": False}]}
+
+    def preflight(*args, **kwargs):
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(b, "run", run)
+    monkeypatch.setattr(bsk_mod.subprocess, "run", preflight)
+    with pytest.raises(BskError) as caught:
+        b.start_session(replacing_disconnected=True)
+    assert caught.value.code == code
+    assert "private-display-output" not in str(caught.value) + caught.value.raw
+    assert caught.value.__suppress_context__ or caught.value.__context__ is None
+    assert (b.session, b.tab, b.preserve_tab) == ("sessOLD", 5, True)
 
 
 @pytest.mark.parametrize(("outcome", "error_code"), [

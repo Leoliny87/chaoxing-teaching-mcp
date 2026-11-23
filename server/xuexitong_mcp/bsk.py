@@ -385,6 +385,22 @@ class Bsk:
                 return
             time.sleep(3)
 
+    def _ensure_display(self) -> None:
+        helper = self.cfg.browser_display_preflight
+        if not helper:
+            return
+        if not Path(helper).is_absolute():
+            raise BskError("display_preflight_unavailable", "显示器预检必须配置可执行文件的绝对路径。")
+        try:
+            # The GNOME helper allows two 8s probes around a 14s systemd call.
+            result = subprocess.run([helper, "--ensure"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=32)
+        except subprocess.TimeoutExpired:
+            raise BskError("display_preflight_timeout", "等待显示器预检超时。") from None
+        except (OSError, ValueError):
+            raise BskError("display_preflight_unavailable", "无法运行配置指定的显示器预检。") from None
+        if result.returncode != 0:
+            raise BskError("display_preflight_failed", f"显示器预检失败（退出码 {result.returncode}）。")
+
     def start_session(self, *, replacing_disconnected: bool = False):
         if not FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_unconfigured", "Set XUEXITONG_MCP_BROWSER to your explicitly selected local BrowserSkill instance; no fallback is allowed.")
@@ -395,6 +411,7 @@ class Bsk:
             self._auto_open_browser()
             if not self._browser_online():
                 raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
+        self._ensure_display()
         d = self.run(["session", "start", "--browser", FIXED_BROWSER_INSTANCE], session=False)
         if d.get("browser_instance_id") != FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_mismatch", "新会话未确认绑定 配置指定的浏览器实例，停止操作。")
