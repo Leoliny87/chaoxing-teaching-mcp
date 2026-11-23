@@ -55,9 +55,9 @@ def _fake_run(dead_reason):
         if args[0] == "browsers":
             return {"value": [{"instance_id": "inst0001", "unresponsive": False}]}
         if args[:2] == ["session", "start"]:
-            return {"session_id": NEW_SESSION, "browser_instance_id": "inst0001"}
+            return {"session_id": NEW_SESSION, "browser_instance_id": "inst0001", "agent_window_id": 88}
         if args[:2] == ["tab", "list"]:
-            return {"tabs": [{"tab_id": 77, "scope": "agent", "url": "about:blank"}]}
+            return {"tabs": [{"tab_id": 77, "window_id": 88, "scope": "agent", "url": "about:blank"}]}
         if args[0] == "navigate":
             return {"tab_id": 77, "reached": "load", "final_url": bsk_mod.FIXED_HOMEPAGE}
         raise AssertionError(f"unexpected bsk call {args}")
@@ -193,6 +193,96 @@ def test_disconnected_health_does_not_replace_state_on_wrong_session_browser(cfg
         b.ensure_session(renew_disconnected_readonly=True)
     assert caught.value.code == "browser_profile_mismatch"
     assert (b.session, b.tab) == ("sessOLD", 5)
+
+
+def _startup_tab(**fields):
+    return {"tab_id": 77, "window_id": 88, "scope": "agent", "active": True, **fields}
+
+
+def _startup_probe(cfg, monkeypatch, snapshots):
+    b = Bsk(cfg)
+    calls = []
+    snapshots = iter(snapshots)
+
+    def run(args, timeout=None, session=True):
+        calls.append((args, timeout))
+        if args == ["tab", "list", "--scope", "agent"]:
+            snapshot = next(snapshots)
+            if isinstance(snapshot, BskError):
+                raise snapshot
+            return snapshot
+        assert args[:3] == ["navigate", bsk_mod.FIXED_HOMEPAGE, "--tab-id"]
+        assert args[3] == "77"
+        return {"tab_id": 77, "reached": "load", "final_url": bsk_mod.FIXED_HOMEPAGE}
+
+    monkeypatch.setattr(b, "run", run)
+    monkeypatch.setattr(b, "wait_readiness", lambda *args: None)
+    monkeypatch.setattr(bsk_mod.time, "sleep", lambda seconds: None)
+    return b, calls
+
+
+@pytest.mark.parametrize("fields", [{}, {"url": "", "title": ""}])
+def test_initial_tab_waits_for_only_same_owned_blank_to_commit(cfg, monkeypatch, fields):
+    b, calls = _startup_probe(cfg, monkeypatch, [
+        {"tabs": [_startup_tab(**fields)]},
+        {"tabs": [_startup_tab(url="about:blank", title="about:blank")]},
+    ])
+    b._initialize_owned_tab(88)
+    assert [args[0] for args, _ in calls] == ["tab", "tab", "navigate"]
+    assert 0 < calls[1][1] <= 1.0
+    assert b.tab == 77
+
+
+def test_already_committed_blank_accepts_legacy_numeric_like_id(cfg, monkeypatch):
+    b, calls = _startup_probe(cfg, monkeypatch, [{"tabs": [_startup_tab(url="about:blank", tab_id="77")]}])
+    b._initialize_owned_tab()
+    assert [args[0] for args, _ in calls] == ["tab", "navigate"]
+
+
+@pytest.mark.parametrize("snapshot", [
+    [],
+    {"tabs": [_startup_tab(tab_id="77")]},
+    {"tabs": [_startup_tab(title="Unexpected")]},
+    {"tabs": [_startup_tab(url="chrome://newtab/")]},
+    {"tabs": [_startup_tab(active=False)]},
+    {"tabs": [_startup_tab(scope="user")]},
+    {"tabs": [_startup_tab(borrowed=True)]},
+    {"tabs": [_startup_tab(window_id=89)]},
+    {"tabs": [_startup_tab(), _startup_tab(tab_id=78)]},
+])
+def test_initial_tab_unexpected_first_snapshot_is_not_retried(cfg, monkeypatch, snapshot):
+    b, calls = _startup_probe(cfg, monkeypatch, [snapshot])
+    with pytest.raises(BskError, match="initial_tab_unexpected"):
+        b._initialize_owned_tab(88)
+    assert len(calls) == 1 and b.tab is None
+
+
+@pytest.mark.parametrize("snapshot", [
+    {"tabs": [_startup_tab(tab_id=78, url="about:blank")]},
+    {"tabs": [_startup_tab(url="chrome://newtab/")]},
+    {"tabs": [_startup_tab(url="about:blank"), _startup_tab(tab_id=78)]},
+])
+def test_initial_tab_stops_when_snapshot_changes_during_wait(cfg, monkeypatch, snapshot):
+    b, calls = _startup_probe(cfg, monkeypatch, [{"tabs": [_startup_tab()]}, snapshot])
+    with pytest.raises(BskError, match="initial_tab_unexpected"):
+        b._initialize_owned_tab(88)
+    assert [args[0] for args, _ in calls] == ["tab", "tab"] and b.tab is None
+
+
+def test_initial_tab_rejects_permission_denial_immediately(cfg, monkeypatch):
+    refused = BskError("permission_denied", "synthetic")
+    b, calls = _startup_probe(cfg, monkeypatch, [{"tabs": [_startup_tab()]}, refused])
+    with pytest.raises(BskError) as caught:
+        b._initialize_owned_tab(88)
+    assert caught.value is refused and len(calls) == 2 and b.tab is None
+
+
+def test_initial_tab_pending_state_has_bounded_polling(cfg, monkeypatch):
+    b, calls = _startup_probe(cfg, monkeypatch, [{"tabs": [_startup_tab()]}] * 6)
+    with pytest.raises(BskError, match="initial_tab_unexpected"):
+        b._initialize_owned_tab(88)
+    assert len(calls) == 6 and b.tab is None
+    assert all(args == ["tab", "list", "--scope", "agent"] and 0 < timeout <= 1.0 for args, timeout in calls[1:])
 
 
 def test_stop_closes_tab_and_stops_session(cfg, monkeypatch):

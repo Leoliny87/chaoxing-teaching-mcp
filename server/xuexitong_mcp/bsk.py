@@ -409,7 +409,11 @@ class Bsk:
         self.session = d["session_id"]
         self.tab = None
         try:
-            self._initialize_owned_tab()
+            window_id = d.get("agent_window_id")
+            if type(window_id) is int and window_id > 0:
+                self._initialize_owned_tab(window_id)
+            else:
+                self._initialize_owned_tab()
         except BskError as e:
             if e.code != "login_required":
                 # Init failed before a valid owned tab was confirmed. Drop the
@@ -441,19 +445,43 @@ class Bsk:
             raise
         self.log.info("started session")
 
-    def _initialize_owned_tab(self):
+    def _initial_agent_tab(self, window_id: int | None, timeout: float | None = None) -> dict:
+        reply = self.run(["tab", "list", "--scope", "agent"], timeout=timeout)
+        tabs = reply.get("tabs") if isinstance(reply, dict) else None
+        tab = tabs[0] if isinstance(tabs, list) and len(tabs) == 1 else None
+        if (not isinstance(tab, dict) or tab.get("scope") != "agent" or tab.get("borrowed")
+                or (type(window_id) is int and (type(tab.get("window_id")) is not int or tab["window_id"] != window_id))):
+            raise BskError("initial_tab_unexpected", "新会话的初始标签不是唯一任务标签，已停止。")
+        return tab
+
+    def _initialize_owned_tab(self, window_id: int | None = None):
         """Navigate the one session-created blank tab before attempting a sync.
 
         Do not create or take control of a page-opened popup.  A refused or
-        unexpected initial state ends startup without a fallback or retry.
+        unexpected initial state ends startup without a fallback.
         """
-        d = self.run(["tab", "list", "--scope", "agent"])
-        tabs = d.get("tabs") if isinstance(d, dict) else None
-        if (not isinstance(tabs, list) or len(tabs) != 1 or not isinstance(tabs[0], dict)
-                or tabs[0].get("scope") != "agent" or tabs[0].get("url") != "about:blank"
-                or tabs[0].get("tab_id") is None):
+        tab = self._initial_agent_tab(window_id)
+        tab_id = tab.get("tab_id")
+        if (tab.get("url") in (None, "") and tab.get("title") in (None, "") and tab.get("active") is True
+                and type(window_id) is int and window_id > 0 and type(tab_id) is int and tab_id > 0):
+            # BrowserSkill lists only the committed URL. A newly created blank
+            # may have a pending URL before Chrome commits its first document.
+            deadline = time.monotonic() + 1.0
+            for _ in range(5):
+                time.sleep(min(0.15, max(0, deadline - time.monotonic())))
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                tab = self._initial_agent_tab(window_id, timeout=remaining)
+                if type(tab.get("tab_id")) is not int or tab["tab_id"] != tab_id or tab.get("active") is not True:
+                    raise BskError("initial_tab_unexpected", "等待初始空白标签期间任务标签变更，已停止。")
+                if tab.get("url") not in (None, "") or tab.get("title") not in (None, ""):
+                    break
+        if isinstance(tab_id, str) and tab_id.isdecimal():
+            tab_id = int(tab_id)
+        if tab.get("url") != "about:blank" or type(tab_id) is not int or tab_id <= 0:
             raise BskError("initial_tab_unexpected", "新会话的初始标签不是唯一空白任务标签，已停止。")
-        self.tab = int(tabs[0]["tab_id"])
+        self.tab = tab_id
         result = self.run(["navigate", FIXED_HOMEPAGE, "--tab-id", str(self.tab),
                            "--wait-until", "load"], timeout=self.cfg.t_navigate + 10)
         if result.get("tab_id") != self.tab:
