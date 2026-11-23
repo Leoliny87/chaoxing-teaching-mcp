@@ -104,3 +104,11 @@ def test_library_create_payloads():
     with pytest.raises(XxtError):
         library_create_payload("作业", {"name": "x"}, "9")
     assert "AI课堂" not in POINT_KINDS and POINT_KINDS["AI实践"]["type"] == 15 and POINT_KINDS["签到"]["list"] is None
+
+
+def test_practice_roles_are_validated_before_library_creation():
+    item = {"name": "岗位交接", "requirement": "复核记录", "ai_role": "师" * 30, "dialogue": "说明依据"}
+    assert library_create_payload("AI实践", item, "9")["name"] == "岗位交接"
+    for key, value in (("ai_role", "师" * 31), ("student_role", "🧑" * 16), ("name", "名" * 51)):
+        with pytest.raises(XxtError, match=key):
+            library_create_payload("AI实践", {**item, key: value}, "9")

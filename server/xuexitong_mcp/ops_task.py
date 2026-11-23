@@ -450,6 +450,12 @@ def library_create_payload(kind: str, item: dict, course_id: str, custom_type: d
         miss = [k for k in ("requirement", "ai_role", "dialogue") if not str(item.get(k) or "").strip()]
         if miss:
             raise XxtError(f"新建 AI实践 还需要：{'、'.join(miss)}（任务要求、智能体角色、智能体对话要求）；可带 student_role、opening、criteria。")
+        # The native dialogue editor measures JavaScript UTF-16 code units.
+        limits = {"name": 50, "ai_role": 30, "student_role": 30, "requirement": 2000, "dialogue": 5000, "opening": 1000}
+        for field, limit in limits.items():
+            value = name if field == "name" else str(item.get(field) or "")
+            if len(value.encode("utf-16-le", errors="surrogatepass")) // 2 > limit:
+                raise XxtError(f"AI实践 {field} 最多允许 {limit} 个字符。")
     if kind == "自定义":
         if not custom_type or not custom_type.get("id"):
             raise XxtError("自定义任务点需要 custom_type（自定义类型名，≤4 字）。")
