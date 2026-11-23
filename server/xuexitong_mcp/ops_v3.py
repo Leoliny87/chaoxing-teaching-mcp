@@ -151,6 +151,63 @@ class V3Ops(XxtBase):
         return out
 
     # ================================================================ resource center
+    def course_portal_statistics(self, course: str) -> dict:
+        """Read the course-wide portal statistics and two library totals independently."""
+        c = self.course(course)
+        if str(course).strip() not in (c.id, c.name):
+            raise XxtError("核验门户统计需要完整课程名或课程ID。")
+        if str(course).strip() != c.id and sum(x.name == c.name for x in self.courses()) != 1:
+            raise XxtError("有同名课程，请用课程ID核验门户统计。")
+        cid, cpi = _safe_id(c.id), _safe_id(c.cpi)
+        # mhcourseStatistics uses clazzid=0. As in the resource center, the teacher page's enc is not valid here.
+        base = up.urlencode({"courseid": cid, "clazzid": 0, "cpi": cpi, "enc": "", "ut": "t"})
+        task_query = up.urlencode({"courseId": cid, "searchKey": "", "flag": "true", "isDel": 0, "page": 1, "pageSize": 1})
+        practice_query = up.urlencode({"courseid": cid, "cpi": cpi, "isTrash": "false", "types": "", "ps": 1, "pn": 1,
+                                      "name": "", "folderId": 0})
+        sources = [
+            (STAT, "/stat2/base-data/v3/taskEngineInfo", base + "&semester=0", "status", {"task_engines": "data.createCount"}),
+            (STAT, "/stat2/base-data/v3/aiEvaluateInfo", base + "&semester=0", "status", {"ai_practices": "data.createCount"}),
+            (STAT, "/stat2/base-data-new/getAiAssistantStatic", base, "status", {"knowledge_bases": "data.knowledgeBaseNum",
+                "knowledge_files": "data.totalFileCount", "knowledge_segments": "data.totalFileSegmentCount"}),
+            (TASK, "/task/getTaskDataLists", task_query, "result", {"active_teaching_tasks": "total"}),
+            (M2, "/mooc2-ans/ai-evaluate/v2/library/list", practice_query, "status", {"practice_library_root_entries": "data.page.totalResult"}),
+        ]
+        panels, libraries = {}, {}
+        for host in (STAT, TASK, M2):
+            specs = [(path, path + "?" + query, success, fields) for domain, path, query, success, fields in sources if domain == host]
+            # Project only the named numeric fields in the browser; library responses may contain private titles.
+            values = self.on(host, """
+                const out={};
+                for (const [path,url,success,fields] of %s) {
+                    try {
+                        const r=await fetch(url,{credentials:'include',cache:'no-store'});
+                        if (!r.ok) {out[path]={error:'http_'+r.status};continue;}
+                        const body=await r.json();
+                        if (body?.[success]!==true) {out[path]={error:'invalid_response'};continue;}
+                        const counts={};
+                        for (const [name,field] of Object.entries(fields)) {
+                            const v=field.split('.').reduce((o,k)=>o?.[k],body);
+                            counts[name]=Number.isSafeInteger(v)&&v>=0?v:null;
+                        }
+                        out[path]={counts};
+                    } catch {out[path]={error:'read_failed'};}
+                }
+                return out;
+            """ % json.dumps(specs))
+            for path, _, _, fields in specs:
+                item = (values.get(path) if isinstance(values, dict) else None) or {}
+                target = panels if host == STAT else libraries
+                for key, field in fields.items():
+                    count = (item.get("counts") or {}).get(key)
+                    known = type(count) is int and count >= 0
+                    metric = {"available": known, "count": count if known else None, "source": f"https://{host}{path}", "field": field}
+                    if not known:
+                        metric["error"] = item.get("error") or "missing_or_invalid_count"
+                    target[key] = metric
+        return {"course_id": cid, "scope": "全课程（clazzid=0）", "portal_counts": panels, "library_counts": libraries,
+                "complete": all(panels[k]["available"] for k in ("task_engines", "ai_practices", "knowledge_segments")),
+                "note": "门户指标来自课程统计面板。任务库总数、实践库根目录条目数单独列示。个人知识库编辑器中的文件和切片数量需另行核对。"}
+
     def resource_overview(self, course: str) -> dict:
         c = self.ctx(course)
         cid, clz, cpi = _safe_id(c.id), _safe_id(c.clazz_id), _safe_id(c.cpi)

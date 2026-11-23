@@ -61,6 +61,7 @@
 
 | 模块 | 实际应用 | 已观察到的接口（节选） | 现有工具 | 状态 |
 |---|---|---|---|---|
+| 课程门户统计 | `stat2-vue/mhcourseStatistics` | `stat2/base-data/v3/{taskEngineInfo,aiEvaluateInfo}`、`stat2/base-data-new/getAiAssistantStatic` | `get_course_portal_statistics` | 全课程口径。返回任务引擎、AI 实践、知识库文件和切片计数及各自的来源字段。平台返回 0 时保留 0，缺失时返回 null。另列教学任务库总数与实践库根目录条目数；个人知识库编辑器的内容需另行核对。 |
 | 首页 | 外壳内（常用应用 / 近期待办 / 教学预警） | `coursemanagev3/base-info` | — | 待做：待办、预警读取 |
 | 教学任务 | `task.chaoxing.com/task/index`（任务引擎） | `task/findTaskFolders`、`task/getTaskDataLists`、`createTask`、`taskCommit`、`saveTaskPoints`、`taskPublish` | list_teaching_tasks、create_teaching_task、publish_teaching_task | 新建（作业任务点）和发布已实测；其余 18 类任务点待做 |
 | 教学活动 | `mobilelearn.chaoxing.com/page/active/activeList` | `v2/apis/active/pcActivelist`、`v2/apis/class/getClassList`、`getClassDetail`、`getTeachers`、`active/getActiveLibraryOpen`、`sign/getLastSignForXd`… | list_activities、activity_result、checkin_status、end_activity、create_activity、create_quiz_activity、create_questionnaire、create_group_task、push_material_activity、pick_student、start_quick_answer、start_vote、start_checkin、delete_activity(仅预演) | 读写已在测试班实测（见 1.2「教学活动」） |

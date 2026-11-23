@@ -405,6 +405,11 @@ def get_course_dashboard(course: Course_) -> dict:
     return client().dashboard(course)
 
 
+@tool(R, "核验全课程门户的任务引擎、AI实践和知识切片数，附各项统计来源及独立的任务库和实践库条目总数。")
+def get_course_portal_statistics(course: Course_) -> dict:
+    return client().course_portal_statistics(course)
+
+
 @tool(R, "资源中心统计：课件、题库与章节资源、知识点、作业、考试、活动库的数量。每项单独标明是否读取成功。")
 def get_resource_overview(course: Course_) -> dict:
     return client().resource_overview(course)

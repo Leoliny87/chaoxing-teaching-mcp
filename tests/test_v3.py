@@ -137,6 +137,44 @@ def test_resource_overview_uses_empty_enc_and_reports_http_status(client, monkey
     assert r["exams"]["ok"] is False and r["complete"] is False
 
 
+def test_portal_stats_native_zero_is_not_a_missing_metric_or_a_library_total(client, monkeypatch):
+    def respond(host, script):
+        assert "enc=E" not in script and "fetch(url,{credentials:'include',cache:'no-store'})" in script
+        if host == STAT:
+            assert "clazzid=0" in script and "courseid=1" in script and "semester=0" in script
+            return {"/stat2/base-data/v3/taskEngineInfo": {"counts": {"task_engines": 9}},
+                    "/stat2/base-data/v3/aiEvaluateInfo": {"counts": {"ai_practices": 7}},
+                    "/stat2/base-data-new/getAiAssistantStatic": {"counts": {"knowledge_bases": 1, "knowledge_files": None,
+                                                                           "knowledge_segments": 0}, "unused": "PRIVATE"}}
+        if host == TASK:
+            assert "courseId=1" in script and "isDel=0" in script and "pageSize=1" in script
+            return {"/task/getTaskDataLists": {"counts": {"active_teaching_tasks": 10}}}
+        assert host == M2 and "courseid=1" in script and "folderId=0" in script and "ps=1" in script
+        return {"/mooc2-ans/ai-evaluate/v2/library/list": {"error": "http_403"}}
+
+    fake_on(client, monkeypatch, respond)
+    r = client.course_portal_statistics("1")
+    assert r["complete"] is True and r["course_id"] == "1" and "PRIVATE" not in json.dumps(r)
+    panel, libraries = r["portal_counts"], r["library_counts"]
+    assert panel["knowledge_segments"] == {"available": True, "count": 0, "field": "data.totalFileSegmentCount",
+                                           "source": "https://stat2-ans.chaoxing.com/stat2/base-data-new/getAiAssistantStatic"}
+    assert panel["knowledge_files"]["count"] is None and not panel["knowledge_files"]["available"]
+    assert panel["task_engines"]["count"] == 9 and libraries["active_teaching_tasks"]["count"] == 10
+    assert libraries["practice_library_root_entries"]["error"] == "http_403"
+
+
+def test_portal_stats_invalid_response_and_ambiguous_course(client, monkeypatch):
+    fake_on(client, monkeypatch, lambda *a: {"/stat2/base-data-new/getAiAssistantStatic": {"counts": {"knowledge_segments": False}}})
+    with pytest.raises(XxtError, match="完整课程名"):
+        client.course_portal_statistics("合成")
+    monkeypatch.setattr(client, "courses", lambda: [client._course, client._course])
+    with pytest.raises(XxtError, match="同名课程"):
+        client.course_portal_statistics("合成课程")
+    assert not client._calls
+    r = client.course_portal_statistics("1")
+    assert r["complete"] is False and all(v["count"] is None for v in r["portal_counts"].values())
+
+
 def test_teaching_tasks_validates_and_pages(client, monkeypatch):
     def resp(host, body):
         assert host == TASK and "isDel=1" in body and "page=2" in body
@@ -157,6 +195,6 @@ def test_list_cap(client, monkeypatch):
 def test_new_tools_registered_as_read():
     from xuexitong_mcp import server as srv
     kinds = {n: k for n, k, _, _ in srv.TOOLS}
-    for n in ("list_course_modules", "get_course_dashboard", "get_resource_overview",
+    for n in ("list_course_modules", "get_course_dashboard", "get_resource_overview", "get_course_portal_statistics",
               "list_teaching_tasks", "list_coursewares", "list_practices"):
         assert kinds[n] == "read"
