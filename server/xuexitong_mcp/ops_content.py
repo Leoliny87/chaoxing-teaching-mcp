@@ -262,7 +262,11 @@ class ContentOps(XxtBase):
               return [...d.querySelectorAll('ul.dataBody_td')].map(u=>{{const li=[...u.querySelectorAll('li')].map(T);return {{person_id:u.id,name:T(u.querySelector('.py_name'))||li[1],cells:li.slice(2,-1)}}}});}};
             return {{submitted:await one(true),unsubmitted:await one(false)}};
         """)
-        return {"assignment": a["title"], "id": a["id"], "submitted_count": len(res["submitted"]), "unsubmitted_count": len(res["unsubmitted"]), **res}
+        # 已交行的 id 是 workAnswerId；保留旧 person_id 字段供现有调用者兼容。
+        submitted = [{**r, "answer_id": r["person_id"]} for r in res["submitted"]]
+        unsubmitted = res["unsubmitted"]
+        return {"assignment": a["title"], "id": a["id"], "submitted_count": len(submitted),
+                "unsubmitted_count": len(unsubmitted), "submitted": submitted, "unsubmitted": unsubmitted}
 
     def remind_assignment(self, course: str, assignment: str) -> dict:
         c = self.ctx(course)

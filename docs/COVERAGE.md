@@ -756,6 +756,7 @@ MCP 绑定预演中的课程班级、作业、题号、文件名、字节数和 
 - 实测：学生配置下即使环境变量要求 teacher，也只注册 11 个学生工具；学生调用 publish_notice 被拒；ask_tutor 打到本机模拟辅导服务，服务只收到问题、课程、客户端名和令牌。
 - 批阅给分与打回（`grade_submission`、`return_submission`，2026-11-07 实测）：按人批阅页的表单 `#form1` 提交到 `POST /mooc2-ans/work/library/save-review?score=<总分>&markType=<#markType>`。每题的分数在 `score<题目ID>`（文本框，客观题已带系统判分）；阅读理解的小题是无名的 `.inputBranch`，听力的主观小题是 `compoundSubQuesMark_<题目ID><uuid>`；提交前用页面自己的 `setRecordTarget / setCompoundSubjectQuesScore / setCompoundSubjectQuesComment / setMarkLabel` 填隐藏字段，`answerwqbid` 取自页面 `pigai` 里写死的题目 ID 串，`score`、`tmpscore` 是所有分数框之和，批语是 `comment`。**只要还有主观题没给分，保存后仍是「待批阅」（部分批阅）**；全部给分后变「已完成」。打回是同一接口，`isRework=true`、`score=0`、`reason=理由`。实测：先给 4 题打分（读回 3/4/2.5），作业仍待批阅且工具列出未给分的题；补齐后总分 62/120、状态「已完成」；再打回，已交列表清空，学生端显示「待重做」。
 - 预审读作答（`read_student_answers`，教师和 reviewer 角色，学生角色加不进去）：已交名单 `work/mark-list?…&submit=true` 每行 `ul.dataBody_td[id=workAnswerId]` 带「批阅」链接 `work/library/review-work?courseid&clazzid&workId&workAnswerId&…`（按人批阅）；每题一个 `.mark_item1[id=index_N]`，组合题里嵌套小题块，文本里有「学生答案…」「正确答案…」，`.mark_name` 是「N. (题型, 分值) 题干」。2026-11-07 用 reviewer 角色实测：全题型作业 22 题逐题读出学生答案和参考答案（阅读理解带 2 道小题），结果带 untrusted 说明；随后记录两条预审建议，「拿不准」必定交人工；reviewer 调用 publish_notice 被拒。
+- `assignment_submissions` 的已交条目使用 `answer_id` 表示答卷 ID，旧字段 `person_id` 保留同一个值。未交名单和班级名单中的 `person_id` 表示学生 ID。批阅、读作答和退回可用 `answer_id:<答卷ID>` 或 `person_id:<学生ID>` 区分两类 ID。学生 ID 需要用作业所属班级的名单和已交行唯一对应。批阅与退回的预演绑定作业发放 ID 和答卷 ID。
 
 ### 4.1 角色配置（规则放在 MCP 里，不放在提示词里）
 - 服务端配置 `profile = teacher | student | reviewer`。启动时只注册该角色允许的工具，不允许的工具根本不出现在工具列表里。

@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from xuexitong_mcp import policy as P  # noqa: E402
 from xuexitong_mcp import server as srv  # noqa: E402
-from xuexitong_mcp.ops_review import parse_item  # noqa: E402
+from xuexitong_mcp.ops_content import ContentOps  # noqa: E402
+from xuexitong_mcp.ops_review import ReviewOps, parse_item  # noqa: E402
+from xuexitong_mcp.xxt import XxtError  # noqa: E402
 
 
 def test_parse_choice_blank_and_subjective_blocks():
@@ -29,10 +34,111 @@ def test_review_reader_is_for_teacher_and_reviewer_only():
     assert "read_student_answers" not in P.allowed_tools("student", tools, ["read_student_answers"], [])
 
 
+def _submitted_row(answer_id, name, number=""):
+    return {"answer_id": answer_id, "name": name, "student_no": number,
+            "url": f"/mooc2-ans/work/library/review-work?workAnswerId={answer_id}"}
+
+
+def _review_page(rows, members):
+    review = object.__new__(ReviewOps)
+    course = SimpleNamespace(id="12", clazz_id="34", cpi="56")
+    assignment = {"id": "78", "relation_id": "79", "clazz_id": "90"}
+    review.ctx = lambda course_id: course
+    review._find_assignment = lambda c, query: assignment
+    review.on = lambda domain, script: rows
+
+    def roster(c, clazz_id):
+        assert c is course and clazz_id == "90"
+        return members
+
+    review._members = roster
+    return review
+
+
+@pytest.mark.parametrize("student", ["123", "person_id:123", "678", "answer_id:678", "测试甲"])
+def test_review_resolves_person_id_with_blank_number_and_legacy_names(student):
+    rows = [_submitted_row("678", "测试甲")]
+    roster = [{"person_id": "123", "name": "测试甲", "student_no": "N1"}]
+    review = _review_page(rows, roster)
+    assert review._review_row("12", "78", student)[2]["answer_id"] == "678"
+
+
+def test_review_person_id_uses_unique_student_number_when_names_repeat():
+    rows = [_submitted_row("678", "测试甲", "N1"), _submitted_row("679", "测试甲", "N2")]
+    roster = [{"person_id": "123", "name": "测试甲", "student_no": "N1"},
+              {"person_id": "124", "name": "测试甲", "student_no": "N2"}]
+    review = _review_page(rows, roster)
+    assert review._review_row("12", "78", "person_id:123")[2]["answer_id"] == "678"
+    assert review._review_row("12", "78", "N2")[2]["answer_id"] == "679"
+    with pytest.raises(XxtError, match="唯一"):
+        review._review_row("12", "78", "测试甲")
+
+
+def test_review_person_id_rejects_duplicate_name_or_conflicting_number():
+    roster = [{"person_id": "123", "name": "测试甲", "student_no": "N1"}]
+    review = _review_page([_submitted_row("678", "测试甲", "N2")], roster)
+    with pytest.raises(XxtError, match="唯一"):
+        review._review_row("12", "78", "person_id:123")
+    roster.append({"person_id": "124", "name": "测试甲"})
+    review = _review_page([_submitted_row("678", "测试甲")], roster)
+    with pytest.raises(XxtError, match="唯一"):
+        review._review_row("12", "78", "person_id:123")
+
+
+def test_review_prefixed_ids_disambiguate_namespaces_and_require_matching_url():
+    rows = [_submitted_row("123", "测试甲"), _submitted_row("678", "测试乙")]
+    roster = [{"person_id": "123", "name": "测试乙"}]
+    review = _review_page(rows, roster)
+    assert review._review_row("12", "78", "answer_id:123")[2]["name"] == "测试甲"
+    assert review._review_row("12", "78", "person_id:123")[2]["name"] == "测试乙"
+    rows[0]["url"] = rows[1]["url"]
+    with pytest.raises(XxtError, match="答卷 ID 与名单不一致"):
+        review._review_row("12", "78", "answer_id:123")
+
+
+def test_review_plan_cannot_resolve_a_locked_assignment_id_as_title():
+    review = _review_page([_submitted_row("678", "测试甲")], [])
+    review.assignments = lambda course: [{"id": "81", "title": "78"}]
+    with pytest.raises(XxtError, match="已锁定的作业发放"):
+        review._review_row("12", "assignment_id:78", "answer_id:678")
+
+
+def test_submissions_only_exposes_answer_id_for_submitted_rows():
+    reader = object.__new__(ContentOps)
+    reader.ctx = lambda course: SimpleNamespace(id="12", clazz_id="34", cpi="56")
+    reader._find_assignment = lambda course, ref: {"id": "78", "relation_id": "79", "title": "作业"}
+    reader.on = lambda domain, script: {"submitted": [{"person_id": "678"}], "unsubmitted": [{"person_id": "124"}]}
+
+    result = reader.submissions("12", "78")
+    assert result["submitted"] == [{"answer_id": "678", "person_id": "678"}]
+    assert result["unsubmitted"] == [{"person_id": "124"}]
+
+
+def test_return_preview_executes_with_locked_assignment_and_answer_id(monkeypatch):
+    target = {"assignment": "测试作业", "assignment_id": "78", "student": "测试甲", "answer_id": "678", "status": "待批阅"}
+    calls = []
+
+    class Fake:
+        def student_answers(self, course, assignment, student):
+            assert (course, assignment, student) == ("12", "测试作业", "person_id:123")
+            return target
+
+        def return_submission(self, *args):
+            calls.append(args)
+            return {"ok": True}
+
+    monkeypatch.setattr(srv, "client", lambda: Fake())
+    monkeypatch.setattr(srv, "_check_write", lambda c: SimpleNamespace(id="12", name="助手"))
+    tool = srv._wrap(srv.return_submission, "write")
+    args = {"course": "助手", "assignment": "测试作业", "student": "person_id:123", "reason": "测试退回"}
+    preview = tool(**args)
+    assert preview["details"]["assignment_id"] == "78" and preview["details"]["answer_id"] == "678"
+    assert tool(**args, confirm=True, plan_id=preview["plan_id"])["ok"]
+    assert calls == [("12", "assignment_id:78", "answer_id:678", "测试退回")]
+
+
 def test_grade_preview_validates_scores(monkeypatch):
-    import pytest
-    from xuexitong_mcp.xxt import XxtError
-    qs = {"assignment": "作业", "student": "张三", "questions": [
+    qs = {"assignment": "作业", "assignment_id": "78", "student": "张三", "answer_id": "678", "questions": [
         {"no": 5, "type": "简答题", "full_score": 5.0},
         {"no": 14, "type": "阅读理解", "full_score": 10.0, "children": [{"full_score": 5.0}, {"full_score": 5.0}]}]}
 
