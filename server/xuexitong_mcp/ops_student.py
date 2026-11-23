@@ -625,9 +625,11 @@ class StudentOps(XxtBase):
         else:
             self._open_work(course, w["assignment_id"])
             back = self.wait_for(self._READ_JS, timeout=20)
-            questions = back.get("questions", []) if isinstance(back, dict) and back.get("state") == "ok" else []
-            saved = {q["qid"]: q for q in questions}
-            ok = bool(res.get("status")) and all(self._draft_answer_matches(op, saved.get(op["qid"], {})) for op in ops)
+            questions = back.get("questions") if isinstance(back, dict) and back.get("state") == "ok" else None
+            saved = {q["qid"]: q for q in questions} if isinstance(questions, list) else {}
+            ok = bool(res.get("status")) and isinstance(questions, list) and all(
+                self._draft_answer_matches(op, saved.get(op["qid"], {})) for op in ops
+            )
         error = ("提交后未能核实；请用 list_my_assignments 查看状态，不要重复提交。" if submit
                  else "暂存后未能核实作答；请重新打开作业查看已保存的内容，不要重复暂存。")
         return {"ok": ok, "assignment": w["title"], "submitted": submit, "status_after": status, "answered": sorted(int(k) for k in answers),
