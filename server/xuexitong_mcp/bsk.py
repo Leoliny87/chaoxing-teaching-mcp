@@ -357,12 +357,27 @@ class Bsk:
             self.log.info("browser opener_role not recorded for instance %s; skip auto-open "
                           "(agent should set [browser] opener_role in config.toml)", FIXED_BROWSER_INSTANCE)
             return
+        failure = None
         try:
-            self.log.info("auto-opening Chrome via launcher role=%s", role)
-            subprocess.run([opener, role], capture_output=True, text=True, timeout=90)
-        except Exception as e:  # noqa: BLE001
-            self.log.warning("chrome auto-open launcher failed: %s", e)
-            return
+            self.log.info("opening configured Chrome profile")
+            result = subprocess.run([opener, role], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+        except subprocess.TimeoutExpired:
+            failure = BskError("browser_opener_timeout", "等待 Chrome 启动器返回超时。")
+        except OSError:
+            failure = BskError("browser_opener_unavailable", "无法运行配置指定的 Chrome 启动器。")
+        else:
+            if result.returncode != 0:
+                failure = BskError("browser_opener_failed", f"Chrome 启动器执行失败（退出码 {result.returncode}）。")
+        if failure is not None:
+            # Another client can connect this same profile while the launcher exits.
+            # Check its registration once before reporting the failure.
+            try:
+                if self._browser_online(require_responsive=True):
+                    return
+            except BskError as error:
+                if error.code == "permission_denied":
+                    raise
+            raise failure
         deadline = time.time() + (self.cfg.browser_opener_wait or BROWSER_OPENER_WAIT)
         while time.time() < deadline:
             if self._browser_online():

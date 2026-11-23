@@ -10,6 +10,7 @@ All data is synthetic; the bsk CLI is replaced by a fake `run`.
 from __future__ import annotations
 
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -259,6 +260,66 @@ def test_start_session_auto_opens_chrome_when_offline(cfg, monkeypatch):
     b.start_session()
     assert state["opener"] and state["opener"][0] == ["/fake/opener", "teacher"]
     assert b.session == "s1"
+
+
+@pytest.mark.parametrize(("outcome", "error_code"), [
+    (subprocess.CompletedProcess([], 7, stdout="private-launcher-output", stderr="private-launcher-output"),
+     "browser_opener_failed"),
+    (subprocess.TimeoutExpired(["private-launcher-output"], 90, stderr="private-launcher-output"),
+     "browser_opener_timeout"),
+    (FileNotFoundError("private-launcher-output"), "browser_opener_unavailable"),
+])
+def test_opener_failure_reports_sanitized_cause_without_polling(cfg, monkeypatch, outcome, error_code):
+    cfg.browser_opener = "/fake/opener"
+    cfg.browser_opener_role = "teacher"
+    b = Bsk(cfg)
+    checks = []
+
+    def run(args, timeout=None, session=True):
+        assert args == ["browsers"] and session is False
+        checks.append(args)
+        return {"value": [{"instance_id": "other-profile", "unresponsive": False}]}
+
+    def launch(args, *, stdout, stderr, timeout):
+        assert args == ["/fake/opener", "teacher"] and timeout == 90
+        assert stdout == stderr == subprocess.DEVNULL
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(b, "run", run)
+    monkeypatch.setattr(bsk_mod.subprocess, "run", launch)
+    monkeypatch.setattr(bsk_mod.time, "sleep", lambda _: pytest.fail("a failed launcher must not enter the polling loop"))
+
+    with pytest.raises(BskError) as caught:
+        b.start_session()
+    assert caught.value.code == error_code
+    assert "private-launcher-output" not in str(caught.value) + caught.value.raw
+    assert "private-launcher-output" not in (cfg.log_dir / "bsk.log").read_text()
+    assert checks == [["browsers"], ["browsers"]] and b.session is None
+
+
+def test_opener_failure_allows_same_profile_that_connected_concurrently(cfg, monkeypatch):
+    cfg.browser_opener = "/fake/opener"
+    cfg.browser_opener_role = "student"
+    b = Bsk(cfg)
+    calls = []
+
+    def run(args, timeout=None, session=True):
+        calls.append(args)
+        if args == ["browsers"]:
+            return {"value": [] if len(calls) == 1 else [{"instance_id": "inst0001", "unresponsive": False}]}
+        assert args == ["session", "start", "--browser", "inst0001"] and session is False
+        return {"session_id": NEW_SESSION, "browser_instance_id": "inst0001"}
+
+    monkeypatch.setattr(b, "run", run)
+    monkeypatch.setattr(b, "_initialize_owned_tab", lambda: None)
+    monkeypatch.setattr(bsk_mod.subprocess, "run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1))
+    monkeypatch.setattr(bsk_mod.time, "sleep", lambda _: pytest.fail("a connected profile must not need polling"))
+
+    b.start_session()
+    assert calls == [["browsers"], ["browsers"], ["browsers"], ["session", "start", "--browser", "inst0001"]]
+    assert b.session == NEW_SESSION
 
 
 def test_start_session_offline_no_opener_raises(cfg, monkeypatch):

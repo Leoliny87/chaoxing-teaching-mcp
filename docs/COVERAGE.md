@@ -450,6 +450,11 @@ MCP 绑定预演中的课程班级、作业、题号、文件名、字节数和 
 
 **各模块结果**：A 基础 11/11；B 通知讨论净零；C 作业师生闭环；D 考试试卷净零；E 章节内容净零；F 题库净零；G 资料净零（上传受限）；H 图谱净零；I 活动净零；J 班级成绩设置净零；K 课件学情读+查重校验；L 教材读+章节/知识点净零。
 
+### 2026-11-23 ai395 Chrome 冷启动时的显示器检查
+- 395 的 GNOME 远程桌面断开后会移除会话中的虚拟显示器。Chrome 158 创建普通窗口时可能遇到空显示区域并崩溃。官方调试符号将多次相同崩溃定位到 `WindowSizer::AdjustBoundsToBeVisibleOnDisplay`，已经确认账号资料与扩展实例的绑定仍有效。
+- `scripts/gnome_virtual_output.py --ensure` 给本机配置的启动器提供显示器检查。在已登录的 GNOME 50 会话里已有逻辑显示器时直接返回。缺屏时通过现有 Mutter 和用户 systemd 建立并保持一个 1280×800 虚拟输出，验证可用后才继续 Chrome 启动。它不连接画面流，不启动浏览器守护或远程桌面服务。由 395 本机 `ai395-open-learning-chrome` 在发出 Chrome 窗口请求前调用，无需改教师和学生的账号资料配置。
+- MCP 现在单独报告启动器失败、超时或不可执行，并继续只接入配置绑定的 BrowserSkill 实例。
+
 ### 2026-11-23（第二十五轮）MCP 内置 Chrome 按需自启（全关也能自开）+ 实例映射纠正
 - **用户纠正启动入口**：要开的是 Chrome 本体已登录的两个 Google 主帐号 yun lin(Default)/erwen xiao(Profile 1)（~/.config/google-chrome），旧专用资料根指导作废。官方入口 ai395-open-learning-chrome both/--status 已按此改好。实例映射按用户给定：教师 ai395=c41e7649、学生 test_chrome=1e1e4951。
 - **MCP 自启修复（方案B）**：bsk.start_session 检测绑定实例离线时，调官方入口 ai395-open-learning-chrome <role> 打开对应 profile（复用已运行、补开缺失），轮询等扩展接入（默认60s，XUEXITONG_MCP_BROWSER_OPENER_WAIT 可调）后开会话；超时仍离线则报 browser_profile_unavailable 请用户重连。不杀 Chrome/删锁。XUEXITONG_MCP_BROWSER_OPENER="" 可禁用；角色经 XUEXITONG_MCP_BROWSER_OPENER_ROLE 或实例映射(c41e7649→teacher/1e1e4951→student)。
