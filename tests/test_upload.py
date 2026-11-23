@@ -103,6 +103,44 @@ def test_chapter_file_checks_kind_and_suffix(client, tmp_path):
         client.insert_chapter_file("1", "10", "5", str(p), "压缩包", digest)
 
 
+@pytest.mark.parametrize("folder_args,folder_id", [({}, "0"), ({"material_folder_id": "42"}, "42")])
+def test_insert_course_material_uses_folder_and_binds_selected_id(client, monkeypatch, folder_args, folder_id):
+    from xuexitong_mcp import server as srv
+
+    course = client.ctx("1")
+    client.cfg.write_allow_courses = [course.id]
+    monkeypatch.setattr(srv, "client", lambda: client)
+    monkeypatch.setattr(srv, "_state", dict(srv._state, client=client, cfg=client.cfg, allowed=None, budget=None))
+    monkeypatch.setattr(client, "find_chapter", lambda *a: {"chapter_id": "10", "title": "章节", "number": "1.1", "layer": 2})
+    seen = []
+    item = {"dataId": 8, "dataName": "工单.pdf", "cataid": 100000019,
+            "content": {"objectId": "a" * 32, "suffix": "pdf", "size": 13}}
+    rows = [item]
+
+    def get_resources(host, js, **kwargs):
+        assert f"rootId={folder_id}'" in js
+        seen.append(host)
+        return {"valid": True, "items": rows}
+
+    inserted = []
+    monkeypatch.setattr(client, "on", get_resources)
+    monkeypatch.setattr(client, "_insert_object", lambda *a: inserted.append(a) or {"ok": True})
+    insert = srv._wrap(srv.insert_chapter_material, "write")
+    args = dict(course=course.id, chapter="章节", card_id="5", material="工单.pdf", **folder_args)
+    draft = insert(**args)
+    assert draft["ok"] and draft["details"]["material_folder_id"] == folder_id
+    assert draft["details"]["material_id"] == "8" and len(seen) == 1 and not inserted
+
+    refused = insert(**{**args, "material_folder_id": "99"}, confirm=True, plan_id=draft["plan_id"])
+    assert refused["ok"] is False and len(seen) == 1 and not inserted
+
+    draft = insert(**args)
+    rows.append({**item, "dataId": 9, "content": {**item["content"], "objectId": "b" * 32}})
+    result = insert(**args, confirm=True, plan_id=draft["plan_id"])
+    assert result["ok"] and len(seen) == 3
+    assert inserted == [(course.id, "10", "5", "downloadfile", "a" * 32, 13, "工单.pdf", ".pdf")]
+
+
 def test_upload_tools_are_executable():
     from xuexitong_mcp import server as srv
     kinds = {n: k for n, k, _, _ in srv.TOOLS}

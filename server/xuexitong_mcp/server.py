@@ -2519,22 +2519,28 @@ def upload_panorama(course: Annotated[str, Field(description="要用它的课程
 
 @tool(W, "把已有的课程资料插入章节某一页（「本课资料」；也可作为文档/音频/视频/图片插入，不用重新上传）。先预演，确认后插入并读回核对，保留该页已有插入项。")
 def insert_chapter_material(course: Course_, chapter: Chapter_, card_id: CardId_,
-                            material: Annotated[str, Field(description="课程资料的完整名称或资料ID（list_materials 可查）")],
+                            material: Annotated[str, Field(description="课程资料的完整名称或资料 ID（list_folder_materials 可查）")],
                             kind: Annotated[str, Field(description="附件（=本课资料，不带任务点）/ 文档 / 音频 / 视频（带任务点）/ 图片")] = "附件",
-                            confirm: Confirm = False) -> dict:
+                            confirm: Confirm = False,
+                            material_folder_id: Annotated[str, Field(description="资料直接所在的文件夹 ID，根目录填 0")] = "0") -> dict:
     from .ops_upload import KINDS
+    from .xxt import _safe_id
     c = _check_write(course)
     if kind not in KINDS:
         raise XxtError(f"kind 只能是：{'、'.join(KINDS)}。")
     if not confirm:
-        it = client()._course_resource(client().ctx(c.id), material)
+        it = client()._course_resource(client().ctx(c.id), material, material_folder_id)
+        material_id = _safe_id(it.get("dataId") or "")
         name = str(it.get("dataName") or material)
         suffix = name.rsplit(".", 1)[1].lower() if "." in name else ""
         allowed = KINDS[kind][1]
         if allowed is not None and suffix not in allowed:
             raise XxtError(f"「{name[:40]}」是 {suffix or '未知'} 文件，不能作为{kind}插入；可以选「附件」。")
-        return _chapter_dry(c, chapter, f"把课程资料作为{kind}插入章节（学生可见）", card_id=card_id, material=name, kind=kind)
-    return client().insert_chapter_material(course, chapter, card_id, material, kind)
+        draft = _chapter_dry(c, chapter, f"把课程资料作为{kind}插入章节（学生可见）", card_id=card_id,
+                             material=name, material_id=material_id, material_folder_id=material_folder_id, kind=kind)
+        draft["_bind"]["material"] = material_id
+        return draft
+    return client().insert_chapter_material(course, chapter, card_id, material, kind, material_folder_id)
 
 
 @tool(W, "把本机文件插入章节某一页：kind=文档（doc/ppt/pdf/xls，带任务点）、音频、视频（带任务点）、图片（正文内）、附件（不带任务点）。"

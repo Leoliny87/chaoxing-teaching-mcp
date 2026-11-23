@@ -216,13 +216,14 @@ class UploadOps(XxtBase):
         out = self.insert_chapter_module(course, chapter_id, card_id, module, data)
         return {**out, "object_id": oid, "file": name, **({"job_id": job} if module not in ("downloadfile", "insertflash") else {})}
 
-    def insert_chapter_material(self, course: str, chapter_id: str, card_id: str, material: str, kind: str) -> dict:
-        """本课资料 (and course materials as 文档/音频/视频/图片): reuse the cloud object of a course material, no upload."""
+    def insert_chapter_material(self, course: str, chapter_id: str, card_id: str, material: str, kind: str,
+                                material_folder_id: str = "0") -> dict:
+        """本课资料 (and course materials as 文档/音频/视频/图片): reuse the cloud object, no upload."""
         if kind not in KINDS:
             raise XxtError(f"插入类型只能是：{'、'.join(KINDS)}。")
         module, allowed = KINDS[kind]
         c = self.ctx(course)
-        it = self._course_resource(c, material)
+        it = self._course_resource(c, material, material_folder_id)
         content = it.get("content")
         try:
             content = json.loads(content) if isinstance(content, str) else (content or {})
