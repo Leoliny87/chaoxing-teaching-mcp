@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
-from xuexitong_mcp.ops_student import StudentOps  # noqa: E402
+from xuexitong_mcp.bsk import BskError  # noqa: E402
+from xuexitong_mcp.ops_student import StuCourse, StudentOps  # noqa: E402
 from xuexitong_mcp.xxt import XxtError  # noqa: E402
 
 CH = [{"key": "A", "value": "A"}, {"key": "B", "value": "B"}]
@@ -58,6 +60,71 @@ def test_public_view_hides_internal_ids():
     v = StudentOps._public(QS[12])
     assert "qid" not in v and all("qtid" not in c and "item" not in c for c in v["detail"]["children"])
     assert v["detail"]["children"][0]["options"] == ["A", "B"]
+
+
+@pytest.mark.parametrize(("reason", "failure_location"), [
+    ("session_idle_timeout", "list"),
+    ("session_window_closed", "course"),
+])
+def test_assignment_list_recovers_definitively_dead_browser_once(reason, failure_location):
+    student = object.__new__(StudentOps)
+    course = StuCourse(id="1", clazz_id="2", cpi="3", name="合成课程")
+    calls = []
+
+    def read_course(course_ref):
+        assert course_ref == "1_2"
+        calls.append("course")
+        if failure_location == "course" and calls.count("course") == 1:
+            raise BskError("not_found", "synthetic", {"reason": reason}, origin="cli")
+        return course
+
+    def read_list(resolved):
+        assert resolved is course
+        calls.append("list")
+        if failure_location == "list" and calls.count("list") == 1:
+            raise BskError("not_found", "synthetic", {"reason": reason}, origin="cli")
+        return [{"assignment_id": "42", "status": "待重做", "_url": "private"}]
+
+    def ensure_session(*, renew_idle_readonly):
+        assert renew_idle_readonly is True
+        calls.append("renew")
+
+    student._stu_ctx = read_course
+    student._work_list = read_list
+    student.b = SimpleNamespace(ensure_session=ensure_session)
+    result = student.my_assignments("1_2")
+
+    expected = ["course", "list"] if failure_location == "list" else ["course"]
+    assert calls == [*expected, "renew", "course", "list"]
+    assert result["course"] == course.name
+    assert result["assignments"] == [{"assignment_id": "42", "status": "待重做"}]
+
+
+@pytest.mark.parametrize(("code", "reason", "renewals"), [
+    ("permission_denied", "session_idle_timeout", 0),
+    ("timeout", "session_idle_timeout", 0),
+    ("not_found", "target_closed", 0),
+    ("not_found", "session_idle_timeout", 1),
+])
+def test_assignment_list_does_not_recover_other_errors_or_retry_twice(code, reason, renewals):
+    student = object.__new__(StudentOps)
+    student._stu_ctx = lambda course: StuCourse(id="1", clazz_id="2", cpi="3", name="合成课程")
+    calls = []
+    error = BskError(code, "synthetic", {"reason": reason}, origin="cli")
+
+    def read_list(course):
+        calls.append("list")
+        raise error
+
+    student._work_list = read_list
+    student.b = SimpleNamespace(ensure_session=lambda *, renew_idle_readonly: calls.append("renew"))
+
+    with pytest.raises(BskError) as caught:
+        student.my_assignments("1_2")
+
+    assert caught.value is error
+    expected = ["list", "renew", "list"] if renewals else ["list"]
+    assert calls == expected
 
 
 def _answer_page(question, current, *, before="未交", after="未交"):
