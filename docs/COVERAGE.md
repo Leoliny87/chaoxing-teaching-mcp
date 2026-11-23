@@ -429,6 +429,12 @@
 
 
 
+### 2026-11-23（第二十五轮）MCP 内置 Chrome 按需自启（全关也能自开）+ 实例映射纠正
+- **用户纠正启动入口**：要开的是 Chrome 本体已登录的两个 Google 主帐号 yun lin(Default)/erwen xiao(Profile 1)（~/.config/google-chrome），旧专用资料根指导作废。官方入口 ai395-open-learning-chrome both/--status 已按此改好。实例映射按用户给定：教师 ai395=c41e7649、学生 test_chrome=1e1e4951。
+- **MCP 自启修复（方案B）**：bsk.start_session 检测绑定实例离线时，调官方入口 ai395-open-learning-chrome <role> 打开对应 profile（复用已运行、补开缺失），轮询等扩展接入（默认60s，XUEXITONG_MCP_BROWSER_OPENER_WAIT 可调）后开会话；超时仍离线则报 browser_profile_unavailable 请用户重连。不杀 Chrome/删锁。XUEXITONG_MCP_BROWSER_OPENER="" 可禁用；角色经 XUEXITONG_MCP_BROWSER_OPENER_ROLE 或实例映射(c41e7649→teacher/1e1e4951→student)。
+- 旧守护 xuexitong-browser-watchdog.service 按用户要求停用（disabled）；自启改为 MCP 按需触发，不周期弹窗。
+- 回归：+2 自启测试，全套 **343 通过**。
+
 ### 2026-11-23（第二十四轮）环境 bug 根治：Chrome Wayland→X11 自动重连 + 作业删除班级修复
 - **环境 bug 根因（用户授权全自动修复）**：Chrome 158 在 Wayland 会话默认走 Wayland 原生窗口，BrowserSkill 扩展 MV3 service worker 该模式下不主动连 daemon，致 bsk 实例反复掉线、重启 Chrome 也不自动重连（须人工点扩展弹窗）。CDP 远程调试被此 Chrome 构建禁用、Xlib 因 Wayland 看不到窗口，均无法自动唤醒。
 - **根治**：强制 `--ozone-platform=x11`（Xwayland）启动 Chrome，扩展启动即自动连 daemon，免人工弹窗。实测教师 c41e7649、学生 1e1e4951 均 X11 启动即在线，实例 ID 跨重启稳定。

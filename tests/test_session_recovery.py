@@ -136,3 +136,43 @@ def test_stop_preserve_tab_keeps_session(cfg, monkeypatch):
     b.stop()
     assert not any(a[:2] == ["session", "stop"] for a in calls)
     assert b.session == "sessOLD2"  # preserved for reconciliation
+
+
+def test_start_session_auto_opens_chrome_when_offline(cfg, monkeypatch):
+    # Chrome fully closed -> instance offline -> MCP calls the official launcher to
+    # open the profile, waits for the extension to attach, then starts the session.
+    import subprocess as sp
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "c41e7649")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "/fake/opener")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER_ROLE", "teacher")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER_WAIT", 5)
+    b = Bsk(cfg)
+    state = {"opener": [], "browsers": 0}
+
+    def fake_run(args, timeout=None, session=True):
+        if args[0] == "browsers":
+            state["browsers"] += 1
+            if state["browsers"] >= 2:  # online after the opener ran
+                return {"value": [{"instance_id": "c41e7649", "unresponsive": False}]}
+            return {"value": []}
+        if args[:2] == ["session", "start"]:
+            return {"session_id": "s1", "browser_instance_id": "c41e7649"}
+        return {}
+
+    monkeypatch.setattr(b, "run", fake_run)
+    monkeypatch.setattr(b, "_initialize_owned_tab", lambda: None)
+    monkeypatch.setattr(bsk_mod.subprocess, "run",
+                        lambda *a, **k: state["opener"].append(a[0]) or sp.CompletedProcess(a[0], 0))
+    b.start_session()
+    assert state["opener"] and state["opener"][0] == ["/fake/opener", "teacher"]
+    assert b.session == "s1"
+
+
+def test_start_session_offline_no_opener_raises(cfg, monkeypatch):
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "c41e7649")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "")  # auto-open disabled
+    b = Bsk(cfg)
+    monkeypatch.setattr(b, "run", lambda args, timeout=None, session=True: {"value": []})
+    with pytest.raises(BskError) as ei:
+        b.start_session()
+    assert ei.value.code == "browser_profile_unavailable"

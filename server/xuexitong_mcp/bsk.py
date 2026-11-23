@@ -38,6 +38,16 @@ FIXED_HOMEPAGE = "https://i.mooc.chaoxing.com/space/index"
 # Optional visible course anchor for this installation's readiness check.
 FIXED_BOOTSTRAP_COURSE = os.environ.get("XUEXITONG_MCP_BOOTSTRAP_COURSE", "").strip() or None
 
+# On-demand Chrome auto-open: when the bound instance is offline (e.g. Chrome fully
+# closed), call the host's official launcher to open the matching profile, then wait
+# for the BrowserSkill extension to attach. Never kills Chrome / removes profile locks.
+# Set XUEXITONG_MCP_BROWSER_OPENER="" to disable. Role defaults to the instance mapping
+# below and can be overridden with XUEXITONG_MCP_BROWSER_OPENER_ROLE=teacher|student|both.
+BROWSER_OPENER = os.environ.get("XUEXITONG_MCP_BROWSER_OPENER", "/home/linyun/.local/bin/ai395-open-learning-chrome").strip()
+BROWSER_OPENER_ROLE = os.environ.get("XUEXITONG_MCP_BROWSER_OPENER_ROLE", "").strip()
+BROWSER_OPENER_WAIT = float(os.environ.get("XUEXITONG_MCP_BROWSER_OPENER_WAIT", "60"))
+BROWSER_OPENER_INSTANCE_ROLE = {"c41e7649": "teacher", "1e1e4951": "student"}
+
 BLANK_URL = "https://mooc2-ans.chaoxing.com/mooc2-ans/js/ServerHost.js"
 
 
@@ -322,14 +332,47 @@ class Bsk:
                 pass
             self.start_session()
 
-    def start_session(self):
-        if not FIXED_BROWSER_INSTANCE:
-            raise BskError("browser_profile_unconfigured", "Set XUEXITONG_MCP_BROWSER to your explicitly selected local BrowserSkill instance; no fallback is allowed.")
+    def _browser_online(self) -> bool:
         browsers = self.run(["browsers"], session=False)
         instances = browsers.get("value", browsers) if isinstance(browsers, dict) else browsers
         matches = [b for b in instances if isinstance(b, dict) and b.get("instance_id") == FIXED_BROWSER_INSTANCE] if isinstance(instances, list) else []
-        if len(matches) != 1 or matches[0].get("unresponsive") is True:
-            raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
+        return len(matches) == 1 and matches[0].get("unresponsive") is not True
+
+    def _auto_open_browser(self) -> None:
+        """On-demand: open the bound Chrome profile via the host's official launcher.
+
+        Used when the instance is offline (Chrome may be fully closed). Calls
+        ai395-open-learning-chrome <role> (reuses running profiles, opens missing ones),
+        then waits for the BrowserSkill extension to attach. Never kills Chrome or
+        removes profile locks; if the extension does not attach in time the caller
+        reports browser_profile_unavailable so the user can reconnect the popup.
+        """
+        if not BROWSER_OPENER:
+            return
+        role = BROWSER_OPENER_ROLE or BROWSER_OPENER_INSTANCE_ROLE.get(FIXED_BROWSER_INSTANCE, "")
+        if not role:
+            self.log.info("no opener role mapped for instance %s; skip auto-open", FIXED_BROWSER_INSTANCE)
+            return
+        try:
+            self.log.info("auto-opening Chrome via launcher role=%s", role)
+            subprocess.run([BROWSER_OPENER, role], capture_output=True, text=True, timeout=90)
+        except Exception as e:  # noqa: BLE001
+            self.log.warning("chrome auto-open launcher failed: %s", e)
+            return
+        deadline = time.time() + BROWSER_OPENER_WAIT
+        while time.time() < deadline:
+            if self._browser_online():
+                self.log.info("chrome auto-open: instance %s attached", FIXED_BROWSER_INSTANCE)
+                return
+            time.sleep(3)
+
+    def start_session(self):
+        if not FIXED_BROWSER_INSTANCE:
+            raise BskError("browser_profile_unconfigured", "Set XUEXITONG_MCP_BROWSER to your explicitly selected local BrowserSkill instance; no fallback is allowed.")
+        if not self._browser_online():
+            self._auto_open_browser()
+            if not self._browser_online():
+                raise BskError("browser_profile_unavailable", "配置指定的浏览器实例 未连接或不可响应；请重新连接此 Profile。")
         d = self.run(["session", "start", "--browser", FIXED_BROWSER_INSTANCE], session=False)
         if d.get("browser_instance_id") != FIXED_BROWSER_INSTANCE:
             raise BskError("browser_profile_mismatch", "新会话未确认绑定 配置指定的浏览器实例，停止操作。")
