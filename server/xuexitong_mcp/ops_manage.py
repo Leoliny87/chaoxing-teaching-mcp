@@ -404,17 +404,25 @@ class ManageOps(XxtBase):
         """快速导入目录: each line one chapter; the editor's format indents each level by two spaces.  Appended to the course."""
         rows = outline_levels(outline)
         c = self.course(course)
-        before = {x["chapter_id"] for x in self.chapters(c.id)}
-        text = "".join("  " * lv + t + "\n" for lv, t in rows)
-        r = self._chapter_post("/mooc-ans/edit/importdirForText", {"courseId": c.id, "text": text})
-        now = self.chapters(c.id)
-        new = [x for x in now if x["chapter_id"] not in before]
-        ok = (r.get("success") is True or r.get("status") is True) and \
-            [(int(x["layer"]) - 1, x["title"]) for x in new] == [(lv, t) for lv, t in rows]
+        before = self.chapters(c.id)
+        before_ids = {chapter["chapter_id"] for chapter in before}
+        text = "".join("  " * level + title + "\n" for level, title in rows)
+        ack = self._chapter_post("/mooc-ans/edit/importdirForText", {"courseId": c.id, "text": text})
+        after = self.chapters(c.id)
+
+        new = [chapter for chapter in after if chapter["chapter_id"] not in before_ids]
+        original_unchanged = after[:len(before)] == before
+        matches_outline = [(int(chapter["layer"]) - 1, chapter["title"]) for chapter in new] == rows
+        rejected = ack.get("success") is False or ack.get("status") is False
+        ok = not rejected and original_unchanged and matches_outline
         out = {"ok": ok, "created": [{"number": x["number"], "title": x["title"], "layer": x["layer"]} for x in new]}
-        if not ok:
-            out.update(write_outcome="unknown" if new or not r.get("msg") else "not_written",
-                       error=f"导入后的目录和大纲不一致（{str(r.get('msg') or '')[:60]}）；请用 list_chapters 核查。")
+        if ok:
+            return out
+        if rejected and after == before:
+            out.update(write_outcome="not_written", error="平台拒绝导入，读回的目录未变化。")
+        else:
+            reason = "平台报告导入失败，但读回的目录已变化。" if rejected else "导入后读回的目录不符合预期。"
+            out.update(write_outcome="unknown", error=reason + "请用 list_chapters 核查，不要重复提交。")
         return out
 
     # ------------------------------------------------------------------ materials

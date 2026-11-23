@@ -133,3 +133,56 @@ def test_update_assignment_times_uses_own_class(monkeypatch):
     except XxtError:
         pass
     assert nav and "classid=7" in nav[0] and "classid=0" not in nav[0]
+
+
+def chapter_row(chapter_id: str, number: str, title: str, layer: int = 1) -> dict:
+    return {"chapter_id": chapter_id, "number": number, "title": title, "layer": layer}
+
+
+EXISTING_CHAPTERS = (
+    chapter_row("11", "1", "旧章"),
+    chapter_row("12", "1.1", "旧节", 2),
+)
+IMPORTED_CHAPTERS = (
+    chapter_row("21", "2", "新章"),
+    chapter_row("22", "2.1", "新节", 2),
+)
+
+
+@pytest.mark.parametrize(("ack", "after", "expected"), [
+    ({"success": True}, EXISTING_CHAPTERS + IMPORTED_CHAPTERS, "confirmed"),
+    ({}, EXISTING_CHAPTERS + IMPORTED_CHAPTERS, "confirmed"),
+    ({"success": True}, EXISTING_CHAPTERS[:1] + IMPORTED_CHAPTERS, "unknown"),
+    ({"success": True}, (chapter_row("11", "1", "改名"), *EXISTING_CHAPTERS[1:], *IMPORTED_CHAPTERS), "unknown"),
+    ({"success": True}, EXISTING_CHAPTERS[::-1] + IMPORTED_CHAPTERS, "unknown"),
+    ({"success": True}, EXISTING_CHAPTERS[:1] + IMPORTED_CHAPTERS + EXISTING_CHAPTERS[1:], "unknown"),
+    ({"success": False, "msg": "未通过"}, EXISTING_CHAPTERS, "not_written"),
+    ({"msg": "暂未确认"}, EXISTING_CHAPTERS, "unknown"),
+    ({}, EXISTING_CHAPTERS + IMPORTED_CHAPTERS[:1], "unknown"),
+    ({"success": False}, EXISTING_CHAPTERS + IMPORTED_CHAPTERS, "unknown"),
+])
+def test_import_chapters_requires_exact_append(monkeypatch, ack, after, expected):
+    from types import SimpleNamespace
+    from xuexitong_mcp.config import Config
+    from xuexitong_mcp.xxt import make_client
+
+    client = make_client(Config())
+    monkeypatch.setattr(client, "course", lambda course: SimpleNamespace(id=course))
+    reads = iter((list(EXISTING_CHAPTERS), list(after)))
+    monkeypatch.setattr(client, "chapters", lambda course: next(reads))
+    posted = []
+
+    def post(path, form):
+        posted.append((path, form))
+        return ack
+
+    monkeypatch.setattr(client, "_chapter_post", post)
+
+    result = client.import_chapters("1", "新章\n  新节")
+
+    assert posted == [("/mooc-ans/edit/importdirForText", {"courseId": "1", "text": "新章\n  新节\n"})]
+    assert result["ok"] is (expected == "confirmed")
+    if expected == "confirmed":
+        assert [row["title"] for row in result["created"]] == ["新章", "新节"]
+    else:
+        assert result["write_outcome"] == expected
