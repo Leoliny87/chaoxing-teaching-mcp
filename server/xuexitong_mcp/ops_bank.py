@@ -62,7 +62,9 @@ class BankOps(XxtBase):
         for x in rows:
             qb = x.get("questionBank") or {}
             if x.get("type") == 0:
-                out.append({"kind": "folder", "id": str(x.get("id")), "name": x.get("dirName"), "questions": x.get("questionCount"), "pid": str(x.get("pid"))})
+                name = _h.unescape(str(x.get("dirName") or "")).replace("\xa0", " ")
+                out.append({"kind": "folder", "id": str(x.get("id")), "name": name,
+                            "questions": x.get("questionCount"), "pid": str(x.get("pid"))})
             else:
                 stem = _h.unescape(re.sub(r"<[^>]+>", " ", str(qb.get("content") or "")))
                 out.append({"kind": "question", "id": str(x.get("questionId") or qb.get("id")), "stem": re.sub(r"\s+", " ", stem).strip()[:120],

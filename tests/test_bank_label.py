@@ -61,3 +61,14 @@ def test_delete_bank_label_missing_raises():
     b = FakeBank([])
     with pytest.raises(XxtError):
         b.delete_bank_label("课", "不存在")
+
+def test_bank_folder_display_and_exact_lookup_decode_html(monkeypatch):
+    b = FakeBank([])
+    rows = [
+        {"type": 0, "id": 40, "dirName": "项目一&nbsp;饮片生产 &amp; 质检", "questionCount": 6, "pid": 0},
+        {"type": 0, "id": 41, "dirName": "项目二 直接空格", "questionCount": 3, "pid": 0},
+    ]
+    monkeypatch.setattr(b, "on", lambda *a, **k: {"status": True, "questionBankRelationList": rows})
+    assert [x["name"] for x in b.bank_folders("课")] == ["项目一 饮片生产 & 质检", "项目二 直接空格"]
+    assert b._folder(b.course("课"), "项目一 饮片生产 & 质检")["id"] == "40"
+    assert b._folder(b.course("课"), "41")["name"] == "项目二 直接空格"
