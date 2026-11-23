@@ -563,20 +563,29 @@ class ActiveOps(XxtBase):
                 **({} if ok else {"write_outcome": "unknown",
                                   "error": f"教案已建，但读回的段落和请求不一致（写入 {(added or {}).get('n')} 段）；请打开教案核查。"})}
 
-    def push_plan_activity(self, course: str, class_id: str, kind: str, item: str) -> dict:
-        """发起活动 -> 课件 / 教案: POST /v2/apis/active/createTeachPlanActive {classId, courseId, teachPlanData:[list row]}."""
+    def _teaching_resource(self, c, cls: str, kind: str, item: str, *, id_only: bool = False) -> dict:
         if kind not in ("课件", "教案"):
             raise XxtError("kind 只能是 课件 或 教案。")
-        c = self.ctx(course)
-        cls = self._class_of(c, class_id)
         rows = self._plan_list(c, cls, kind)
-        hits = [x for x in rows if str(x.get("aid")) == str(item)] or [x for x in rows if x.get("title") == item]
+        hits = [row for row in rows if str(row.get("aid")) == item]
+        if not hits and not id_only:
+            hits = [row for row in rows if row.get("title") == item]
         if len(hits) != 1:
             raise XxtError(f"{kind}库里没有唯一的「{str(item)[:40]}」。可选：{[x.get('title') for x in rows][:30]}")
+        resource = hits[0]
+        if not re.fullmatch(r"[0-9]+", str(resource.get("aid"))):
+            raise XxtError(f"{kind}缺少有效 ID，无法安全推送。")
+        return resource
+
+    def push_plan_activity(self, course: str, class_id: str, kind: str, item_id: str) -> dict:
+        """Push the courseware or teaching plan selected by its approved ID."""
+        c = self.ctx(course)
+        cls = self._class_of(c, class_id)
+        resource = self._teaching_resource(c, cls, kind, item_id, id_only=True)
         before = {a["activity_id"] for a in self.activities(c.id, limit=1000, class_id=cls)}
         r = self.on(ML, "const j=await J('/v2/apis/active/createTeachPlanActive',POST(%s));return {j};" % json.dumps(
-            {"classId": cls, "courseId": _safe_id(c.id), "teachPlanData": json.dumps(hits, ensure_ascii=False)}, ensure_ascii=False), retry_safe=False)
-        return self._activity_result(c, cls, before, r, kind=kind, item=hits[0].get("title"))
+            {"classId": cls, "courseId": _safe_id(c.id), "teachPlanData": json.dumps([resource], ensure_ascii=False)}, ensure_ascii=False), retry_safe=False)
+        return self._activity_result(c, cls, before, r, kind=kind, item=resource.get("title"), item_id=item_id)
 
     def create_group_task(self, course: str, class_id: str, title: str, content: str, start: bool,
                           minutes: float | None = 1440, settings: dict | None = None) -> dict:

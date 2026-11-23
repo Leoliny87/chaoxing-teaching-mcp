@@ -264,3 +264,144 @@ def test_note_is_inline_markup_and_escaped(client, monkeypatch):
     r = client.insert_chapter_note("1", "10", "5", "标题\"x", "内容<script>")
     assert r["ok"] is True and seen["att"] == [] and 'insertnotes="1"' in seen["html"]
     assert "<script>" not in seen["html"] and "&lt;script&gt;" in seen["html"] and "href　=" in seen["html"]
+
+
+
+
+@pytest.fixture()
+def chapter_link_editor(client, monkeypatch):
+    from copy import deepcopy
+
+    chapters = [
+        {"chapter_id": "10", "number": "1.1", "title": "源章节", "layer": 2},
+        {"chapter_id": "20", "number": "1.2", "title": "目标章节", "layer": 2},
+        {"chapter_id": "30", "number": "2", "title": "一级目录", "layer": 1},
+    ]
+    body = '<p style="color: red"><strong>已有正文</strong> &amp; 核对</p>'
+    card = {"card_id": "5", "title": "页", "content_html": body, "truncated": False, "inserted_modules": []}
+    sibling = {"card_id": "8", "title": "测验", "content_html": _link_block("11"),
+               "truncated": False, "inserted_modules": ["hyperlink"]}
+    cards = [card, sibling]
+    writes = []
+
+    def save(c, node, card_id, title, html, attachments):
+        writes.append((c.id, node, card_id, title, html, attachments))
+        card["content_html"] = html.replace(' href="javascript:void(0);"', ' href\u3000="javascript:void(0);"', 1)
+        return {"http": 200}
+
+    monkeypatch.setattr(client, "chapters", lambda course: chapters)
+    monkeypatch.setattr(client, "chapter_cards", lambda _, node: {"chapter_id": node, "cards": deepcopy(cards)})
+    monkeypatch.setattr(client, "_save_card", save)
+    return cards, body, writes
+
+
+def test_course_chapter_link_preserves_sibling_modules_and_accepts_native_href_normalization(client, chapter_link_editor):
+    from xuexitong_mcp.ops_write import card_attachments
+
+    cards, before, writes = chapter_link_editor
+    title = '"研发" & <试例>'
+    sibling_before = cards[1].copy()
+    course = client.course("1")
+    result = client.insert_course_chapter_link(course, "10", "5", "20", title)
+    assert result["ok"] and result["task_point"] is False
+    assert len(writes) == 1
+    course_id, chapter, card_id, previous_title, submitted, attachments = writes[0]
+    assert (course_id, chapter, card_id, previous_title) == ("1", "10", "5", "页")
+    assert submitted.startswith(before) and not attachments
+    new_link = submitted[len(before):]
+    for frag in ('class="chapter-link chapterLink"', 'linktype="0"', 'href="javascript:void(0);"',
+                 'insertchapterurl="1"', 'knowledgeid="20"', 'chaptercourseid="1"',
+                 '&quot;研发&quot; &amp; &lt;试例&gt;', 'id="' + result["anchor_id"] + '"'):
+        assert frag in new_link
+    assert '<iframe' not in new_link and 'jobid' not in new_link
+    assert card_attachments(cards[0]["content_html"]) == [] and cards[1] == sibling_before
+    assert "insertchapterurl" not in sanitize_html(new_link)
+    assert "javascript:" not in sanitize_html(new_link)
+    assert client.insert_course_chapter_link(course, "10", "5", "20", title)["already_present"]
+    assert len(writes) == 1
+
+
+@pytest.mark.parametrize(("source", "card_id", "target"), [
+    ("10", "5", "10"), ("10", "5", "999"), ("30", "5", "20"), ("10", "6", "20"), ("10", "5", "bad id"),
+])
+def test_course_chapter_link_rejects_invalid_targets_or_card(client, chapter_link_editor, source, card_id, target):
+    _, _, writes = chapter_link_editor
+    with pytest.raises(XxtError):
+        client.insert_course_chapter_link(client.course("1"), source, card_id, target, "链接")
+    assert not writes
+
+
+@pytest.mark.parametrize("card_changes", [
+    {"truncated": True}, {"inserted_modules": ["work"]},
+    {"content_html": '<div class="taskIframeWrap"></div>'},
+    {"content_html": '<iframe></iframe>'}, {"content_html": '<img src="https://example.invalid/image.png">'},
+    {"content_html": "x" * 19_990},
+])
+def test_course_chapter_link_rejects_unverifiable_or_embedded_card(client, chapter_link_editor, card_changes):
+    cards, _, writes = chapter_link_editor
+    cards[0].update(card_changes)
+    with pytest.raises(XxtError):
+        client.insert_course_chapter_link(client.course("1"), "10", "5", "20", "链接")
+    assert not writes
+
+
+@pytest.mark.parametrize("changed_card", [0, 1])
+def test_course_chapter_link_reports_unknown_when_original_cards_change(client, chapter_link_editor, monkeypatch, changed_card):
+    cards, _, writes = chapter_link_editor
+    save = client._save_card
+
+    def changed(*args):
+        result = save(*args)
+        cards[changed_card]["content_html"] += "<p>unexpected</p>"
+        return result
+
+    monkeypatch.setattr(client, "_save_card", changed)
+    result = client.insert_course_chapter_link(client.course("1"), "10", "5", "20", "链接")
+    assert result["ok"] is False and result["write_outcome"] == "unknown" and len(writes) == 1
+
+
+def test_course_chapter_link_tool_requires_exact_confirmation_and_scope(client, chapter_link_editor, monkeypatch):
+    from xuexitong_mcp import server
+
+    _, _, writes = chapter_link_editor
+    cfg = Config(write_allow_courses=["1"])
+    monkeypatch.setattr(server, "_state", {"client": client, "cfg": cfg, "allowed": None, "budget": None, "profile": "teacher"})
+    monkeypatch.setattr(server, "_PLANS", {})
+    fn = next(f for name, kind, _, f in server.TOOLS if name == "insert_course_chapter_link" and kind == "write")
+    tool = server._wrap(fn, server.W)
+    args = {"course": "1", "chapter": "10", "card_id": "5", "target_chapter": "20"}
+    draft = tool(**args)
+    assert draft["dry_run"] and draft["details"]["title"] == "目标章节" and draft["details"]["task_point"] is False
+    assert not writes and not tool(**args, confirm=True)["ok"]
+    assert not tool(**args, title="修改后的链接", confirm=True, plan_id=draft["plan_id"])["ok"]
+    assert not writes
+    approved = tool(**args)
+    assert tool(**args, confirm=True, plan_id=approved["plan_id"])["ok"] and len(writes) == 1
+    assert not tool(**args, confirm=True, plan_id=approved["plan_id"])["ok"]
+    duplicate = tool(**args)
+    assert tool(**args, confirm=True, plan_id=duplicate["plan_id"])["already_present"]
+    cfg.write_allow_courses = []
+    assert not tool(**args)["ok"] and len(writes) == 1
+
+
+@pytest.mark.parametrize(("field", "updated"), [("title", "新标题"), ("content_html", "<p>新正文</p>")])
+def test_course_chapter_link_refuses_changed_card_since_preview(client, chapter_link_editor, monkeypatch, field, updated):
+    from xuexitong_mcp import server
+
+    cards, _, writes = chapter_link_editor
+    cfg = Config(write_allow_courses=["1"])
+    monkeypatch.setattr(server, "_state", {"client": client, "cfg": cfg, "allowed": None, "budget": None, "profile": "teacher"})
+    monkeypatch.setattr(server, "_PLANS", {})
+    fn = next(f for name, kind, _, f in server.TOOLS if name == "insert_course_chapter_link" and kind == "write")
+    tool = server._wrap(fn, server.W)
+    args = {"course": "1", "chapter": "10", "card_id": "5", "target_chapter": "20"}
+    preview = tool(**args)
+    cards[0][field] = updated
+
+    refused = tool(**args, confirm=True, plan_id=preview["plan_id"])
+    assert refused["ok"] is False and refused["write_outcome"] == "not_written"
+    assert not writes
+
+    current = tool(**args)
+    assert tool(**args, confirm=True, plan_id=current["plan_id"])["ok"]
+    assert len(writes) == 1

@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
-from xuexitong_mcp.ops_student import StudentOps  # noqa: E402
+from xuexitong_mcp.bsk import BskError  # noqa: E402
+from xuexitong_mcp.ops_student import StuCourse, StudentOps  # noqa: E402
 from xuexitong_mcp.xxt import XxtError  # noqa: E402
 
 CH = [{"key": "A", "value": "A"}, {"key": "B", "value": "B"}]
@@ -58,6 +60,132 @@ def test_public_view_hides_internal_ids():
     v = StudentOps._public(QS[12])
     assert "qid" not in v and all("qtid" not in c and "item" not in c for c in v["detail"]["children"])
     assert v["detail"]["children"][0]["options"] == ["A", "B"]
+
+
+@pytest.mark.parametrize(("reason", "failure_location"), [
+    ("session_idle_timeout", "list"),
+    ("session_window_closed", "course"),
+])
+def test_assignment_list_recovers_definitively_dead_browser_once(reason, failure_location):
+    student = object.__new__(StudentOps)
+    course = StuCourse(id="1", clazz_id="2", cpi="3", name="合成课程")
+    calls = []
+
+    def read_course(course_ref):
+        assert course_ref == "1_2"
+        calls.append("course")
+        if failure_location == "course" and calls.count("course") == 1:
+            raise BskError("not_found", "synthetic", {"reason": reason}, origin="cli")
+        return course
+
+    def read_list(resolved):
+        assert resolved is course
+        calls.append("list")
+        if failure_location == "list" and calls.count("list") == 1:
+            raise BskError("not_found", "synthetic", {"reason": reason}, origin="cli")
+        return [{"assignment_id": "42", "status": "待重做", "_url": "private"}]
+
+    def ensure_session(*, renew_idle_readonly):
+        assert renew_idle_readonly is True
+        calls.append("renew")
+
+    student._stu_ctx = read_course
+    student._work_list = read_list
+    student.b = SimpleNamespace(ensure_session=ensure_session)
+    result = student.my_assignments("1_2")
+
+    expected = ["course", "list"] if failure_location == "list" else ["course"]
+    assert calls == [*expected, "renew", "course", "list"]
+    assert result["course"] == course.name
+    assert result["assignments"] == [{"assignment_id": "42", "status": "待重做"}]
+
+
+@pytest.mark.parametrize(("code", "reason", "renewals"), [
+    ("permission_denied", "session_idle_timeout", 0),
+    ("timeout", "session_idle_timeout", 0),
+    ("not_found", "target_closed", 0),
+    ("not_found", "session_idle_timeout", 1),
+])
+def test_assignment_list_does_not_recover_other_errors_or_retry_twice(code, reason, renewals):
+    student = object.__new__(StudentOps)
+    student._stu_ctx = lambda course: StuCourse(id="1", clazz_id="2", cpi="3", name="合成课程")
+    calls = []
+    error = BskError(code, "synthetic", {"reason": reason}, origin="cli")
+
+    def read_list(course):
+        calls.append("list")
+        raise error
+
+    student._work_list = read_list
+    student.b = SimpleNamespace(ensure_session=lambda *, renew_idle_readonly: calls.append("renew"))
+
+    with pytest.raises(BskError) as caught:
+        student.my_assignments("1_2")
+
+    assert caught.value is error
+    expected = ["list", "renew", "list"] if renewals else ["list"]
+    assert calls == expected
+
+
+def _answer_page(question, current, *, before="未交", after="未交"):
+    student = object.__new__(StudentOps)
+    work = {"assignment_id": "42", "title": "作业", "status": before}
+    page_reads = iter([
+        {"state": "ok", "questions": [question]},
+        {"state": "ok", "questions": [{**question, "current": current}]},
+    ])
+    student._open_work = lambda course, assignment: (None, work)
+    student.wait_for = lambda script, *, timeout: next(page_reads)
+    student.here = lambda script, *, retry_safe: {"stage": "done", "status": True}
+    student._work_list = lambda course: [{**work, "status": after}]
+    return student
+
+
+@pytest.mark.parametrize(("question", "answer", "current", "saved"), [
+    (QS[3], "新回答", "<p>未更新的旧回答</p>", False),
+    (QS[3], "词 与词", "<p>词与词</p>", False),
+    (QS[3], "第一行<b> & 文字\n第二行", "<div><strong>第一行&lt;b&gt;&nbsp;&amp; 文字</strong><br/>第二行</div>", True),
+    ({"no": 1, "qid": "26", "type": 26}, "第一行\n第二行", "第一行\r\n第二行", True),
+    ({"no": 1, "qid": "26", "type": 26}, "新作文", "旧作文", False),
+    (QS[5], ["第一空", "第二空"], "<p>第一空</p> | <p>第二空</p>", True),
+])
+def test_save_my_answers_checks_reopened_draft(question, answer, current, saved):
+    student = _answer_page(question, current)
+    result = student.answer_my_assignment("助手", "42", {str(question["no"]): answer}, submit=False)
+
+    assert result["ok"] is saved
+    assert result["status_after"] == "未交"
+    if not saved:
+        assert result["write_outcome"] == "unknown"
+        assert "暂存后未能核实作答" in result["error"]
+
+
+def test_save_my_answers_requires_a_readable_page_after_save():
+    student = _answer_page(QS[3], None)
+    pages = iter(({"state": "ok", "questions": [QS[3]]}, {"state": "noform"}))
+    student.wait_for = lambda script, *, timeout: next(pages)
+
+    result = student.answer_my_assignment("助手", "42", {"4": "测试回答"}, submit=False)
+
+    assert result["ok"] is False
+    assert result["write_outcome"] == "unknown"
+
+
+@pytest.mark.parametrize(("before", "after", "submitted"), [
+    ("未交", "待批阅", True),
+    ("未交", "已完成", True),
+    ("未交", "", False),
+    ("未交", "待重做", False),
+    ("教学任务里的作业", "教学任务里的作业", True),
+])
+def test_submit_my_answers_checks_reopened_status(before, after, submitted):
+    student = _answer_page(QS[3], None, before=before, after=after)
+    result = student.answer_my_assignment("助手", "42", {"4": "测试回答"}, submit=True)
+
+    assert result["ok"] is submitted
+    assert result["status_after"] == after
+    if not submitted:
+        assert result["write_outcome"] == "unknown"
 
 
 def test_submit_requires_phrase_and_plan_ignores_it(monkeypatch):
