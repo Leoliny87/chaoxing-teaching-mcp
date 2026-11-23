@@ -23,6 +23,7 @@ import shutil
 import time
 from contextlib import ExitStack
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 
 from .bsk import BskError
 from .xxt import M1, XxtBase, XxtError, _safe_id
@@ -38,6 +39,35 @@ ANSWER_FORMAT = {
     "钟表": "[\"9:30\"]（按钟表顺序）", "完型填空": "每个空的字母，如 \"BA\"",
     "阅读理解/听力": "按小题顺序的列表，每项按小题题型填写", "程序": "{\"language\": \"Python 3.12\", \"code\": \"...\"}"}
 _TASK_URL = re.compile(r"^https://mooc1\.chaoxing\.com/mooc-ans/mooc2/work/task\?[\w=&%.\-]+$")
+_EDITOR_ANSWER_TYPES = (4, 5, 6, 7, 8, 18)
+_SUBMITTED_WORK_STATUSES = ("待批阅", "已完成", "已提交", "待批改", "已批阅")
+
+
+class _EditorAnswerText(HTMLParser):
+    """Read the text of a rich-editor answer, accounting for paragraph boundaries."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.parts: list[str] = []
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag in ("p", "div", "br"):
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag) -> None:
+        if tag in ("p", "div"):
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        parser = cls()
+        parser.feed(value)
+        parser.close()
+        lines = (" ".join(line.split()) for line in "".join(parser.parts).splitlines())
+        return "\n".join(line for line in lines if line)
 
 
 @dataclass
@@ -257,7 +287,7 @@ class StudentOps(XxtBase):
                 op["v"] = "true" if cls._tf(a, where) else "false"
             elif t in (2, 9):
                 op["v"] = cls._blanks(a, int(det.get("blanks") or 0), where)
-            elif t in (4, 5, 6, 7, 8, 18):
+            elif t in _EDITOR_ANSWER_TYPES:
                 op["v"] = cls._html(a, where)
             elif t == 26:
                 s = str(a or "").strip()
@@ -555,7 +585,7 @@ class StudentOps(XxtBase):
         if advanced is not True:
             return {"ok": False, "write_outcome": "unknown", "error": "作业提交回执未确认，请查作业状态，勿重复提交。"}
         after = [row for row in self._work_list(c) if row["assignment_id"] == w["assignment_id"]]
-        if len(after) != 1 or after[0]["status"] not in ("待批阅", "已完成", "已提交", "待批改", "已批阅"):
+        if len(after) != 1 or after[0]["status"] not in _SUBMITTED_WORK_STATUSES:
             return {"ok": False, "write_outcome": "unknown", "error": "列表尚未确认作业已提交，请先查状态，勿重复提交。"}
         self.b.navigate(after[0]["_url"], settle=0.8, readiness=False, allow_leave=True)
         reader = self._work_attachment_script(qid)
@@ -587,19 +617,33 @@ class StudentOps(XxtBase):
         if not isinstance(res, dict) or res.get("stage") != "done":
             raise XxtError("作答页面结构异常；没有提交。")
         after = [x for x in self._work_list(c) if x["assignment_id"] == w["assignment_id"]]
-        status = after[0]["status"] if after else None
+        status = after[0]["status"] if len(after) == 1 else None
         if submit:
-            ok = bool(res.get("status")) and status not in (None, "未交")
-            empty = []
+            # Teaching-task status can remain cached even after a successful submit.
+            task_work = status == w.get("status") == "教学任务里的作业"
+            ok = bool(res.get("status")) and (status in _SUBMITTED_WORK_STATUSES or task_work)
         else:
             self._open_work(course, w["assignment_id"])
             back = self.wait_for(self._READ_JS, timeout=20)
-            saved = {q["no"]: q for q in (back or {}).get("questions", [])}
-            empty = [int(k) for k in answers if not saved.get(int(k), {}).get("current")]
-            ok = bool(res.get("status")) and isinstance(back, dict) and not empty
+            questions = back.get("questions", []) if isinstance(back, dict) and back.get("state") == "ok" else []
+            saved = {q["qid"]: q for q in questions}
+            ok = bool(res.get("status")) and all(self._draft_answer_matches(op, saved.get(op["qid"], {})) for op in ops)
+        error = ("提交后未能核实；请用 list_my_assignments 查看状态，不要重复提交。" if submit
+                 else "暂存后未能核实作答；请重新打开作业查看已保存的内容，不要重复暂存。")
         return {"ok": ok, "assignment": w["title"], "submitted": submit, "status_after": status, "answered": sorted(int(k) for k in answers),
                 **({"server_msg": res.get("msg")} if res.get("msg") else {}),
-                **({} if ok else {"write_outcome": "unknown", "error": "提交后未能核实；请用 list_my_assignments 查看状态，不要重复提交。"})}
+                **({} if ok else {"write_outcome": "unknown", "error": error})}
+
+    @staticmethod
+    def _draft_answer_matches(op: dict, question: dict) -> bool:
+        current = question.get("current")
+        if not current or question.get("type") != op["t"]:
+            return False
+        if op["t"] in _EDITOR_ANSWER_TYPES:
+            return _EditorAnswerText.normalize(current) == _EditorAnswerText.normalize(op["v"])
+        if op["t"] == 26:
+            return current.strip().splitlines() == op["v"].splitlines()
+        return True
 
     # ================================================================ exams, activities, materials, discussions
     ACTIVE_TYPES = {2: "签到", 4: "抢答", 5: "主题讨论", 11: "选人", 14: "问卷", 17: "直播", 23: "评分", 35: "分组任务",
