@@ -8,7 +8,23 @@ import tempfile
 import time
 from pathlib import Path
 
-from .xxt import BASE_PAGE, M1, M2, STAT, XxtBase, XxtError, _best
+from .xxt import BASE_PAGE, M1, M2, STAT, XxtBase, XxtError, _best, _safe_id
+
+
+_MATERIAL_PAGE_JS = """
+const response=await fetch(%s,{credentials:'include'});
+if(!response.ok) return null;
+const doc=D(await response.text());
+const value=id=>doc.getElementById(id)?.value??null;
+const integer=id=>{const raw=value(id); return /^\\d+$/.test(raw??'') ? Number(raw) : null;};
+const items=[...doc.querySelectorAll('ul.dataBody_td[id]')].map(row=>{
+  const info=[...row.querySelectorAll(':scope>li')].map(T).filter(text=>text&&text.length<40);
+  return {id:row.id,title:row.getAttribute('dataname'),type:row.getAttribute('type'),info:info.slice(-4),
+          download:row.getAttribute('isdown')==='1',open:row.getAttribute('isopen')};
+});
+return {course_id:value('courseid'),folder_id:value('dataId'),page:integer('currentPageNo'),
+        pages:integer('totalPage'),size:integer('datalistSize'),items};
+"""
 
 
 class CourseOps(XxtBase):
@@ -75,13 +91,40 @@ class CourseOps(XxtBase):
         return {**ch, "children": [x for x in chs if x["number"].startswith(ch["number"] + ".")]}
 
     # ================================================================ materials
+    def _material_rows(self, c, folder: str = "0") -> list[dict]:
+        """Read a material listing in the site's page order, without returning partial results."""
+        course_id, folder_id = _safe_id(c.id), _safe_id(folder or "0")
+        url = f"/mooc2-ans/coursedata?{self.q(c)}&v=6"
+        if folder_id != "0":
+            url += f"&dataId={folder_id}"
+        rows: list[dict] = []
+        seen: set[str] = set()
+        page, total_pages = 1, None
+        while total_pages is None or page <= total_pages:
+            result = self.on(M2, _MATERIAL_PAGE_JS % json.dumps(f"{url}&pages={page}"))
+            if not isinstance(result, dict) or result.get("course_id") != course_id or result.get("folder_id") != folder_id:
+                raise XxtError(f"资料列表第 {page} 页读取失败或范围不符；未返回不完整列表。")
+            items, pages = result.get("items"), result.get("pages")
+            if (not isinstance(items, list) or type(pages) is not int or pages < 0
+                    or result.get("page") != page or result.get("size") != len(items)
+                    or (not items and pages > 1) or (items and pages < page)):
+                raise XxtError(f"资料列表第 {page} 页分页或条目数不一致；未返回不完整列表。")
+            if total_pages is None:
+                total_pages = pages
+            elif pages != total_pages:
+                raise XxtError("资料列表页数在读取过程中变化；未返回不完整列表。")
+            for item in items:
+                item_id = item.get("id") if isinstance(item, dict) else None
+                if not isinstance(item_id, str) or not item_id or item_id in seen or not item.get("title"):
+                    raise XxtError(f"资料列表第 {page} 页存在重复或无效的条目；未返回不完整列表。")
+                seen.add(item_id)
+                rows.append(item)
+            page += 1
+        return rows
+
     def materials(self, course: str) -> list[dict]:
-        c = self.ctx(course)
-        return self.on(M2, f"""
-            const d=D(await F('/mooc2-ans/coursedata?{self.q(c)}&v=6'));
-            return [...d.querySelectorAll('ul.dataBody_td[id]')].map(u=>{{const li=[...u.querySelectorAll(':scope>li')].map(T).filter(x=>x&&x.length<40);
-              return {{material_id:u.id,title:u.getAttribute('dataname'),type:u.getAttribute('type'),info:li.slice(-4)}}}});
-        """)
+        return [{"material_id": row["id"], "title": row["title"], "type": row["type"], "info": row["info"]}
+                for row in self._material_rows(self.ctx(course))]
 
     def upload_material(self, course: str, file_path: str) -> dict:
         c = self.ctx(course)
