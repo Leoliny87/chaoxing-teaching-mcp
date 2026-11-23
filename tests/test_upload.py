@@ -108,3 +108,35 @@ def test_upload_tools_are_executable():
     kinds = {n: k for n, k, _, _ in srv.TOOLS}
     for n in ("upload_material", "insert_chapter_file"):
         assert kinds[n] == "write" and n not in srv._PREVIEW_ONLY_TOOLS
+
+
+def test_upload_preview_shows_final_safe_name(tmp_path, monkeypatch):
+    # Regression (live 2026-11-23): the platform sanitizes the material name via
+    # safe_name (brackets -> dashes). The preview must show BOTH the local filename
+    # and the final material name the snapshot/upload will use, reusing safe_name.
+    from xuexitong_mcp import server as srv
+    cfg = Config()
+    cfg.log_dir = tmp_path / "logs"
+    cfg.upload_allow_dirs = [str(tmp_path)]
+    cfg.write_allow_courses = ["合成课程"]
+    c = make_client(cfg)
+    course = Course(id="1", name="合成课程", cpi="3", clazz_id="2", enc="E", t="9",
+                    classes=[{"clazz_id": "2", "name": "测试"}])
+    monkeypatch.setattr(c, "ctx", lambda q, refresh=False: course)
+    monkeypatch.setattr(c, "course", lambda q: course)
+    monkeypatch.setattr(c, "courses", lambda refresh=False: [course])
+    monkeypatch.setattr(srv, "client", lambda: c)
+    monkeypatch.setattr(srv, "_state", dict(srv._state, client=c, cfg=cfg, allowed=None,
+                                            budget=None, profile="teacher"))
+    name = "[MCP测试]合成资料.txt"
+    p = tmp_path / name
+    p.write_bytes(b"synthetic")
+    up = srv._wrap({n: f for n, k, d, f in srv.TOOLS}["upload_material"], "write")
+    pv = up("合成课程", str(p), confirm=False)
+    assert pv["details"]["file"] == name
+    assert pv["details"]["material_name"] == safe_name(name) == "-MCP测试-合成资料.txt"
+    # consistency: the snapshot the upload actually uses carries the same final name
+    tmp, snap, meta = c._snapshot(str(p), pv["details"]["sha256"])
+    assert snap.name == pv["details"]["material_name"]
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)  # clean the test snapshot

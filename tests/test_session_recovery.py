@@ -142,7 +142,7 @@ def test_start_session_auto_opens_chrome_when_offline(cfg, monkeypatch):
     # Chrome fully closed -> instance offline -> MCP calls the official launcher to
     # open the profile, waits for the extension to attach, then starts the session.
     import subprocess as sp
-    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "c41e7649")
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "fakeb001")
     monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "/fake/opener")
     monkeypatch.setattr(bsk_mod, "BROWSER_OPENER_ROLE", "teacher")
     monkeypatch.setattr(bsk_mod, "BROWSER_OPENER_WAIT", 5)
@@ -153,10 +153,10 @@ def test_start_session_auto_opens_chrome_when_offline(cfg, monkeypatch):
         if args[0] == "browsers":
             state["browsers"] += 1
             if state["browsers"] >= 2:  # online after the opener ran
-                return {"value": [{"instance_id": "c41e7649", "unresponsive": False}]}
+                return {"value": [{"instance_id": "fakeb001", "unresponsive": False}]}
             return {"value": []}
         if args[:2] == ["session", "start"]:
-            return {"session_id": "s1", "browser_instance_id": "c41e7649"}
+            return {"session_id": "s1", "browser_instance_id": "fakeb001"}
         return {}
 
     monkeypatch.setattr(b, "run", fake_run)
@@ -169,7 +169,7 @@ def test_start_session_auto_opens_chrome_when_offline(cfg, monkeypatch):
 
 
 def test_start_session_offline_no_opener_raises(cfg, monkeypatch):
-    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "c41e7649")
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "fakeb001")
     monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "")  # auto-open disabled
     b = Bsk(cfg)
     monkeypatch.setattr(b, "run", lambda args, timeout=None, session=True: {"value": []})
@@ -208,3 +208,75 @@ def test_auto_open_role_from_per_user_config(cfg, monkeypatch):
     b.start_session()
     assert state["opener"] and state["opener"][0] == ["/fake/opener", "student"]
     assert b.session == "s2"
+
+def test_start_session_clears_half_initialized_on_init_failure(cfg, monkeypatch):
+    # Regression (live 2026-11-23): start_session set self.session before
+    # _initialize_owned_tab(); a failed init left a half-initialized session so
+    # ensure_session() returned early and later attempts observed about:blank.
+    # Non-login init failure must clear the session (and stop its own window);
+    # login_required is a valid handoff and keeps the session for the login flow.
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "fakeb001")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "")
+    b = Bsk(cfg)
+    monkeypatch.setattr(b, "_browser_online", lambda: True)
+    stops = []
+
+    def fake_run(args, timeout=None, session=True):
+        if args[:2] == ["session", "start"]:
+            return {"session_id": "sX", "browser_instance_id": "fakeb001"}
+        if args[:2] == ["session", "stop"]:
+            stops.append(args[2])
+            return {}
+        return {}
+
+    monkeypatch.setattr(b, "run", fake_run)
+    monkeypatch.setattr(b, "_initialize_owned_tab",
+                        lambda: (_ for _ in ()).throw(BskError("initial_tab_unexpected", "x")))
+    with pytest.raises(BskError):
+        b.start_session()
+    assert b.session is None and b.tab is None and stops == ["sX"]
+
+
+def test_start_session_keeps_session_on_login_required(cfg, monkeypatch):
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "fakeb001")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "")
+    b = Bsk(cfg)
+    monkeypatch.setattr(b, "_browser_online", lambda: True)
+    monkeypatch.setattr(b, "run", lambda args, timeout=None, session=True:
+                        {"session_id": "sL", "browser_instance_id": "fakeb001"} if args[:2] == ["session", "start"] else {})
+    monkeypatch.setattr(b, "_initialize_owned_tab",
+                        lambda: (_ for _ in ()).throw(BskError("login_required", "x")))
+    with pytest.raises(BskError):
+        b.start_session()
+    assert b.session == "sL"  # kept for the login flow (tab parked on passport)
+
+
+def test_start_session_purges_state_when_stop_fails(cfg, tmp_path, monkeypatch):
+    # _initialize_owned_tab may _save_state() before failing; if stopping the failed
+    # session also fails, the persisted state must still be purged so a restart will
+    # not reuse the failed session. login_required handoff state is untouched.
+    import json as _json
+    monkeypatch.setattr(bsk_mod, "FIXED_BROWSER_INSTANCE", "fakeb001")
+    monkeypatch.setattr(bsk_mod, "BROWSER_OPENER", "")
+    sf = tmp_path / "state.json"
+    monkeypatch.setattr(bsk_mod, "STATE_FILE", sf)
+    b = Bsk(cfg)
+    monkeypatch.setattr(b, "_browser_online", lambda: True)
+
+    def fake_run(args, timeout=None, session=True):
+        if args[:2] == ["session", "start"]:
+            return {"session_id": "sFail", "browser_instance_id": "fakeb001"}
+        if args[:2] == ["session", "stop"]:
+            raise BskError("permission_denied", "stop refused")
+        return {}
+
+    monkeypatch.setattr(b, "run", fake_run)
+
+    def bad_init():
+        sf.write_text(_json.dumps({"session": "sFail", "tab": 9}))
+        raise BskError("initial_load_incomplete", "x")
+
+    monkeypatch.setattr(b, "_initialize_owned_tab", bad_init)
+    with pytest.raises(BskError):
+        b.start_session()
+    assert b.session is None and b.tab is None and not sf.exists()

@@ -380,7 +380,37 @@ class Bsk:
             raise BskError("browser_profile_mismatch", "新会话未确认绑定 配置指定的浏览器实例，停止操作。")
         self.session = d["session_id"]
         self.tab = None
-        self._initialize_owned_tab()
+        try:
+            self._initialize_owned_tab()
+        except BskError as e:
+            if e.code != "login_required":
+                # Init failed before a valid owned tab was confirmed. Drop the
+                # half-initialized session so ensure_session() will not return early
+                # on a stale session whose tab is still about:blank (observed live:
+                # a failed init left self.session set, run_login's best-effort href()
+                # swallowed the error, and every later attempt observed about:blank).
+                # login_required is a valid handoff (tab parked on passport) and keeps
+                # the session so the login flow can continue. Browser refusal constraints
+                # are preserved; we only clean up this session's own created window.
+                sid = self.session
+                self.session = None
+                self.tab = None
+                try:
+                    self.run(["session", "stop", sid], session=False)
+                except Exception:  # noqa: BLE001
+                    pass
+                # _initialize_owned_tab may have _save_state()'d this session before
+                # failing (e.g. readiness timeout). If the stop above failed, a restart
+                # would reuse the failed session from STATE_FILE. Purge the persisted
+                # state ONLY when it belongs to this exact failed session; the normal
+                # passport login_required handoff keeps its state (different branch).
+                try:
+                    st = json.loads(STATE_FILE.read_text())
+                    if st.get("session") == sid:
+                        STATE_FILE.unlink()
+                except (OSError, ValueError):
+                    pass
+            raise
         self.log.info("started session")
 
     def _initialize_owned_tab(self):
@@ -679,16 +709,17 @@ class Bsk:
         return self.url
 
     # --- observation / refs --------------------------------------------------
-    def observe(self) -> str:
-        ctx, _ = self.sync()
-        if self.obs_text:
-            return self.obs_text
+    def observe(self, *, context: str | None = None) -> str:
+        if context is None:
+            context, _ = self.sync()
+            if self.obs_text:
+                return self.obs_text
         if not isinstance(self.tab, int):
             raise BskError("observation_unavailable", "同步结果没有正文或可确认的任务标签；停止观察。")
         # A supplementary observation is a read, not a replacement for the
         # sync receipt required by a later strict action. Never put its text in
         # the action cache: callers must separately re-plan any later action.
-        d = self.run(["observe", "--tab-id", str(self.tab), "--context", ctx])
+        d = self.run(["observe", "--tab-id", str(self.tab), "--context", context])
         if (d.get("tab_id") != self.tab or d.get("truncated") is not False
                 or d.get("capture_truncated") is True or d.get("next_cursor")
                 or not isinstance(d.get("text"), str) or not d.get("text")):

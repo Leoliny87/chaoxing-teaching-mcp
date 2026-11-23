@@ -70,6 +70,17 @@ def _err(e: Exception) -> dict:
         if e.code == "login_required":
             return {"ok": False, "needs_human": True, "login": "未登录", "login_url": FIXED_HOMEPAGE,
                     "error": msg, "hint": "请调用 login 工具输入账号密码自动登录（滑块需本人完成）；也可手动在浏览器登录。不自动重试，不更换实例。"}
+        if e.code == "cdp_failed" and e.data.get("phase") == "set_files" and e.data.get("reason") == "set_file_input_failed":
+            try:
+                chrome_error = json.loads(e.message)
+            except json.JSONDecodeError:
+                chrome_error = None
+            if isinstance(chrome_error, dict) and chrome_error.get("code") == -32000 and chrome_error.get("message") == "Not allowed":
+                return {"ok": False, "needs_human": True,
+                        "error": "Chrome 拒绝 BrowserSkill 为文件输入框选择本机文件。",
+                        "browser_error": {**details, "permission": "browser_skill_local_file_access"},
+                        "hint": "请在 MCP 当前绑定的 Chrome 资料中，打开「扩展程序 → BrowserSkill → 详细信息」，由用户核对「允许访问文件网址」。"
+                                "此处使用扩展的本机权限，无需远程调试端口。确认课程状态和权限后，重新预演并取得确认，勿重复发送原计划。"}
         if e.code in ("control_not_ready", "sync_incomplete", "observation_unavailable") or e.code.startswith("readiness_"):
             return {"ok": False, "error": msg, "browser_error": details,
                     "hint": "当前控制状态或同步凭据不完整，已停止操作；请检查状态，勿自动重试。"}
@@ -1178,6 +1189,8 @@ StuCourse_ = Annotated[str, Field(description="「我学的课」里的课程名
 Assignment_ = Annotated[str, Field(description="作业ID（list_my_assignments 返回的 assignment_id）")]
 Answers_ = Annotated[dict, Field(description="按题号作答，如 {\"1\":\"A\",\"2\":\"对\",\"3\":\"我的作答文字\"}；多选填 \"AC\"。只能填学生本人的作答")]
 SUBMIT_PHRASE = "确认提交"
+_STUDENT_ATTACHMENT_MAX_BYTES = 500 * 1024 ** 2
+_STUDENT_ATTACHMENT_MAX_FILES = 10
 
 
 @tool(R, "学生端：列出「我学的课」（课程名、课程ID、班级ID、教师）。")
@@ -1206,7 +1219,10 @@ def _check_student_write(course: str):
 
 def _answer_preview(c_name: str, assignment: str, answers: dict, submit: bool) -> dict:
     _check_student_write(c_name)
-    r = client().read_my_assignment(c_name, assignment)
+    return _format_answer_preview(client().read_my_assignment(c_name, assignment), answers)
+
+
+def _format_answer_preview(r: dict, answers: dict) -> dict:
     qs = {str(q["no"]): q for q in r["questions"]}
     for k in answers:
         if str(k) not in qs:
@@ -1242,16 +1258,103 @@ def save_my_answers(course: StuCourse_, assignment: Assignment_, answers: Answer
 
 
 @tool(W, "学生端：提交我的作业（提交后通常不能再改）。必须先预演并把预览完整展示给学生；只有学生本人回复「确认提交」后，"
-         "才能带 confirm_text=\"确认提交\" 和 plan_id 执行。只接受学生本人的作答。")
+         "才能带 confirm_text=\"确认提交\" 和 plan_id 执行。只接受学生本人的作答。未暂存的单道简答题作业可附上学生提供的 1 至 10 个本机文件（每个 ≤500MB）。")
 def submit_my_assignment(course: StuCourse_, assignment: Assignment_, answers: Answers_, confirm: Confirm = False,
-                         confirm_text: ConfirmText_ = "") -> dict:
+                         confirm_text: ConfirmText_ = "", *,
+                         attachments: Annotated[dict[str, str | list[str]] | None, Field(
+                             description='可选，仅用于单道简答题作业，如 {"1":["本机文件路径1","本机文件路径2"]}。单个文件也可直接传路径。按预演的同一参数确认。'
+                         )] = None) -> dict:
     _student_phrase(confirm, confirm_text)
     if not confirm:
-        prev = _answer_preview(course, assignment, answers, True)
+        if attachments is None:
+            prev, bind = _answer_preview(course, assignment, answers, True), {}
+        else:
+            prev, bind = _preview_assignment_attachment(course, assignment, answers, attachments)
         return {"ok": True, "dry_run": True, "action": "提交作业（提交后通常不能修改）", **prev,
-                "next": f"把以上预览完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": {}}
+                "next": f"把以上预览完整展示给学生；学生回复「{SUBMIT_PHRASE}」后，再带 confirm_text 和 plan_id 调用。", "_bind": bind}
     _check_student_write(course)
+    if attachments is not None:
+        bound = _confirmed_assignment_attachment(attachments)
+        return client().answer_my_assignment(course, assignment, answers, submit=True, attachments=bound)
     return client().answer_my_assignment(course, assignment, answers, submit=True)
+
+
+def _preview_assignment_attachment(course: str, assignment: str, answers: dict, attachments: dict) -> tuple[dict, dict]:
+    from .ops_upload import safe_name
+
+    if not isinstance(attachments, dict) or len(attachments) != 1:
+        raise XxtError("作业附件只支持第 1 题。")
+    question, paths = next(iter(attachments.items()))
+    if isinstance(paths, str):
+        paths = [paths]
+    if (question not in ("1", "#1") or not isinstance(paths, list) or not 1 <= len(paths) <= _STUDENT_ATTACHMENT_MAX_FILES
+            or any(not isinstance(path, str) or not path.strip() for path in paths)):
+        raise XxtError("请用题号 1 指定 1 至 10 个本机附件路径。")
+    if not isinstance(answers, dict):
+        raise XxtError("请按题号提供文字作答，或传空作答并仅附文件。")
+    if answers:
+        if len(answers) != 1:
+            raise XxtError("附带文件时只支持第 1 题的文字作答。")
+        number, answer = next(iter(answers.items()))
+        if str(number) != "1" or not isinstance(answer, str) or not 0 < len(answer.strip()) <= 20000:
+            raise XxtError("第 1 题的文字作答须为 1 至 20000 字，也可传空作答并仅附文件。")
+
+    target_course = _check_student_write(course)
+    course_ref = f"{target_course.id}_{target_course.clazz_id}"
+    work = client().read_my_assignment(course_ref, assignment)
+    assignment_id = work.get("assignment_id")
+    if work.get("status") != "未交" or not isinstance(assignment_id, str) or not assignment_id:
+        raise XxtError("作业附件只支持可以打开并确认未交的作业。")
+    questions = work.get("questions") or []
+    if len(questions) != 1 or questions[0].get("no") != 1 or questions[0].get("type") != 4:
+        raise XxtError("作业附件只支持仅有第 1 题且该题为简答题的作业。")
+    if questions[0].get("current"):
+        raise XxtError("当前作业已有暂存作答，不能使用此附件提交方式。")
+
+    names = set()
+    files = []
+    preview_files = []
+    for path in paths:
+        p = _check_upload_path(path)
+        name = safe_name(p.name)
+        if name in names:
+            raise XxtError("附件处理后的文件名重复，请重命名后再预演。")
+        names.add(name)
+        if not 0 < p.stat().st_size <= _STUDENT_ATTACHMENT_MAX_BYTES:
+            raise XxtError("每个附件必须非空且不超过 500MB。")
+        fingerprint = _upload_preview_digest(p)
+        if not 0 < fingerprint["size"] <= _STUDENT_ATTACHMENT_MAX_BYTES:
+            raise XxtError("每个附件必须非空且不超过 500MB。")
+        files.append({"path": str(p), "name": name, **fingerprint})
+        preview_files.append({"no": 1, "name": name, **fingerprint})
+
+    preview = _format_answer_preview(work, answers)
+    if answers:
+        preview["answers"][0]["my_answer"] = answer
+    preview.update(course={"id": target_course.id, "class_id": target_course.clazz_id, "name": target_course.name},
+                   assignment_id=assignment_id, unanswered=[], attachments=preview_files)
+    return preview, {"course": course_ref, "assignment": assignment_id, "attachments": {"1": files}}
+
+
+def _confirmed_assignment_attachment(attachments: dict) -> dict:
+    from .ops_upload import safe_name
+
+    files = attachments.get("1") if isinstance(attachments, dict) and len(attachments) == 1 else None
+    if not isinstance(files, list) or not 1 <= len(files) <= _STUDENT_ATTACHMENT_MAX_FILES:
+        raise XxtError("附件缺少有效的预演绑定，请重新预演。")
+    names = set()
+    for file in files:
+        if (not isinstance(file, dict) or set(file) != {"path", "name", "size", "sha256"}
+                or not isinstance(file["path"], str) or not file["path"]
+                or not isinstance(file["name"], str) or not file["name"] or file["name"] in names
+                or type(file["size"]) is not int or not 0 < file["size"] <= _STUDENT_ATTACHMENT_MAX_BYTES
+                or not isinstance(file["sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", file["sha256"])):
+            raise XxtError("附件缺少有效的预演绑定，请重新预演。")
+        p = _check_upload_path(file["path"])
+        if str(p) != file["path"] or safe_name(p.name) != file["name"] or p.stat().st_size != file["size"]:
+            raise XxtError("附件与预演时不一致，请重新预演。")
+        names.add(file["name"])
+    return attachments
 
 
 
@@ -1700,7 +1803,12 @@ def upload_material(course: Course_, file_path: Annotated[str, Field(description
         if file_sha256:
             raise XxtError("预演时 file_sha256 必须留空。")
         fp = _upload_preview_digest(p)
-        return _dry(c, "上传课程资料（学生可见）", bind={"file_path": str(p), "file_sha256": fp["sha256"]}, file=p.name, **fp)
+        from .ops_upload import safe_name
+        # Show both the local filename and the final material name the snapshot will
+        # use (safe_name sanitizes e.g. brackets to dashes), so the preview matches what
+        # actually lands in the material list. Same naming function as _snapshot/upload.
+        return _dry(c, "上传课程资料（学生可见）", bind={"file_path": str(p), "file_sha256": fp["sha256"]},
+                    file=p.name, material_name=safe_name(p.name), **fp)
     return client().upload_material_v3(course, str(p), file_sha256)
 
 

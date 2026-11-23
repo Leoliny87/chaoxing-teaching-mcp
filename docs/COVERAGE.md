@@ -103,7 +103,11 @@
 | `list_my_assignments` | 打开学生课程外壳（`visit/stucoursemiddle` → `mycourse/stu`），取隐藏字段 enc、workEnc、examEnc、openc、t；作业列表 `mooc1 /mooc2/work/list?courseId&classId&cpi&ut=s&t&stuenc=<enc>&enc=<workEnc>`（跨域，必须从 mooc1 页发起）；列出 2 份作业、状态和剩余时间 |
 | `read_my_assignment` | 作业链接跳到 `mooc-ans/mooc2/work/dowork`；列出题号、题型、题干、选项和已暂存作答，不含参考答案（页面里本来就没有） |
 | `save_my_answers` | 暂存判断题 2 道，服务端「保存成功！」，读回 true/false。2026-11-07 第二轮：在 23 种题型的作业里暂存 22 种（口语测评要现场录音，明确拒绝），逐题读回全部有值 |
-| `submit_my_assignment` | 预演后必须带 `confirm_text="确认提交"` 和 plan_id；提交后作业列表状态从「未交」变为「已完成」；含主观题的全题型作业提交后为「待批阅」 |
+| `submit_my_assignment` | 预演后必须带 `confirm_text="确认提交"` 和单次 `plan_id`。提交状态从「未交」变为「已完成」或「待批阅」。仅有一道未作答简答题时，可用 `attachments={"1":["/path/to/file"]}` 提交最多 10 个本机附件，单文件不超过 500 MiB。空 `answers` 可用于只提交附件，单个路径也可直接传字符串。 |
+
+**学生作业附件真机验证**：使用合成样本分别验证 TXT 单文件和 PDF、DOCX、XLSX、PPTX、PNG、ZIP、MP3、MP4 的混合提交。两份测试作业提交后均为「待批阅」。在独立会话重新打开后，按编辑器中的对象标识核对全部附件。PNG 显示为图片，MP3 显示为音频播放器，其余样本显示为文件附件。这次验证覆盖上传、提交和附件回读。
+
+MCP 绑定预演中的课程班级、作业、题号、文件名、字节数和 SHA-256，提交前完成所有文件的本机快照校验。BrowserSkill 从原生编辑器打开「附件」并逐项确认，每个文件只选择一次。附件插入导致编辑器文档变化时，重新获取观察后仅补一次读取。附件按钮滚出可视区或被顶栏挡住时，先滚动到可操作位置，再通过 BrowserSkill 点击。提交后用列表和该题已保存的附件双重核验，结果未确认时保留任务标签供核对。
 | `list_my_exams` | 考试列表 `mooc1 /exam-ans/mooc2/exam/exam-list?courseid&clazzid&cpi&ut=s&t&stuenc=<enc>&enc=<examEnc>&openc`；每项 `goTest(courseId, examId, …, 截止时间, paperId, …)`。**只读，不代答考试**（按需求「真正的考核在线下」） |
 | `list_my_activities` | `mobilelearn /v2/apis/active/student/activelist?fid&courseId&classId&showNotStartedActive=0`，activeType 2 签到、45 通知等，status 1 进行中、2 已结束，userStatus 1 已参与 |
 | `list_my_materials` / `download_my_material` | 资料 `mooc2-ans /coursedata/stu-datalist?…&stuenc`，每项 `ul.dataBody_td` 带 objectid、isdown（教师是否允许下载）；下载地址来自 `mooc1 /ananas/status/<objectid>` 的 `download`（cldisk 签名链接，不需要登录态）；下载 55 B 测试文件，大小与服务器记录一致 |
@@ -439,7 +443,7 @@
 4. **题库标签删除工具缺失**：有 create_bank_label 无 delete，测试标签无法净零清理。新增 delete_bank_label（question-label/delete?labelid，从页面内联 dropAction 函数实证）。真机验证增删净零。
 
 **环境性限制（非 MCP 代码 bug，如实记录）**：
-- **资料上传**：bsk upload 经 CDP setFileInputFiles 在此 Chrome 158 环境报 "Not allowed"（注入可见 input 与真实 input 均失败），上传类工具受阻；其余资料工具（读/文件夹增删/下载权限/移动）全过。
+- **资料上传**：BrowserSkill 扩展在自动选择本机文件时，Chrome 158 返回 `cdp_failed` / `set_file_input_failed`（`DOM.setFileInputFiles` 返回 `-32000 Not allowed`）。用仅监听 `127.0.0.1` 的测试页和合成文件复现，操作未涉及学习通。应由用户在 MCP 绑定的 Chrome 资料中核对 BrowserSkill 的「允许访问文件网址」。此调用经扩展的 `chrome.debugger` 发出，与远程调试端口无关。网页原有隐藏输入框曾另外返回目标不可见。其余资料工具（读/文件夹增删/下载权限/移动）全过。
 - **嵌套知识点**：平台拒绝"知识点无法添加子集"，单层添加正常；MCP 正确 surfaced 平台错误。
 - **题库文件夹删除**：平台 qbank UI 不暴露文件夹删除端点（questionList.js 26 个 ajax 仅 insertdir/update-dirname），空文件夹无法删，改名标记。
 

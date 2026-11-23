@@ -119,6 +119,21 @@ def test_local_error_message_kept(cfg):
     assert "登录页" in r["error"] and r["needs_human"] is True
 
 
+def test_local_file_upload_denial_has_profile_specific_hint(cfg):
+    error = BskError("cdp_failed", '{"code":-32000,"message":"Not allowed"}',
+                     {"phase": "set_files", "reason": "set_file_input_failed", "effect_state": "unknown"},
+                     raw=SECRET_PERSON, origin="cli")
+    result = srv._err(error)
+    assert result["needs_human"] is True
+    assert result["browser_error"]["permission"] == "browser_skill_local_file_access"
+    assert result["browser_error"]["effect_state"] == "unknown"
+    assert "允许访问文件网址" in result["hint"] and "重新预演" in result["hint"]
+    assert SECRET_PERSON not in json.dumps(result)
+
+    error.data["reason"] = "target_closed"
+    assert "permission" not in srv._err(error)["browser_error"]
+
+
 def test_js_error_only_keeps_own_chinese_messages():
     assert "班级列表不完整" in safe_error_text(JsError("班级列表不完整或不唯一，停止发放"))
     hidden = safe_error_text(JsError(f"TypeError: cannot read {SECRET_URL}"))

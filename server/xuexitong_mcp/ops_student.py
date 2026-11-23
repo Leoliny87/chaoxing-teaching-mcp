@@ -19,9 +19,12 @@ from __future__ import annotations
 import html as _h
 import json
 import re
+import shutil
 import time
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 
+from .bsk import BskError
 from .xxt import M1, XxtBase, XxtError, _safe_id
 
 SUPPORTED = {0: "单选", 1: "多选", 2: "填空", 3: "判断", 4: "简答", 5: "名词解释", 6: "论述", 7: "计算", 8: "其它", 9: "分录",
@@ -367,11 +370,218 @@ class StudentOps(XxtBase):
         return {stage:'done',http:r.status,status:!!(j&&j.status),msg:j&&j.msg?String(j.msg).slice(0,80):''};
     """
 
-    def answer_my_assignment(self, course: str, assignment: str, answers: dict, submit: bool) -> dict:
+    _WORK_ATTACHMENT_TOOLBAR = 'form#submitForm .questionLi[data="%s"] .edui-button-body[title="附件"]'
+    _WORK_ATTACHMENT_DIALOG = 'iframe[src*="/dialogs/attachment_new/attachment.html"]'
+    _WORK_ATTACHMENT_ITEMS = 'iframe[objectid], iframe.ans-insertaudio-module, img.ans-ued-img'
+
+    def _work_ref(self, label_pattern: str) -> tuple[str, str]:
+        ctx, _ = self.b.sync()
+        text = self.b.obs_text or self.b.observe(context=ctx)
+        refs = re.findall(r'^\s*(@e\d+) (?:button|link) "' + label_pattern + r'"(?=\s|$)', text, re.M)
+        if len(refs) != 1:
+            raise XxtError("找不到唯一的作业附件或提交控件，已停止。")
+        return ctx, refs[0]
+
+    def _work_attachment_script(self, qid: str) -> str:
+        return r"""
+            const q = document.querySelector(%s);
+            const frames = q ? q.querySelectorAll('iframe[id^="ueditor_"]') : [];
+            const body = frames.length === 1 ? frames[0].contentDocument?.body : null;
+            if (!body) return null;
+            const files = [...body.querySelectorAll(%s)].map(f => {
+                const module = (f.getAttribute('module') || '').toLowerCase();
+                const kind = f.tagName === 'IMG' ? 'image' : module.includes('audio') ? 'audio'
+                    : module.includes('video') ? 'video' : module === 'insertattach' ? 'file' : 'unknown';
+                const source = f.getAttribute('data-original') || f.getAttribute('src') || '';
+                const id = f.getAttribute('objectid') || (kind === 'audio' && f.getAttribute('data'))
+                    || source.match(/(?:^|[\/=])([0-9a-f]{32})(?=[.\/?&#]|$)/i)?.[1];
+                const name = f.getAttribute('filename') || (kind === 'audio' ? f.getAttribute('name') : null);
+                return {name, id, size: f.getAttribute('filesize'), kind};
+            });
+            return {text: body.innerText.replace(/[\u200b\ufeff]/g, '').trim(), files};
+        """ % (json.dumps('form#submitForm .questionLi[data="' + _safe_id(qid) + '"]'),
+               json.dumps(self._WORK_ATTACHMENT_ITEMS))
+
+    def _choose_work_attachment(self, file_path: str) -> None:
+        ready = self.wait_for("""
+            const dialogs = [...document.querySelectorAll(%s)].filter(f => f.getClientRects().length);
+            if (dialogs.length !== 1) return false;
+            const pick = dialogs[0].contentDocument?.querySelector('a#pickfiles');
+            return !!pick?.getClientRects().length && pick.innerText.trim() === '上传文件';
+        """ % json.dumps(self._WORK_ATTACHMENT_DIALOG), timeout=10, interval=0.5)
+        if ready is not True:
+            raise XxtError("未核实本地文件选择器，已停止在上传之前。")
+        ctx, ref = self._work_ref(r'上传文件(?: [^"]*)?')
+        self.b.run(["upload", ref, "--file", file_path, "--context", ctx, "--tab-id", str(self.b.tab)],
+                   timeout=self.cfg.t_upload + 10)
+
+    def _wait_work_evidence(self, script: str, timeout: float):
+        try:
+            return self.wait_for(script, timeout=timeout, interval=0.6)
+        except BskError as error:
+            if (error.code != "permission_denied" or error.data.get("reason") != "document_changed"
+                    or error.data.get("effect_state") != "none"):
+                raise
+            # Upload inserts an editor iframe and submission navigates. Refresh
+            # the read receipt once if either replaces the observed document.
+            self.b.observe()
+            return self.wait_for(script, timeout=timeout, interval=0.6)
+
+    def _work_attachment_ready(self, qid: str, before: list[dict]) -> list[dict] | None:
+        script = self._work_attachment_script(qid)
+        reader = f"const state = (() => {{{script}}})();"
+        return self._wait_work_evidence(reader + """
+            if ([...document.querySelectorAll(%s)].some(f => f.getClientRects().length)) return null;
+            return state?.files.length === %d ? state.files : null;
+        """ % (json.dumps(self._WORK_ATTACHMENT_DIALOG), len(before) + 1), timeout=18)
+
+    @staticmethod
+    def _read_inserted_work_attachment(before: list[dict], after: list[dict] | None, expected: dict) -> dict:
+        if not isinstance(after, list) or any(not isinstance(item, dict) for item in after):
+            raise XxtError("未能核对新附件是否已插入答案。请查看当前编辑框，不要重复上传。")
+        ids = [item.get("id") for item in after]
+        if (len(ids) != len(before) + 1 or any(not isinstance(i, str) or not re.fullmatch(r"[0-9a-f]{32}", i, re.I) for i in ids)
+                or len(set(ids)) != len(ids) or any(item not in after for item in before)):
+            raise XxtError("未能核对新附件是否已插入答案。请查看当前编辑框，不要重复上传。")
+        inserted = next(item for item in after if item not in before)
+        ext = expected["name"].rsplit(".", 1)[-1].lower()
+        native_media = {"image": {"bmp", "gif", "jpeg", "jpg", "png", "webp"},
+                        "audio": {"aac", "m4a", "mp3", "ogg", "wav"},
+                        "video": {"m4v", "mov", "mp4", "webm"}}
+        kind, shown = inserted.get("kind"), inserted.get("name")
+        if ((kind == "file" and shown != expected["name"])
+                or (kind != "file" and (ext not in native_media.get(kind, set())
+                                         or (shown and shown != expected["name"])))):
+            raise XxtError("编辑框显示的附件与预演不一致，已停止提交。")
+        exact_size = re.fullmatch(r"(\d+)\s*B", inserted.get("size") or "", re.I)
+        if exact_size and int(exact_size.group(1)) != expected["size"]:
+            raise XxtError("编辑框显示的附件大小与预演不一致，已停止提交。")
+        return inserted
+
+    def _open_work_attachment_picker(self, toolbar: str) -> None:
+        unobstructed = self.here("""
+            const hits = document.querySelectorAll(%s);
+            if (hits.length !== 1) return false;
+            const btn = hits[0];
+            const topAtButton = () => {
+                const r = btn.getBoundingClientRect();
+                return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            };
+            let hit = topAtButton();
+            if (!hit || (!btn.contains(hit) && hit.closest('.subNav'))) {
+                // Inserting an attachment can move the toolbar under the sticky
+                // header or out of view. Scroll it back into view before clicking.
+                btn.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
+                hit = topAtButton();
+            }
+            return btn.contains(hit);
+        """ % json.dumps(toolbar), retry_safe=False)
+        if unobstructed is not True:
+            raise XxtError("作业附件按钮被遮挡或不在可操作位置，已停止打开选择器。")
+        self.b.click_selector(toolbar)
+
+    def _append_work_attachments(self, qid: str, files: list[dict], snapshots: list,
+                                 attached: list[dict]) -> list[dict]:
+        toolbar = self._WORK_ATTACHMENT_TOOLBAR % _safe_id(qid)
+        for file, snap in zip(files, snapshots, strict=True):
+            self._open_work_attachment_picker(toolbar)
+            self._choose_work_attachment(str(snap))
+            after = self._work_attachment_ready(qid, attached)
+            attached.append(self._read_inserted_work_attachment(attached, after, file))
+        return attached
+
+    def _attach_files_in_work(self, qid: str, files: list[dict], text_ops: list[dict]) -> list[dict]:
+        with ExitStack() as copies:
+            snapshots = []
+            for file in files:
+                tmp, snap, meta = self._snapshot(file["path"], file["sha256"])
+                copies.callback(shutil.rmtree, tmp, ignore_errors=True)
+                if meta["name"] != file["name"] or meta["size"] != file["size"]:
+                    raise XxtError("附件快照与预演不一致，请重新预演。")
+                snapshots.append(snap)
+
+            editor = self.here(self._work_attachment_script(qid))
+            if not isinstance(editor, dict) or editor.get("text") or editor.get("files"):
+                raise XxtError("作答编辑框未就绪或已有作答，请核对后重新预演。")
+            toolbar = self._WORK_ATTACHMENT_TOOLBAR % _safe_id(qid)
+            if text_ops:
+                written = self.here("""
+                const q = document.querySelector(%s)?.closest('.questionLi');
+                const frame = q?.querySelector('iframe[id^="ueditor_"]');
+                const editors = Object.values(window.UE?.instants || {}).filter(e => e.iframe === frame);
+                if (!frame || editors.length !== 1 || typeof editors[0].setContent !== 'function') return false;
+                editors[0].setContent(%s);
+                return !!frame.contentDocument?.body.innerText.trim();
+                """ % (json.dumps(toolbar), json.dumps(text_ops[0]["v"])), retry_safe=False)
+                if written is not True:
+                    raise XxtError("未能确认文字已填入第 1 题，已停止在上传之前。")
+            return self._append_work_attachments(qid, files, snapshots, [])
+
+    def _click_work_attachment_submit(self, qid: str, attached: list[dict]) -> None:
+        editor = self.here(self._work_attachment_script(qid))
+        if (not isinstance(editor, dict) or len(editor.get("files", [])) != len(attached)
+                or any(item not in editor["files"] for item in attached)):
+            raise XxtError("附件未保留在第 1 题，已停止提交。请核对当前页面，不要重复上传。")
+        submit_ready = self.here("""
+            const buttons = [...document.querySelectorAll('a.completeBtn')].filter(e => e.getClientRects().length);
+            return !!document.querySelector('form#submitForm') && buttons.length === 1 && buttons[0].innerText.trim() === '提交';
+        """)
+        if submit_ready is not True:
+            raise XxtError("未找到唯一的作业提交按钮，已停止。")
+        self.b.click_selector("a.completeBtn")
+        dialog_ready = self.wait_for("""
+            const m = document.querySelector('#workpop #popcontent');
+            const b = document.querySelector('#workpop #popok');
+            return m?.getClientRects().length && b?.getClientRects().length
+                && m.innerText.trim() === '确认提交？' && b.innerText.trim() === '提交';
+        """, timeout=10, interval=0.5)
+        if dialog_ready is not True:
+            raise XxtError("页面没有显示预期的作业确认，未点击最终提交。请核对当前页面。")
+        self.b.click_selector("#workpop #popok")
+
+    def _submit_work_attachment(self, c: StuCourse, w: dict, questions: list[dict],
+                                answers: dict, submit: bool, attachments: dict) -> dict:
+        if (not submit or w.get("status") != "未交" or len(questions) != 1
+                or questions[0]["no"] != 1 or questions[0]["type"] != 4 or questions[0].get("current")
+                or set(attachments) != {"1"}):
+            raise XxtError("作业状态与附件预演不一致，请核对后重新预演。")
+        qid = questions[0]["qid"]
+        files = attachments["1"]
+        self.b.preserve_tab = True
+        text_ops = self.build_answers(questions, answers) if answers else []
+        attached = self._attach_files_in_work(qid, files, text_ops)
+        self._click_work_attachment_submit(qid, attached)
+        advanced = self._wait_work_evidence("return location.pathname.endsWith('/work/prompt');", timeout=15)
+        if advanced is not True:
+            return {"ok": False, "write_outcome": "unknown", "error": "作业提交回执未确认，请查作业状态，勿重复提交。"}
+        after = [row for row in self._work_list(c) if row["assignment_id"] == w["assignment_id"]]
+        if len(after) != 1 or after[0]["status"] not in ("待批阅", "已完成", "已提交", "待批改", "已批阅"):
+            return {"ok": False, "write_outcome": "unknown", "error": "列表尚未确认作业已提交，请先查状态，勿重复提交。"}
+        self.b.navigate(after[0]["_url"], settle=0.8, readiness=False, allow_leave=True)
+        reader = self._work_attachment_script(qid)
+        final = self._wait_work_evidence(f"const state = (() => {{{reader}}})();" + """
+            const expected = %s;
+            if (state?.files.length !== expected.length) return null;
+            return expected.every(want => state.files.some(f =>
+                f.id === want.id && f.name === want.name && f.size === want.size && f.kind === want.kind))
+                ? state : null;
+        """ % json.dumps(attached), timeout=12)
+        saved = final.get("files", []) if isinstance(final, dict) else []
+        if len(saved) != len(attached) or any(item not in saved for item in attached):
+            return {"ok": False, "write_outcome": "unknown", "error": "已读到提交状态，附件尚未在作答详情核实，勿重复提交。"}
+        self.b.preserve_tab = False
+        return {"ok": True, "assignment": w["title"], "submitted": True, "status_after": after[0]["status"],
+                "answered": [1], "attachments": [{"no": 1, "name": file["name"], "size": file["size"], "kind": part["kind"]}
+                                                  for file, part in zip(files, attached, strict=True)]}
+
+    def answer_my_assignment(self, course: str, assignment: str, answers: dict, submit: bool,
+                             attachments: dict | None = None) -> dict:
         c, w = self._open_work(course, assignment)
         r = self.wait_for(self._READ_JS, timeout=20)
         if not isinstance(r, dict) or r.get("state") != "ok":
             raise XxtError("作业页面无法作答（可能已截止、已提交或尚未开始）。")
+        if attachments:
+            return self._submit_work_attachment(c, w, r["questions"], answers, submit, attachments)
         ops = self.build_answers(r["questions"], answers)
         res = self.here(self._WRITE_JS % (json.dumps(ops, ensure_ascii=False), "true" if submit else "false"), retry_safe=False)
         if not isinstance(res, dict) or res.get("stage") != "done":
