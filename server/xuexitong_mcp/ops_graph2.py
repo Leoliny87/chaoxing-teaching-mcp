@@ -288,10 +288,30 @@ class NewGraphOps(XxtBase):
     def course_targets(self, course: str, c=None) -> dict:
         c = c or self.ctx(course)
         p = self._mp(c, modelId=0)
-        j = self._get(f"{STAT_HOST}/stat2/course-target/manager/targetList", {**p, "pageNo": 1, "pageSize": 100, "targetName": "", "labelName": ""})
-        rows = ((j or {}).get("data") or {}).get("data") if isinstance(j, dict) else None
-        if not isinstance(rows, list):
-            raise XxtError("课程目标读取失败。")
+        rows = []
+        seen = set()
+        page = 1
+        while True:
+            result = self._get(f"{STAT_HOST}/stat2/course-target/manager/targetList",
+                               {**p, "pageNo": page, "pageSize": 100, "targetName": "", "labelName": ""})
+            payload = result.get("data") if isinstance(result, dict) else None
+            batch = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(batch, list):
+                raise XxtError("课程目标读取失败。")
+            try:
+                total = int(payload["count"]) if payload.get("count") is not None else None
+                ids = {str(row["targetId"]) for row in batch}
+            except (KeyError, TypeError, ValueError) as exc:
+                raise XxtError("课程目标分页数据无效。") from exc
+            if len(ids) != len(batch) or seen.intersection(ids):
+                raise XxtError("课程目标分页返回重复数据，请刷新后重试。")
+            rows.extend(batch)
+            seen.update(ids)
+            if (total is not None and len(rows) == total) or (total is None and len(batch) < 100):
+                break
+            if not batch or (total is not None and len(rows) > total):
+                raise XxtError("课程目标总数与分页数据不一致，请刷新后重试。")
+            page += 1
         m = self._get(f"{STAT_HOST}/stat2/course-target/knowledge/knowledgeMap", p)
         maps = {str(x.get("id")): [n.get("name") for n in x.get("nodes") or [] if n.get("level")] for x in ((m or {}).get("data") or {}).get("list") or []}
         lab = self._get(f"{STAT_HOST}/stat2/course-target/manager/labelList", p)

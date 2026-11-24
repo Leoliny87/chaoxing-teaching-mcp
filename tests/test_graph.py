@@ -3,13 +3,42 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "server"))
 
 from xuexitong_mcp.ops_graph import graph_outline  # noqa: E402
+from xuexitong_mcp.ops_graph2 import NewGraphOps  # noqa: E402
 from xuexitong_mcp.xxt import XxtError  # noqa: E402
+
+
+@pytest.mark.parametrize("repeated", [False, True])
+def test_course_targets_reads_all_pages(monkeypatch, repeated):
+    client = object.__new__(NewGraphOps)
+    ctx = SimpleNamespace(id=1, clazz_id=2, cpi=3)
+    pages = []
+
+    def get(url, params):
+        if url.endswith("/targetList"):
+            page = params["pageNo"]
+            pages.append(page)
+            indices = range(100) if page == 1 or repeated else range(100, 166)
+            return {"data": {"count": 166, "data": [{"targetId": i, "name": str(i)} for i in indices]}}
+        if url.endswith("/knowledgeMap"):
+            return {"data": {"list": [{"id": 165, "nodes": [{"name": "核对交接记录", "level": 2}]}]}}
+        return {"data": []}
+
+    monkeypatch.setattr(client, "_get", get)
+    if repeated:
+        with pytest.raises(XxtError, match="重复"):
+            client.course_targets("1", c=ctx)
+    else:
+        targets = client.course_targets("1", c=ctx)["targets"]
+        assert len(targets) == 166
+        assert targets[-1]["knowledge_points"] == ["核对交接记录"]
+    assert pages == [1, 2]
 
 
 def test_outline_levels_from_one():
