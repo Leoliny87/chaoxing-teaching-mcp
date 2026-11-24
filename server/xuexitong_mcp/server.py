@@ -3383,6 +3383,29 @@ def textbook_learning_stats(id: Annotated[str, Field(description="教材 id")],
     return client().textbook_learning_stats(id, section)
 
 
+from .ops_assistant_authoring import register_assistant_authoring
+from .ops_course_assets import register_course_assets
+from .ops_course_graph_authoring import register_graph_authoring
+from .ops_course_patches import register_chapter_patches
+from .ops_exhibit import register_exhibit
+from .ops_exhibit_form import register_exhibit_form
+from .ops_model_library import register_model_library
+from .ops_panorama_authoring import register_panorama_authoring
+from .ops_portal_authoring import register_portal
+from .ops_teaching_model import register_models
+
+register_assistant_authoring(tool, client, _check_write, _dry, _check_upload_path, _upload_preview_digest)
+register_course_assets(tool, client, _check_write, _dry, _check_upload_path, _upload_preview_digest)
+register_graph_authoring(tool, client, _check_write, _dry)
+register_chapter_patches(tool, client, _check_write, _dry)
+register_exhibit(tool, client, _check_write, _dry)
+register_exhibit_form(tool, client, _check_write, _dry, _check_upload_path, _upload_preview_digest)
+register_model_library(tool, client, _check_write, _dry, _check_upload_path, _upload_preview_digest)
+register_panorama_authoring(tool, client)
+register_portal(tool, client, _check_write, _dry, _check_upload_path, _upload_preview_digest)
+register_models(tool, client, _check_write, _dry)
+
+
 # =============================================================================== server
 _HINTS = {R: dict(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True),
           W: dict(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=True),

@@ -130,7 +130,7 @@ class UploadOps(XxtBase):
                 time.sleep(2)
             ok = bool(r.get("status")) and len(new) == 1
             return {"ok": ok, "material": new[0] if new else None, "file": meta["name"], "size": meta["size"],
-                    **({} if ok else {"write_outcome": "unknown", "error": "文件已上传但资料列表核对不一致；请用 list_materials 查看，不要重复上传。"})}
+                    **({"object_id": r.get("object_id")} if ok else {"write_outcome": "unknown", "error": "文件已上传但资料列表核对不一致；请用 list_materials 查看，不要重复上传。"})}
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
